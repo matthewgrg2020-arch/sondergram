@@ -1,0 +1,21 @@
+{
+  "appId": "com.csm.sondergram",
+  "appName": "Sondergram",
+  "webDir": "dist-apk",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0a0a0b",
+    "webContentsDebuggingEnabled": true
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#0a0a0b",
+    "preferredContentMode": "mobile",
+    "allowsLinkPreview": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "cleartext": true
+  }
+}

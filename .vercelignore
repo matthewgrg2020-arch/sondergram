@@ -1,0 +1,14 @@
+node_modules
+.output
+.nitro
+.tanstack
+.android-sdk
+.jdk
+.git
+dist
+dist-apk
+android
+ios
+artifacts
+attachments
+screenshots
