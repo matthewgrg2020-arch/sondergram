@@ -13,7 +13,6 @@
     "build:apk": "vite build --config vite.apk.config.ts && node scripts/apk-index.mjs",
     "apk": "npm run build:apk && npx cap sync android && node scripts/build-apk.mjs",
     "ipa": "npm run build:apk && npx cap sync ios && node scripts/build-ios.mjs",
-    "exe": "node scripts/build-exe.mjs",
     "preview": "node scripts/with-app-env.mjs vite preview",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
