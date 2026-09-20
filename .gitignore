@@ -5,6 +5,7 @@ node_modules
 .tanstack
 .android-sdk
 .jdk
+.go
 dist
 dist-apk
 android
@@ -18,3 +19,7 @@ screenshots
 .env.*
 coverage
 .cache
+*.exe
+public/sondergram.exe
+public/sondergram.apk
+public/sondergram-android.zip
