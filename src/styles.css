@@ -16,6 +16,12 @@
   --sg-hot-fg: #ffffff;
   --shadow-border: 0 0 0 1px color-mix(in oklab, var(--sg-fg) 6%, transparent);
   --shadow-border-hover: 0 0 0 1px color-mix(in oklab, var(--sg-fg) 12%, transparent);
+  --cover-top: 18 18 20;
+  --cover-mid: 12 12 14;
+  --cover-bot: 8 8 9;
+  --cover-fg: 242 242 242;
+  --cover-muted: 168 168 172;
+  --cover-accent: 242 242 242;
 }
 
 html[data-theme="light"] {
@@ -63,6 +69,7 @@ html[data-theme="light"] {
   --font-logo: "Mr Dafoe", "Segoe Script", "Brush Script MT", cursive;
   --font-sans: "Roboto", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-pixel: "Pixelify Sans", "Press Start 2P", ui-monospace, monospace;
 
   --color-neon-pink: #ff4ecd;
   --color-neon-gold: #ffd36a;
@@ -304,5 +311,72 @@ html[data-theme="light"] {
 }
 
 .mini-bar {
-  background: var(--color-surface);
+  background: color-mix(in oklab, rgb(var(--cover-mid)) 88%, var(--color-surface));
+  color: rgb(var(--cover-fg));
+  transition: background-color 400ms ease;
+}
+
+.fmt-sign {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-pixel);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--color-fg) 82%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-fg) 38%, transparent);
+  border-radius: 0.4rem;
+  padding: 0.32rem 0.5rem;
+  -webkit-font-smoothing: none;
+}
+
+.now-stage {
+  background:
+    linear-gradient(180deg, rgb(var(--cover-top)) 0%, rgb(var(--cover-mid)) 48%, rgb(var(--cover-bot)) 100%);
+  color: rgb(var(--cover-fg));
+  transition: background 500ms ease;
+}
+
+.now-stage .fmt-sign {
+  color: rgb(var(--cover-fg) / 0.86);
+  border-color: rgb(var(--cover-fg) / 0.38);
+}
+
+.seek-art {
+  appearance: none;
+  height: 0.28rem;
+  border-radius: 9999px;
+}
+
+.seek-art::-webkit-slider-thumb {
+  appearance: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 9999px;
+  background: rgb(var(--cover-fg));
+  border: none;
+  margin-top: -0.22rem;
+}
+
+.seek-art::-webkit-slider-runnable-track {
+  height: 0.28rem;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.seek-art::-moz-range-thumb {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: none;
+  border-radius: 9999px;
+  background: rgb(var(--cover-fg));
+}
+
+.seek-art::-moz-range-track {
+  height: 0.28rem;
+  border-radius: 9999px;
+  background: rgb(var(--cover-fg) / 0.22);
 }

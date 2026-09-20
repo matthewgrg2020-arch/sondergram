@@ -1,4 +1,5 @@
 import { saveSpSession, type SpSession } from "./spotify";
+import type { StreamHit } from "./stream-search";
 
 export type SpTrack = {
   id: string;
@@ -84,7 +85,8 @@ function coverOf(album: Json) {
 }
 
 function mapTrack(row: Json, extra?: { liked?: boolean; playlist?: string }): SpTrack | null {
-  const track = row.track && typeof row.track === "object" ? asJson(row.track) : row;
+  const nested = row.item && typeof row.item === "object" ? asJson(row.item) : row.track && typeof row.track === "object" ? asJson(row.track) : row;
+  const track = nested;
   if (track.is_local) return null;
   const id = str(track.id);
   const name = str(track.name);
@@ -238,10 +240,15 @@ export async function fetchSpotifyLibrary(token: string): Promise<SpTrack[]> {
     return items.map((row) => ({ id: str(asJson(row).id), name: str(asJson(row).name) })).filter((p) => p.id);
   });
   for (const list of playlists.slice(0, 40)) {
-    const items = await paginate(token, `/playlists/${list.id}/tracks?limit=100`, (data) => {
+    const items = await paginate(token, `/playlists/${list.id}/items?limit=50`, (data) => {
       const rows = Array.isArray(data.items) ? data.items : [];
       return rows.map((row) => mapTrack(asJson(row), { playlist: list.name })).filter((t): t is SpTrack => Boolean(t));
-    });
+    }).catch(async () =>
+      paginate(token, `/playlists/${list.id}/tracks?limit=50`, (data) => {
+        const rows = Array.isArray(data.items) ? data.items : [];
+        return rows.map((row) => mapTrack(asJson(row), { playlist: list.name })).filter((t): t is SpTrack => Boolean(t));
+      }),
+    );
     items.forEach((t) => push(t));
   }
 
@@ -258,4 +265,70 @@ export async function fetchSpotifyLibrary(token: string): Promise<SpTrack[]> {
   }
 
   return tracks;
+}
+
+function coverFromImages(images: unknown) {
+  const list = Array.isArray(images) ? images : [];
+  const best = [...list].sort((a, b) => num(asJson(b).width) - num(asJson(a).width))[0];
+  return str(asJson(best).url);
+}
+
+export async function searchSpotifyCatalog(token: string, q: string): Promise<StreamHit[]> {
+  const query = q.trim();
+  if (query.length < 2) return [];
+  const search = (type: "track" | "album", extra = "") =>
+    spGet(token, `/search?q=${encodeURIComponent(query)}&type=${type}&limit=10${extra}`);
+  const [trackData, albumData] = await Promise.all([
+    search("track", "&market=from_token").catch(() => search("track")),
+    search("album", "&market=from_token").catch(() => search("album")),
+  ]);
+  const out: StreamHit[] = [];
+  const tracks = asJson(trackData.tracks);
+  for (const row of Array.isArray(tracks.items) ? tracks.items : []) {
+    const item = asJson(row);
+    const id = str(item.id);
+    const name = str(item.name);
+    if (!id || !name) continue;
+    const album = asJson(item.album);
+    const artists = Array.isArray(item.artists) ? item.artists.map((a) => str(asJson(a).name)).filter(Boolean) : [];
+    out.push({
+      key: `spotify:track:${id}`,
+      source: "Spotify",
+      kind: "track",
+      name,
+      artist: artists.join(", ") || "Unknown artist",
+      album: str(album.name),
+      year: yearOf(str(album.release_date)),
+      cover: coverFromImages(album.images),
+      preview: str(item.preview_url),
+      duration: Math.round(num(item.duration_ms) / 1000),
+      trackNo: num(item.track_number),
+      spotifyId: id,
+      page: str(asJson(item.external_urls).spotify),
+    });
+  }
+  const albums = asJson(albumData.albums);
+  for (const row of Array.isArray(albums.items) ? albums.items : []) {
+    const item = asJson(row);
+    const id = str(item.id);
+    const name = str(item.name);
+    if (!id || !name) continue;
+    const artists = Array.isArray(item.artists) ? item.artists.map((a) => str(asJson(a).name)).filter(Boolean) : [];
+    out.push({
+      key: `spotify:album:${id}`,
+      source: "Spotify",
+      kind: "album",
+      name,
+      artist: artists.join(", ") || "Unknown artist",
+      album: name,
+      year: yearOf(str(item.release_date)),
+      cover: coverFromImages(item.images),
+      preview: "",
+      duration: 0,
+      trackNo: 0,
+      spotifyId: id,
+      page: str(asJson(item.external_urls).spotify),
+    });
+  }
+  return out;
 }

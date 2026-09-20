@@ -14,6 +14,8 @@ import {
 import { cn } from "@/lib/utils";
 import { formatRemain, formatTime } from "@/lib/player/time";
 import { useAudioClock } from "@/lib/player/clock";
+import { coverVars, useCoverPalette } from "@/lib/player/cover-color";
+import { proxyCoverUrl } from "@/lib/player/covers";
 import { usePlayer } from "@/lib/player/store";
 import { Visualizer } from "./visualizer";
 
@@ -42,9 +44,10 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
   const sleepUntil = usePlayer((s) => s.sleepUntil);
   const upNext = usePlayer((s) => s.upNext);
   const track = index >= 0 ? tracks[index] : undefined;
+  const palette = useCoverPalette(track?.coverUrl);
 
   return (
-    <footer className="mini-bar mx-2 mb-2 overflow-hidden rounded-2xl px-2 py-1.5 sm:mx-3 sm:mb-3 sm:px-4 sm:py-2">
+    <footer className="mini-bar mx-2 mb-2 overflow-hidden rounded-2xl px-2 py-1.5 sm:mx-3 sm:mb-3 sm:px-4 sm:py-2" style={coverVars(palette)}>
       <div className="mb-1 hidden h-6 sm:block">
         <Visualizer active={playing} className="h-6" />
       </div>
@@ -63,7 +66,7 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
         <button type="button" onClick={onExpand} className="flex min-w-0 items-center gap-3 text-left">
           <div className="size-11 shrink-0 overflow-hidden rounded-md bg-raised sm:size-11">
             {track?.coverUrl ? (
-              <img src={track.coverUrl} alt="" className="size-full object-cover" />
+              <img src={proxyCoverUrl(track.coverUrl)} alt="" className="size-full object-cover" />
             ) : (
               <div className="flex size-full items-center justify-center text-sm font-semibold text-subtle">
                 {(track?.name ?? "S").slice(0, 1)}
@@ -72,7 +75,10 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
           </div>
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium">{track?.name ?? "Select a song"}</span>
-            <span className="block truncate text-xs text-muted">{track?.artist ?? ""}</span>
+            <span className="block truncate text-xs text-muted">
+              {track?.artist ?? ""}
+              {track && (track.deezerId || track.spotifyId || track.amazonId) ? " · Engine" : ""}
+            </span>
           </span>
         </button>
 

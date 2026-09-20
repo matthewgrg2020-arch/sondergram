@@ -3,6 +3,7 @@ import {
   AudioLines,
   Clock3,
   Cloud,
+  Disc3,
   Download,
   FolderDown,
   Heart,
@@ -11,6 +12,7 @@ import {
   Radio,
   Search,
   Settings,
+  Share2,
   SlidersHorizontal,
   Sparkles,
   Youtube,
@@ -30,6 +32,9 @@ export type AppView =
   | "amazon"
   | "find"
   | "archive"
+  | "bandcamp"
+  | "arcod"
+  | "soulseek"
   | "liked"
   | "studio"
   | "stats"
@@ -46,6 +51,9 @@ const PRIMARY: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "amazon", label: "Amazon", icon: AudioLines },
   { id: "find", label: "Find files", icon: FolderDown },
   { id: "archive", label: "Archive", icon: Archive },
+  { id: "bandcamp", label: "Bandcamp", icon: Disc3 },
+  { id: "arcod", label: "Arcod", icon: Disc3 },
+  { id: "soulseek", label: "Soulseek", icon: Share2 },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

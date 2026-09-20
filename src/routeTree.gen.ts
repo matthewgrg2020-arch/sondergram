@@ -11,6 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ApiCoverRouteImport } from './routes/api/cover'
+import { Route as ApiSoulseekRouteImport } from './routes/api/soulseek'
+import { Route as ApiStreamRouteImport } from './routes/api/stream'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +26,21 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCoverRoute = ApiCoverRouteImport.update({
+  id: '/api/cover',
+  path: '/api/cover',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSoulseekRoute = ApiSoulseekRouteImport.update({
+  id: '/api/soulseek',
+  path: '/api/soulseek',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStreamRoute = ApiStreamRouteImport.update({
+  id: '/api/stream',
+  path: '/api/stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -32,30 +50,61 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/cover': typeof ApiCoverRoute
+  '/api/soulseek': typeof ApiSoulseekRoute
+  '/api/stream': typeof ApiStreamRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/cover': typeof ApiCoverRoute
+  '/api/soulseek': typeof ApiSoulseekRoute
+  '/api/stream': typeof ApiStreamRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/api/cover': typeof ApiCoverRoute
+  '/api/soulseek': typeof ApiSoulseekRoute
+  '/api/stream': typeof ApiStreamRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/api/cover'
+    | '/api/soulseek'
+    | '/api/stream'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/api/auth/$'
-  id: '__root__' | '/' | '/login' | '/api/auth/$'
+  to:
+    | '/'
+    | '/login'
+    | '/api/cover'
+    | '/api/soulseek'
+    | '/api/stream'
+    | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/api/cover'
+    | '/api/soulseek'
+    | '/api/stream'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  ApiCoverRoute: typeof ApiCoverRoute
+  ApiSoulseekRoute: typeof ApiSoulseekRoute
+  ApiStreamRoute: typeof ApiStreamRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -75,6 +124,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cover': {
+      id: '/api/cover'
+      path: '/api/cover'
+      fullPath: '/api/cover'
+      preLoaderRoute: typeof ApiCoverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/soulseek': {
+      id: '/api/soulseek'
+      path: '/api/soulseek'
+      fullPath: '/api/soulseek'
+      preLoaderRoute: typeof ApiSoulseekRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stream': {
+      id: '/api/stream'
+      path: '/api/stream'
+      fullPath: '/api/stream'
+      preLoaderRoute: typeof ApiStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -88,6 +158,9 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  ApiCoverRoute: ApiCoverRoute,
+  ApiSoulseekRoute: ApiSoulseekRoute,
+  ApiStreamRoute: ApiStreamRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

@@ -10,6 +10,7 @@ export type SpSession = {
 const KEY = "sondergram:spotify";
 const CLIENT_KEY = "sondergram:spotify-client";
 const VERIFIER_KEY = "sondergram:spotify-verifier";
+const REDIRECT_KEY = "sondergram:spotify-redirect";
 
 export function loadSpSession(): SpSession | null {
   if (typeof localStorage === "undefined") return null;
@@ -89,9 +90,27 @@ export function consumeSpotifyVerifier() {
   return v;
 }
 
-export function spotifyRedirectUri() {
+export function canonicalAppOrigin() {
   const url = new URL(location.href);
-  url.hash = "";
-  url.search = "";
-  return url.toString();
+  let host = url.hostname;
+  if (host === "localhost") host = "127.0.0.1";
+  const port = url.port && url.port !== "80" && url.port !== "443" ? `:${url.port}` : "";
+  return `${url.protocol}//${host}${port}`;
+}
+
+export function spotifyRedirectUri() {
+  return `${canonicalAppOrigin()}/`;
+}
+
+export function spotifyRedirectUris() {
+  const origin = canonicalAppOrigin();
+  return [...new Set([`${origin}/`, origin])];
+}
+
+export function rememberSpotifyRedirect(uri: string) {
+  sessionStorage.setItem(REDIRECT_KEY, uri);
+}
+
+export function recalledSpotifyRedirect() {
+  return sessionStorage.getItem(REDIRECT_KEY) || spotifyRedirectUri();
 }

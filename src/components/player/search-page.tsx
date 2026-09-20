@@ -1,9 +1,11 @@
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { parseArchiveId } from "@/lib/player/archive";
+import { parseBandcampUrl } from "@/lib/player/bandcamp";
 import { groupAlbums, groupArtists } from "@/lib/player/catalog";
 import { usePlayer } from "@/lib/player/store";
 import { MoreMenu } from "./more-menu";
+import { StreamCatalog } from "./stream-catalog";
 
 export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: string) => void }) {
   const tracks = usePlayer((s) => s.tracks);
@@ -11,10 +13,12 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
   const queueNext = usePlayer((s) => s.queueNext);
   const queueNextMany = usePlayer((s) => s.queueNextMany);
   const importArchive = usePlayer((s) => s.importArchive);
+  const importBandcamp = usePlayer((s) => s.importBandcamp);
   const [adding, setAdding] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
   const archiveId = parseArchiveId(query);
+  const bandcampUrl = parseBandcampUrl(query);
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
   const artists = useMemo(() => groupArtists(tracks), [tracks]);
 
@@ -42,10 +46,33 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Artists, songs, albums, or archive.org/details/…"
+          placeholder="Artists, songs, Arcod, Spotify, Deezer, Apple Music…"
           className="h-12 w-full rounded-xl bg-raised pl-10 pr-4 text-sm text-fg outline-none placeholder:text-subtle"
         />
       </label>
+
+      {bandcampUrl ? (
+        <div className="mt-6 rounded-xl bg-surface p-4">
+          <p className="text-sm">Bandcamp link</p>
+          <p className="mt-1 truncate font-mono text-xs text-muted">{bandcampUrl}</p>
+          <button
+            type="button"
+            disabled={adding}
+            onClick={() => {
+              setAdding(true);
+              setNote(null);
+              void importBandcamp(bandcampUrl, true)
+                .then((n) => setNote(n ? `Added ${n} tracks.` : "Already in your library."))
+                .catch((err) => setNote(err instanceof Error ? err.message : "Could not add that link."))
+                .finally(() => setAdding(false));
+            }}
+            className="mt-3 h-11 w-full rounded-full bg-hot text-sm font-semibold text-hot-fg disabled:opacity-40"
+          >
+            {adding ? "Adding…" : "Add this album"}
+          </button>
+          {note ? <p className="mt-2 text-sm text-muted">{note}</p> : null}
+        </div>
+      ) : null}
 
       {archiveId ? (
         <div className="mt-6 rounded-xl bg-surface p-4">
@@ -70,12 +97,15 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
         </div>
       ) : null}
 
-      {!q && !archiveId ? (
-        <p className="mt-8 text-sm text-muted">Find anything in your library, or paste an archive.org link.</p>
-      ) : songHits.length + albumHits.length + artistHits.length === 0 && !archiveId ? (
-        <p className="mt-8 text-sm text-muted">Nothing matches “{query}”.</p>
+      {!q && !archiveId && !bandcampUrl ? (
+        <StreamCatalog query="" />
       ) : (
+        <>
+          <StreamCatalog query={query} />
         <div className="mt-8 space-y-8">
+          {artistHits.length + albumHits.length + songHits.length > 0 ? (
+            <h3 className="text-lg font-semibold">In your library</h3>
+          ) : null}
           {artistHits.length > 0 ? (
             <section>
               <h3 className="mb-3 text-lg font-semibold">Artists</h3>
@@ -160,6 +190,7 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
             </section>
           ) : null}
         </div>
+        </>
       )}
     </div>
   );

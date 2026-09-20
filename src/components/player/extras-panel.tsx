@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Car, Dices, Mic, Moon, Smartphone, Speaker, Vibrate, Waves } from "lucide-react";
+import { Car, Dices, Mic, Moon, Smartphone, Speaker, Square, Vibrate, Wand2, Waves } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePlayer } from "@/lib/player/store";
 
@@ -26,6 +26,9 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
   const sleepUntil = usePlayer((s) => s.sleepUntil);
   const setCrossfade = usePlayer((s) => s.setCrossfade);
   const setSleep = usePlayer((s) => s.setSleep);
+  const stopAfter = usePlayer((s) => s.stopAfter);
+  const setStopAfter = usePlayer((s) => s.setStopAfter);
+  const cleanTitles = usePlayer((s) => s.cleanTitles);
   const surprise = usePlayer((s) => s.surprise);
   const tracks = usePlayer((s) => s.tracks);
   const quiet = usePlayer((s) => s.quiet);
@@ -44,6 +47,12 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
   const toggleGapless = usePlayer((s) => s.toggleGapless);
   const mono = usePlayer((s) => s.mono);
   const toggleMono = usePlayer((s) => s.toggleMono);
+  const autoEq = usePlayer((s) => s.autoEq);
+  const toggleAutoEq = usePlayer((s) => s.toggleAutoEq);
+  const saveQueuePlaylist = usePlayer((s) => s.saveQueuePlaylist);
+  const playlists = usePlayer((s) => s.playlists);
+  const playPlaylist = usePlayer((s) => s.playPlaylist);
+  const deletePlaylist = usePlayer((s) => s.deletePlaylist);
   const isolate = usePlayer((s) => s.isolate);
   const setIsolate = usePlayer((s) => s.setIsolate);
   const flash = usePlayer((s) => s.flash);
@@ -108,6 +117,40 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mb-4">
+        <p className="mb-2 flex items-center gap-1.5 text-xs uppercase tracking-widest text-subtle">
+          <Square className="size-3.5" strokeWidth={1.75} />
+          Stop after
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {(["off", "track", "album"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setStopAfter(mode)}
+              className={cn(
+                "h-9 rounded-full px-3 text-sm",
+                stopAfter === mode ? "bg-accent text-accent-fg" : "bg-raised text-muted hover:text-fg",
+              )}
+            >
+              {mode === "off" ? "Off" : mode === "track" ? "This song" : "This album"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <button
+          type="button"
+          disabled={tracks.length === 0}
+          onClick={() => cleanTitles()}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full bg-raised px-3 text-sm text-fg hover:bg-accent hover:text-accent-fg disabled:opacity-40"
+        >
+          <Wand2 className="size-4" strokeWidth={1.75} />
+          Clean filename titles
+        </button>
       </div>
 
       <div className="mb-4">
@@ -200,6 +243,27 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
           <Smartphone className="size-3.5" strokeWidth={1.75} />
           Shake skip
         </button>
+        {playlists.length > 0 ? (
+          <div className="mt-4 w-full">
+            <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Saved queues</p>
+            <div className="flex flex-wrap gap-1.5">
+              {playlists.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  onClick={() => playPlaylist(row.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    deletePlaylist(row.id);
+                  }}
+                  className="h-9 rounded-full bg-raised px-3 text-sm text-muted hover:text-fg"
+                >
+                  {row.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={onCarMode}
@@ -207,6 +271,23 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
         >
           <Car className="size-3.5" strokeWidth={1.75} />
           Car mode
+        </button>
+        <button
+          type="button"
+          onClick={toggleAutoEq}
+          className={cn(
+            "h-9 rounded-full px-3 text-sm",
+            autoEq ? "bg-accent text-accent-fg" : "bg-raised text-muted hover:text-fg",
+          )}
+        >
+          Auto EQ
+        </button>
+        <button
+          type="button"
+          onClick={() => saveQueuePlaylist()}
+          className="h-9 rounded-full bg-raised px-3 text-sm text-muted hover:text-fg"
+        >
+          Save queue
         </button>
         <button
           type="button"

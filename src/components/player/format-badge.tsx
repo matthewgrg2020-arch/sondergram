@@ -1,29 +1,38 @@
+import { formatSign } from "@/lib/player/format";
 import { cn } from "@/lib/utils";
 
 export function FormatBadge({
   label,
   lossless,
+  sampleRate,
+  bitDepth,
+  bitrate,
+  tags,
+  className,
 }: {
   label: string;
   lossless?: boolean;
+  sampleRate?: number | null;
+  bitDepth?: number | null;
+  bitrate?: number | null;
+  tags?: string[];
+  className?: string;
 }) {
+  const text = formatSign({ format: label, lossless, sampleRate, bitDepth, bitrate, tags });
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-xs font-medium tracking-wide",
-        lossless ? "bg-accent text-accent-fg" : "bg-raised text-muted",
-      )}
-    >
-      {label}
+    <span className={cn("fmt-sign", className)} title={text}>
+      {text}
     </span>
   );
 }
 
-export function ExplicitBadge({ className }: { className?: string } = {}) {
+export function ExplicitBadge({ className, onArt }: { className?: string; onArt?: boolean } = {}) {
   return (
     <span
+      title="Explicit"
       className={cn(
-        "inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] bg-white/20 text-[10px] font-bold leading-none text-fg",
+        "inline-flex h-[15px] min-w-[15px] shrink-0 items-center justify-center rounded-[3px] px-[4px] text-[9px] font-extrabold leading-none tracking-tight",
+        onArt ? "bg-white text-black shadow-sm" : "bg-fg text-bg",
         className,
       )}
     >

@@ -7,13 +7,16 @@ import { SpotifyPanel } from "./spotify-panel";
 import { DeezerPanel } from "./deezer-panel";
 import { IbroadcastPanel } from "./ibroadcast-panel";
 import { ArchivePanel } from "./archive-panel";
+import { BandcampPanel } from "./bandcamp-panel";
+import { ArcodPanel } from "./arcod-panel";
+import { SoulseekPanel } from "./soulseek-panel";
 import { AmazonPanel } from "./amazon-panel";
 import { FindAudioPanel } from "./find-audio-panel";
 import { AddMusicCard } from "./add-music-card";
 import { LastFmCard } from "./lastfm-card";
 import { DuplicatesCard } from "./duplicates-card";
 import { Library } from "./library";
-import { LibraryBackup } from "./library-backup";
+import { LibraryBackup, LibraryClear } from "./library-backup";
 import { ListenCard, SpatialCard, TempoPitch } from "./mix-panel";
 import { RemasterPanel } from "./remaster-panel";
 import { CarMode } from "./car-mode";
@@ -55,8 +58,11 @@ import {
 } from "@/lib/player/engine";
 import { loadIbSession, streamUrl } from "@/lib/player/ibroadcast";
 import { nowPlayingTrack, scrobbleTrack } from "@/lib/player/lastfm";
-import { usePlayer } from "@/lib/player/store";
+import { catalogHold, usePlayer } from "@/lib/player/store";
+import { albumKey } from "@/lib/player/catalog";
+import { isEngineCatalog, isYoutubePlayback, officialCatalogUrl } from "@/lib/player/stream-search";
 import { applyTheme, loadTheme, type Theme } from "@/lib/player/theme";
+import { EQ_PRESETS } from "@/lib/player/constants";
 import {
   loadYoutubeApi,
   parseYoutubeId,
@@ -71,6 +77,52 @@ import {
   youtubeStop,
   youtubeTime,
 } from "@/lib/player/youtube";
+
+function soulseekHold(track: { soulseekId?: string } | undefined) {
+  if (!track?.soulseekId) return false;
+  try {
+    const out = outputAudio();
+    const src = out.currentSrc || out.src || "";
+    if (!src.includes("/api/soulseek")) return true;
+    const d = Number.isFinite(out.duration) ? out.duration : 0;
+    if (d < 0.8) return true;
+    if ((out.currentTime || 0) < 0.12) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function catalogClip(
+  track:
+    | {
+        forceYoutube?: boolean;
+        qobuzId?: string;
+        deezerId?: string;
+        spotifyId?: string;
+        amazonId?: string;
+        appleId?: string;
+        format?: string;
+        tags?: string[];
+        previewUrl?: string;
+        url?: string;
+      }
+    | undefined,
+  duration: number,
+) {
+  if (!track || track.forceYoutube) return false;
+  if (!isEngineCatalog(track)) return false;
+  return duration > 2 && duration <= 40;
+}
+
+function promoteCatalogYoutube(track: { id: string; mvId?: string; youtubeId?: string } | undefined) {
+  const yt = track?.mvId || track?.youtubeId || "";
+  if (!track || !/^[a-zA-Z0-9_-]{11}$/.test(yt)) return false;
+  usePlayer.getState().patchTrack(track.id, { youtubeId: yt, mvId: yt, forceYoutube: true });
+  pauseOutput();
+  void youtubeLoad(yt, true);
+  return true;
+}
 
 export function PlayerApp() {
   const tracks = usePlayer((s) => s.tracks);
@@ -106,6 +158,8 @@ export function PlayerApp() {
   const mono = usePlayer((s) => s.mono);
   const remaster = usePlayer((s) => s.remaster);
   const remasterAmt = usePlayer((s) => s.remasterAmt);
+  const autoEq = usePlayer((s) => s.autoEq);
+  const applyPreset = usePlayer((s) => s.applyPreset);
   const notice = usePlayer((s) => s.notice);
   const loopA = usePlayer((s) => s.loopA);
   const loopB = usePlayer((s) => s.loopB);
@@ -128,20 +182,29 @@ export function PlayerApp() {
   const skipLockRef = useRef(false);
   const ignoreEndedRef = useRef(0);
   const startedAtRef = useRef(0);
+  const togglePlayRef = useRef<() => void>(() => {});
 
   const goView = (next: AppView) => {
     setView(next);
     if (next !== "library") setLibraryAlbum(null);
   };
 
+  useEffect(() => {
+    if (typeof location === "undefined") return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("code") && params.get("state") === "sg") goView("spotify");
+  }, []);
+
   const autoNext = useCallback(() => {
     const now = Date.now();
     if (now < ignoreEndedRef.current) return;
     if (skipLockRef.current) return;
     const state = usePlayer.getState();
-    if (!state.playing && state.index < 0) return;
+    if (!state.playing) return;
     const current = state.tracks[state.index];
-    if (current?.youtubeId) {
+    if (soulseekHold(current)) return;
+    if (catalogHold(current)) return;
+    if (isYoutubePlayback(current)) {
       const left = youtubeDuration() - youtubeTime();
       if (Number.isFinite(left) && left > 1.5) return;
     }
@@ -151,6 +214,20 @@ export function PlayerApp() {
     window.setTimeout(() => {
       skipLockRef.current = false;
     }, lockMs);
+    if (state.stopAfter === "track") {
+      state.setStopAfter("off");
+      setPlaying(false);
+      return;
+    }
+    if (state.stopAfter === "album" && current) {
+      const peekId = state.upNext.find((id) => id !== current.id);
+      const peek = peekId ? state.tracks.find((t) => t.id === peekId) : null;
+      if (!peek || albumKey(peek) !== albumKey(current)) {
+        state.setStopAfter("off");
+        setPlaying(false);
+        return;
+      }
+    }
     const next = state.nextIndex(false);
     if (next === null) {
       setPlaying(false);
@@ -203,11 +280,24 @@ export function PlayerApp() {
 
     const onTime = () => {
       const state = usePlayer.getState();
-      if (state.tracks[state.index]?.youtubeId) return;
+      if (isYoutubePlayback(state.tracks[state.index])) return;
       const out = outputAudio();
       const duration = Number.isFinite(out.duration) ? out.duration : 0;
       setTimes(out.currentTime, duration);
+      if (navigator.mediaSession && duration > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration,
+            playbackRate: out.playbackRate || 1,
+            position: Math.max(0, Math.min(out.currentTime, duration)),
+          });
+        } catch {
+          /* unsupported */
+        }
+      }
       if (!state.playing) return;
+      if (duration > 2 && duration <= 40) return;
+      if (catalogClip(state.tracks[state.index], duration)) return;
       if (duration > 2 && out.currentTime > 2 && duration - out.currentTime <= 0.28) {
         if (gaplessRef.current === state.tracks[state.index]?.id) return;
         gaplessRef.current = state.tracks[state.index]?.id ?? null;
@@ -216,21 +306,44 @@ export function PlayerApp() {
       }
     };
     const onEnded = (event: Event) => {
-      if (event.target !== audio && event.target !== bgAudio) return;
-      if (usePlayer.getState().tracks[usePlayer.getState().index]?.youtubeId) return;
+      if (event.target !== outputAudio()) return;
+      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      if (isYoutubePlayback(current)) return;
+      if (soulseekHold(current)) return;
       if (fadeSkipRef.current) {
         fadeSkipRef.current = false;
         return;
       }
-      if (Date.now() - startedAtRef.current < 900 && outputAudio().currentTime < 0.8) {
-        void outputAudio().play().catch(() => autoNext());
+      const out = outputAudio();
+      if (current?.bandcampId && (out.currentTime < 2 || Date.now() - startedAtRef.current < 2500)) {
+        void out.play().catch(() => undefined);
         return;
       }
+      if (catalogClip(current, out.duration || 0) || ((out.duration || 0) > 2 && (out.duration || 0) <= 40 && isEngineCatalog(current))) {
+        if (promoteCatalogYoutube(current)) return;
+        if (catalogHold(current)) return;
+      }
+      if (catalogHold(current)) return;
+      if (out.currentTime < 1.5 && (out.duration || 0) > 8) {
+        void out.play().catch(() => undefined);
+        return;
+      }
+      if (Date.now() - startedAtRef.current < 1200) return;
       autoNext();
     };
-    const onError = () => {
+    const onError = (event: Event) => {
+      if (event.target !== outputAudio()) return;
       const state = usePlayer.getState();
-      if (state.tracks[state.index]?.youtubeId) return;
+      const current = state.tracks[state.index];
+      if (isYoutubePlayback(current)) return;
+      if (soulseekHold(current)) return;
+      if (current?.bandcampId && (outputAudio().currentTime < 5 || Date.now() - startedAtRef.current < 2500)) {
+        return;
+      }
+      if (catalogClip(current, outputAudio().duration || 0) || catalogHold(current)) {
+        if (promoteCatalogYoutube(current)) return;
+        if (catalogHold(current)) return;
+      }
       if (Date.now() - startedAtRef.current < 400) return;
       autoNext();
     };
@@ -254,38 +367,65 @@ export function PlayerApp() {
   }, [autoNext, setPlaying, setTimes]);
 
   useEffect(() => {
+    const saveHere = () => {
+      const state = usePlayer.getState();
+      const current = state.tracks[state.index];
+      if (!current) return;
+      const t = isYoutubePlayback(current) ? youtubeTime() : outputAudio().currentTime;
+      if (t > 2) state.rememberPosition(current.id, t);
+    };
+    const restoreHere = () => {
+      const state = usePlayer.getState();
+      const current = state.tracks[state.index];
+      if (!current) return;
+      const saved = state.positions[current.id] || 0;
+      const out = outputAudio();
+      const t = out.currentTime || 0;
+      if (saved > 3 && t < 3) seekOutput(saved);
+    };
     const keepPlaying = () => {
       setAudioSessionPlayback();
+      const hidden = document.visibilityState === "hidden";
       const state = usePlayer.getState();
-      if (!state.playing) return;
-      const current = state.tracks[state.index];
-      setBackgroundOutput(true);
-      if (current?.youtubeId) {
-        youtubePlay();
+      if (!state.playing) {
+        pauseOutput();
+        youtubeStop();
+        return;
+      }
+      if (isYoutubePlayback(state.tracks[state.index])) {
+        if (!hidden) youtubePlay();
         if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
         return;
       }
+      youtubePause();
+      if (state.playing && !isYoutubePlayback(state.tracks[state.index])) setBackgroundOutput(hidden);
+      if (hidden) return;
+      restoreHere();
       void resumeEngine();
-      const out = outputAudio();
-      if (out.paused) void out.play().catch(() => {});
-      if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
     };
-    const onVis = () => keepPlaying();
+    const onHide = () => {
+      saveHere();
+      const state = usePlayer.getState();
+      if (state.playing && !isYoutubePlayback(state.tracks[state.index])) setBackgroundOutput(true);
+    };
+    const onShow = () => keepPlaying();
+    const onVis = () => {
+      if (document.visibilityState === "hidden") onHide();
+      else onShow();
+    };
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("pagehide", keepPlaying);
-    window.addEventListener("pageshow", keepPlaying);
-    window.addEventListener("focus", keepPlaying);
-    window.addEventListener("blur", keepPlaying);
-    window.addEventListener("freeze", keepPlaying as EventListener);
-    window.addEventListener("resume", keepPlaying as EventListener);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
+    window.addEventListener("focus", onShow);
+    window.addEventListener("freeze", onHide as EventListener);
+    window.addEventListener("resume", onShow as EventListener);
     return () => {
       document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("pagehide", keepPlaying);
-      window.removeEventListener("pageshow", keepPlaying);
-      window.removeEventListener("focus", keepPlaying);
-      window.removeEventListener("blur", keepPlaying);
-      window.removeEventListener("freeze", keepPlaying as EventListener);
-      window.removeEventListener("resume", keepPlaying as EventListener);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
+      window.removeEventListener("focus", onShow);
+      window.removeEventListener("freeze", onHide as EventListener);
+      window.removeEventListener("resume", onShow as EventListener);
     };
   }, []);
 
@@ -343,6 +483,23 @@ export function PlayerApp() {
   }, [remaster, remasterAmt]);
 
   useEffect(() => {
+    if (!autoEq || !track) return;
+    const hay = `${track.genre} ${track.artistGenre || ""} ${(track.tags || []).join(" ")}`.toLowerCase();
+    const id = /hip.?hop|rap|trap|r&b|rnb|electronic|edm|house|techno|drill/.test(hay)
+      ? "bass"
+      : /jazz|soul|funk|classical|orchestra|lofi|lo-fi/.test(hay)
+        ? "warm"
+        : /folk|singer|acoustic|country|vocal|choir/.test(hay)
+          ? "vocal"
+          : /pop|indie|rock|metal|punk/.test(hay)
+            ? "bright"
+            : null;
+    if (!id) return;
+    const preset = EQ_PRESETS.find((p) => p.id === id);
+    if (preset) applyPreset(preset.id, preset.gains, preset.preamp);
+  }, [autoEq, track?.id, track?.genre, applyPreset]);
+
+  useEffect(() => {
     setBalance(balance);
   }, [balance]);
 
@@ -370,7 +527,7 @@ export function PlayerApp() {
 
   useEffect(() => {
     if (!playing || crossfade <= 0) return;
-    if (track?.youtubeId) return;
+    if (isYoutubePlayback(track)) return;
     const { audio } = getEngine();
     let raf = 0;
     const tick = () => {
@@ -414,7 +571,7 @@ export function PlayerApp() {
       const state = usePlayer.getState();
       if (e.code === "Space") {
         e.preventDefault();
-        if (state.index >= 0) state.setPlaying(!state.playing);
+        togglePlayRef.current();
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
         const next = state.nextIndex(true);
@@ -458,25 +615,23 @@ export function PlayerApp() {
       youtubeStop();
       return;
     }
-    if (track.youtubeId) {
+    if (isYoutubePlayback(track) && track.youtubeId) {
       pauseOutput();
+      if (!playing) youtubePause();
       void youtubeLoad(track.youtubeId, playing);
       return;
     }
-    youtubePause();
-    if (!playing) {
-      pauseOutput();
+    if (isEngineCatalog(track) || track.bandcampId) {
+      youtubeStop();
+      if (!playing) pauseOutput();
       return;
     }
-    const out = outputAudio();
-    if (out.paused && out.src && !out.src.startsWith("data:")) {
-      void resumeEngine();
-      void out.play().catch(() => {});
-    }
-  }, [track?.id, playing]);
+    youtubeStop();
+    if (!playing) pauseOutput();
+  }, [track?.id, track?.youtubeId, playing, track?.deezerId, track?.spotifyId, track?.amazonId, track?.bandcampId, track?.qobuzId, track?.appleId, track?.format, track?.forceYoutube]);
 
   useEffect(() => {
-    if (!track?.youtubeId || !playing) return;
+    if (!isYoutubePlayback(track) || !playing) return;
     const id = window.setInterval(() => {
       const time = youtubeTime();
       const duration = youtubeDuration();
@@ -487,15 +642,21 @@ export function PlayerApp() {
   }, [track?.youtubeId, playing, setTimes, autoNext]);
 
   useEffect(() => {
-    if (!playing || track?.youtubeId) return;
+    if (!playing || isYoutubePlayback(track)) return;
     const id = window.setInterval(() => {
+      if (soulseekHold(usePlayer.getState().tracks[usePlayer.getState().index])) return;
+      if (catalogHold(usePlayer.getState().tracks[usePlayer.getState().index])) return;
       const out = outputAudio();
       const duration = Number.isFinite(out.duration) ? out.duration : 0;
+      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      if (catalogClip(current, duration)) return;
       if (out.ended) {
+        if (promoteCatalogYoutube(current)) return;
         autoNext();
         return;
       }
       if (duration > 2 && out.currentTime > 2 && duration - out.currentTime <= 0.2) {
+        if (promoteCatalogYoutube(current)) return;
         autoNext();
       }
     }, 450);
@@ -559,7 +720,7 @@ export function PlayerApp() {
   }, [normalize, track?.id, track?.replayGain]);
 
   useEffect(() => {
-    if (!normalize || !playing || !track || track.youtubeId || typeof track.replayGain === "number") return;
+    if (!normalize || !playing || !track || isYoutubePlayback(track) || typeof track.replayGain === "number") return;
     const samples: number[] = [];
     const id = window.setInterval(() => {
       if (!getEngine().graphActive) return;
@@ -583,7 +744,7 @@ export function PlayerApp() {
   }, [normalize, playing, track?.id, track?.replayGain, track]);
 
   useEffect(() => {
-    if (!playing || !skipSilence || !track || track.youtubeId || track.deezerId || !getEngine().graphActive) return;
+    if (!playing || !skipSilence || !track || isYoutubePlayback(track) || track.deezerId || !getEngine().graphActive) return;
     const wave = new Uint8Array(256);
     const id = window.setInterval(() => {
       const out = outputAudio();
@@ -602,9 +763,9 @@ export function PlayerApp() {
   useEffect(() => {
     if (!track || !playing) return;
     const id = window.setInterval(() => {
-      const t = track.youtubeId ? youtubeTime() : outputAudio().currentTime;
-      if (t > 5) rememberPosition(track.id, t);
-    }, 4000);
+      const t = isYoutubePlayback(track) ? youtubeTime() : outputAudio().currentTime;
+      if (t > 2) rememberPosition(track.id, t);
+    }, 2000);
     return () => window.clearInterval(id);
   }, [track, playing, rememberPosition]);
 
@@ -631,23 +792,39 @@ export function PlayerApp() {
       album: track.album || [track.genre, track.year].filter(Boolean).join(" · ") || undefined,
       artwork,
     });
+    const out = outputAudio();
+    const duration = Number.isFinite(out.duration) ? out.duration : 0;
+    if (duration > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration,
+          playbackRate: out.playbackRate || 1,
+          position: Math.max(0, Math.min(out.currentTime || 0, duration)),
+        });
+      } catch {
+        /* unsupported */
+      }
+    }
     const playNow = () => {
       setAudioSessionPlayback();
       setPlaying(true);
-      if (track.youtubeId) {
+      if (isYoutubePlayback(track) && track.youtubeId) {
         youtubePlay();
         return;
       }
+      youtubePause();
       const out = outputAudio();
+      const saved = usePlayer.getState().positions[track.id] || 0;
       void resumeEngine();
       void out.play().catch(() => {
-        void beginPlayback(track.url).catch(() => setPlaying(false));
+        const t = (out.currentTime || 0) > 2 ? out.currentTime : saved;
+        void beginPlayback(track.url || track.previewUrl || "", t).catch(() => setPlaying(false));
       });
     };
     navigator.mediaSession.setActionHandler("play", playNow);
     navigator.mediaSession.setActionHandler("pause", () => {
       pauseOutput();
-      youtubePause();
+      youtubeStop();
       setPlaying(false);
     });
     navigator.mediaSession.setActionHandler("previoustrack", () => {
@@ -664,6 +841,11 @@ export function PlayerApp() {
       });
       navigator.mediaSession.setActionHandler("seekbackward", () => onSeek(Math.max(0, outputAudio().currentTime - 10)));
       navigator.mediaSession.setActionHandler("seekforward", () => onSeek(outputAudio().currentTime + 10));
+      navigator.mediaSession.setActionHandler("stop", () => {
+        pauseOutput();
+        youtubeStop();
+        setPlaying(false);
+      });
     } catch {
       /* older safari */
     }
@@ -706,37 +888,62 @@ export function PlayerApp() {
     if (!track) return;
     if (playing) {
       pauseOutput();
-      youtubePause();
+      youtubeStop();
       setPlaying(false);
       return;
     }
     setPlaying(true);
-    if (track.youtubeId) {
+    if (isYoutubePlayback(track) && track.youtubeId) {
+      pauseOutput();
       void youtubeLoad(track.youtubeId, true);
       return;
     }
-    const out = outputAudio();
-    if (out.src && !out.src.startsWith("data:")) {
-      void resumeEngine();
-      void out.play().catch(() => {
-        const keep = out.currentTime || 0;
-        void beginPlayback(track.url, keep).catch(() => setPlaying(false));
-      });
-      return;
-    }
-    if (track.ibroadcastId && track.ibFile) {
-      const session = loadIbSession();
-      if (session) {
-        void beginPlayback(streamUrl(session, track.ibFile, track.ibroadcastId)).catch(() => setPlaying(false));
+    if (isEngineCatalog(track) || track.bandcampId) {
+      youtubePause();
+      const official = officialCatalogUrl(track);
+      const want = official || track.previewUrl || "";
+      const out = outputAudio();
+      const current = out.currentSrc || out.src || "";
+      const same =
+        Boolean(want) &&
+        /^https?:/i.test(want) &&
+        (current === want || current.includes(encodeURIComponent(want)) || current === track.previewUrl);
+      const saved = usePlayer.getState().positions[track.id] || 0;
+      if (same && !out.ended) {
+        const t = (out.currentTime || 0) > 1 ? out.currentTime : saved;
+        void resumeEngine();
+        void beginPlayback(want, t).catch(() => playIndex(usePlayer.getState().index, true));
         return;
       }
-    }
-    if (track.url.startsWith("http") || track.previewUrl) {
-      void beginPlayback(track.previewUrl || track.url).catch(() => setPlaying(false));
+      playIndex(usePlayer.getState().index, true);
       return;
     }
-    void beginPlayback(track.url).catch(() => setPlaying(false));
+    if (isYoutubePlayback(track) && track.youtubeId) {
+      pauseOutput();
+      void youtubeLoad(track.youtubeId, true);
+      return;
+    }
+    youtubePause();
+    const want =
+      track.ibroadcastId && track.ibFile
+        ? (() => {
+            const session = loadIbSession();
+            return session ? streamUrl(session, track.ibFile, track.ibroadcastId) : "";
+          })()
+        : track.previewUrl || track.url;
+    if (!want) {
+      setPlaying(false);
+      return;
+    }
+    const out = outputAudio();
+    const current = out.currentSrc || out.src;
+    const same = Boolean(current) && (current === want || current === track.url || current === track.previewUrl);
+    const saved = usePlayer.getState().positions[track.id] || 0;
+    const keep = same && !out.ended && (out.currentTime || 0) > 1 ? out.currentTime || 0 : saved;
+    void resumeEngine();
+    void beginPlayback(want, keep).catch(() => setPlaying(false));
   }, [playing, setPlaying, track]);
+  togglePlayRef.current = togglePlay;
 
   const goNext = useCallback(() => {
     ignoreEndedRef.current = Date.now() + 800;
@@ -746,7 +953,7 @@ export function PlayerApp() {
 
   const goPrev = useCallback(() => {
     ignoreEndedRef.current = Date.now() + 800;
-    if (track?.youtubeId) {
+    if (track && isYoutubePlayback(track) && track.youtubeId) {
       if (youtubeTime() > 3) {
         youtubeSeek(0);
         return;
@@ -761,7 +968,7 @@ export function PlayerApp() {
 
   const onSeek = useCallback(
     (t: number) => {
-      if (track?.youtubeId) {
+      if (track && isYoutubePlayback(track) && track.youtubeId) {
         youtubeSeek(t);
         setTimes(t, youtubeDuration());
         return;
@@ -860,6 +1067,9 @@ export function PlayerApp() {
           {view === "amazon" ? <AmazonPanel /> : null}
           {view === "find" ? <FindAudioPanel /> : null}
           {view === "archive" ? <ArchivePanel /> : null}
+          {view === "bandcamp" ? <BandcampPanel /> : null}
+          {view === "arcod" ? <ArcodPanel /> : null}
+          {view === "soulseek" ? <SoulseekPanel /> : null}
           {view === "stats" ? <StatsPage /> : null}
           {view === "studio" ? (
             <section className="grid gap-4 px-5 py-4">
@@ -880,6 +1090,7 @@ export function PlayerApp() {
               <AddMusicCard onView={goView} />
               <ApkCard />
               <LibraryBackup />
+              <LibraryClear />
               <LastFmCard />
               <DuplicatesCard />
               <ExtrasPanel onCarMode={() => setCar(true)} />
@@ -887,7 +1098,7 @@ export function PlayerApp() {
           ) : null}
 
           <div className={view === "youtube" ? "px-5 pb-28" : ""}>
-            <YoutubeStage active={view === "youtube" && Boolean(track?.youtubeId)} />
+            <YoutubeStage active={(view === "youtube" || Boolean(track?.forceYoutube)) && Boolean(track?.youtubeId)} />
           </div>
         </main>
 
@@ -913,6 +1124,11 @@ export function PlayerApp() {
           onSeek={onSeek}
           onParty={() => setParty(true)}
           onCarMode={() => setCar(true)}
+          onOpenAlbum={(key) => {
+            setNowOpen(false);
+            setLibraryAlbum(key);
+            goView("library");
+          }}
         />
       ) : null}
       {party ? <PartyViz onClose={() => setParty(false)} /> : null}

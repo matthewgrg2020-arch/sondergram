@@ -1,4 +1,5 @@
 import type { Track } from "./store";
+import { isExplicitAlbum, isExplicitTrack } from "./explicit";
 
 export type AlbumGroup = {
   key: string;
@@ -43,9 +44,25 @@ function normAlbum(name: string) {
   return (name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function albumKey(track: Pick<Track, "album" | "id">) {
+export function isVariousName(value: string) {
+  const name = (value || "").trim().toLowerCase();
+  return (
+    name === "va" ||
+    name === "v/a" ||
+    name === "v.a." ||
+    name === "various" ||
+    name === "various artist" ||
+    name === "various artists" ||
+    name.includes("various artist") ||
+    name.includes("compilation")
+  );
+}
+
+export function albumKey(track: Pick<Track, "album" | "albumArtist" | "artist" | "id">) {
   const album = normAlbum(track.album);
   if (!album || album === "unknown album") return `track::${track.id}`;
+  const albumArtist = (track.albumArtist || "").trim().toLowerCase();
+  if (albumArtist && !isVariousName(albumArtist)) return `album::${albumArtist}::${album}`;
   return `album::${album}`;
 }
 
@@ -72,13 +89,12 @@ function majority(values: string[]) {
 function pickAlbumArtist(songs: Track[]) {
   const albumArtists = songs.map((s) => s.albumArtist || "").filter((s) => s.trim() && !/^unknown/i.test(s));
   const named = majority(albumArtists);
-  if (named) return named.label;
+  if (named && !isVariousName(named.label)) return named.label;
+  if (named && isVariousName(named.label)) return "Various Artists";
   const artists = songs.map((s) => s.artist).filter((s) => s.trim() && !/^unknown/i.test(s));
   const top = majority(artists);
   if (!top) return "Unknown artist";
-  if (new Set(artists.map((a) => a.trim().toLowerCase())).size > 2 && top.n / artists.length < 0.5) {
-    return "Various Artists";
-  }
+  if (new Set(artists.map((a) => a.trim().toLowerCase())).size > 1) return "Various Artists";
   return top.label;
 }
 
@@ -118,7 +134,10 @@ export function groupAlbums(tracks: Track[]): AlbumGroup[] {
       trackIds: songs.map((s) => s.id),
       tags: [...new Set(songs.flatMap((s) => [...(s.tags || []), ...(s.artistTags || [])]))],
       genre,
-      explicit: songs.some((s) => s.explicit),
+      explicit: isExplicitAlbum(
+        { title: first.album.trim() || "Unknown album", artist: pickAlbumArtist(songs), genre, tags: [...new Set(songs.flatMap((s) => [...(s.tags || []), ...(s.artistTags || [])]))] },
+        songs,
+      ) || songs.some((s) => isExplicitTrack(s)),
       note: songs.find((s) => s.albumNote)?.albumNote ?? "",
       lossless: songs.some((s) => s.lossless),
       rating: songs.find((s) => s.albumRating)?.albumRating ?? 0,
@@ -207,26 +226,50 @@ export function groupGenres(albums: AlbumGroup[]): GenreGroup[] {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export function radioScore(seed: Track, candidate: Track): number {
+  if (seed.id === candidate.id) return 0;
+  let n = 0;
+  const artistA = (seed.artist || "").trim().toLowerCase();
+  const artistB = (candidate.artist || "").trim().toLowerCase();
+  if (artistA && artistB && artistA === artistB) n += 4;
+  const albumA = (seed.album || "").trim().toLowerCase();
+  const albumB = (candidate.album || "").trim().toLowerCase();
+  if (albumA && albumB && albumA === albumB) n += 2;
+  const genreA = (seed.genre || seed.artistGenre || "").trim().toLowerCase();
+  const genreB = (candidate.genre || candidate.artistGenre || "").trim().toLowerCase();
+  if (genreA && genreB && (genreA === genreB || genreA.includes(genreB) || genreB.includes(genreA))) n += 3;
+  const tags = new Set((seed.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean));
+  for (const tag of candidate.tags || []) {
+    if (tags.has(tag.trim().toLowerCase())) n += 1;
+  }
+  if (seed.liked && candidate.liked) n += 1;
+  return n;
+}
+
 export function pickRadioIndex(tracks: Track[], current: number, recentIds: string[]): number | null {
   const track = tracks[current];
   if (!track) return null;
-  const tags = new Set(track.tags.map((t) => t.trim().toLowerCase()).filter(Boolean));
-  if (tags.size === 0) return null;
-
-  const scoreOf = (candidate: Track) =>
-    candidate.tags.reduce((n, tag) => n + (tags.has(tag.trim().toLowerCase()) ? 1 : 0), 0);
 
   const scored = tracks
-    .map((candidate, i) => ({ i, n: scoreOf(candidate), id: candidate.id }))
+    .map((candidate, i) => ({ i, n: radioScore(track, candidate), id: candidate.id }))
     .filter((row) => row.i !== current && row.n > 0);
 
-  if (scored.length === 0) return null;
+  let pool = scored.filter((row) => !recentIds.includes(row.id));
+  if (pool.length === 0) pool = scored;
+  if (pool.length === 0) {
+    pool = tracks
+      .map((candidate, i) => ({ i, n: 1, id: candidate.id }))
+      .filter((row) => row.i !== current && !recentIds.includes(row.id));
+  }
+  if (pool.length === 0) {
+    const others = tracks.map((_, i) => i).filter((i) => i !== current);
+    if (!others.length) return null;
+    return others[Math.floor(Math.random() * others.length)] ?? null;
+  }
 
-  const fresh = scored.filter((row) => !recentIds.includes(row.id));
-  const pool = fresh.length > 0 ? fresh : scored;
   const best = Math.max(...pool.map((row) => row.n));
   const top = pool.filter((row) => row.n === best);
-  return top[Math.floor(Math.random() * top.length)].i;
+  return top[Math.floor(Math.random() * top.length)]!.i;
 }
 
 export function similarAlbums(album: AlbumGroup, all: AlbumGroup[], limit = 8): AlbumGroup[] {
@@ -296,8 +339,7 @@ export function findDuplicates(tracks: Track[]) {
 }
 
 export function isCompilation(tracks: Track[]) {
-  const artists = new Set(tracks.map((t) => (t.albumArtist || t.artist || "").trim().toLowerCase()).filter(Boolean));
-  if (artists.size > 2) return true;
-  const name = (tracks[0]?.albumArtist || "").toLowerCase();
-  return name.includes("various") || name === "va" || name.includes("compilation");
+  if (tracks.some((t) => isVariousName(t.albumArtist || ""))) return true;
+  const artists = new Set(tracks.map((t) => (t.artist || "").trim().toLowerCase()).filter(Boolean));
+  return artists.size > 1;
 }

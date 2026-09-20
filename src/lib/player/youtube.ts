@@ -222,12 +222,17 @@ export async function youtubeLoad(id: string, play: boolean) {
     return;
   }
   if (loadedId !== id) {
-    if (play) ytCall("loadVideoById", id);
-    else ytCall("cueVideoById", id);
+    if (play) {
+      ytCall("unMute");
+      ytCall("setVolume", 100);
+      ytCall("loadVideoById", id);
+    } else ytCall("cueVideoById", id);
     loadedId = id;
     return;
   }
   if (play) {
+    ytCall("unMute");
+    ytCall("setVolume", 100);
     const state = ytCall("getPlayerState");
     if (state === window.YT?.PlayerState.ENDED) ytCall("seekTo", 0, true);
     ytCall("playVideo");
@@ -278,6 +283,30 @@ export function youtubeDuration() {
 }
 
 export function youtubeStop() {
+  pending = null;
+  loadToken += 1;
+  loadedId = null;
   ytCall("pauseVideo");
   ytCall("stopVideo");
+  ytCall("mute");
+}
+
+export function youtubeWhenPlaying(ms = 12000) {
+  return new Promise<boolean>((resolve) => {
+    const playing = () => ytCall("getPlayerState") === window.YT?.PlayerState.PLAYING;
+    if (playing()) {
+      resolve(true);
+      return;
+    }
+    const start = Date.now();
+    const tick = window.setInterval(() => {
+      if (playing()) {
+        window.clearInterval(tick);
+        resolve(true);
+      } else if (Date.now() - start > ms) {
+        window.clearInterval(tick);
+        resolve(false);
+      }
+    }, 200);
+  });
 }

@@ -1,8 +1,9 @@
 import { getStoredTrack, listStoredTracks, putStoredTrack, type StoredTrack } from "./persist";
+import { loadPlaylists, savePlaylists, type UserPlaylist } from "./playlists";
 import { zipBlobs, unzipBlobs } from "./zip";
 
 export type BackupMeta = {
-  version: 1;
+  version: 1 | 2;
   exportedAt: string;
   tracks: Array<
     Omit<StoredTrack, "audio" | "cover"> & {
@@ -10,6 +11,18 @@ export type BackupMeta = {
       coverFile?: string;
     }
   >;
+  playlists?: UserPlaylist[];
+};
+
+export type LibraryPack = {
+  blob: Blob;
+  file: File;
+  name: string;
+  tracks: number;
+  albums: number;
+  playlists: number;
+  bytes: number;
+  hasLocalAudio: boolean;
 };
 
 const AUDIO_EXT: Record<string, string> = {
@@ -29,16 +42,88 @@ function extFor(format: string) {
   return AUDIO_EXT[format.toUpperCase()] ?? "bin";
 }
 
+function isRealAudio(blob: Blob | undefined | null) {
+  if (!blob || blob.size < 1024) return false;
+  if (/^text\//i.test(blob.type)) return false;
+  return true;
+}
+
+function isCatalogRow(row: {
+  youtubeId?: string;
+  ibroadcastId?: string;
+  deezerId?: string;
+  spotifyId?: string;
+  amazonId?: string;
+  archiveId?: string;
+  bandcampId?: string;
+  soulseekId?: string;
+  qobuzId?: string;
+  appleId?: string;
+  previewUrl?: string;
+}) {
+  return Boolean(
+    row.youtubeId ||
+      row.ibroadcastId ||
+      row.deezerId ||
+      row.spotifyId ||
+      row.amazonId ||
+      row.archiveId ||
+      row.bandcampId ||
+      row.soulseekId ||
+      row.qobuzId ||
+      row.appleId ||
+      row.previewUrl,
+  );
+}
+
+function catalogKey(row: {
+  id: string;
+  youtubeId?: string;
+  ibroadcastId?: string;
+  deezerId?: string;
+  spotifyId?: string;
+  amazonId?: string;
+  archiveId?: string;
+  bandcampId?: string;
+  soulseekId?: string;
+  qobuzId?: string;
+  appleId?: string;
+}) {
+  if (row.soulseekId) return `slsk:${row.soulseekId}`;
+  if (row.deezerId) return `dz:${row.deezerId}`;
+  if (row.spotifyId) return `sp:${row.spotifyId}`;
+  if (row.appleId) return `ap:${row.appleId}`;
+  if (row.qobuzId) return `qb:${row.qobuzId}`;
+  if (row.amazonId) return `am:${row.amazonId}`;
+  if (row.archiveId) return `ia:${row.archiveId}`;
+  if (row.bandcampId) return `bc:${row.bandcampId}`;
+  if (row.ibroadcastId) return `ib:${row.ibroadcastId}`;
+  if (row.youtubeId) return `yt:${row.youtubeId}`;
+  return `id:${row.id}`;
+}
+
+function albumKeyOf(row: { artist?: string; albumArtist?: string; album?: string }) {
+  return `${(row.albumArtist || row.artist || "").toLowerCase()}::${(row.album || "").toLowerCase()}`;
+}
+
 function triggerDownload(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
   a.rel = "noopener";
+  a.target = "_blank";
   document.body.appendChild(a);
   a.click();
   a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+  window.setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+
+export function formatPackSize(n: number) {
+  if (n < 1000) return `${n} B`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)} KB`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)} MB`;
+  return `${(n / 1_000_000_000).toFixed(1)} GB`;
 }
 
 export function isLibraryBackup(file: File) {
@@ -46,20 +131,41 @@ export function isLibraryBackup(file: File) {
   return name.endsWith(".zip") && (name.includes("sondergram") || name.includes("library"));
 }
 
-export async function exportLibraryBackup() {
+export function canShareLibraryFile() {
+  try {
+    const probe = new File(["sg"], "sondergram-library.zip", { type: "application/zip" });
+    return typeof navigator.share === "function" && (typeof navigator.canShare !== "function" || navigator.canShare({ files: [probe] }));
+  } catch {
+    return typeof navigator.share === "function";
+  }
+}
+
+export async function shareLibraryFile(pack: LibraryPack) {
+  if (!navigator.share) throw new Error("Share is not available on this device");
+  await navigator.share({
+    files: [pack.file],
+    title: "Sondergram library",
+    text: `${pack.tracks} songs from Sondergram`,
+  });
+}
+
+export function downloadLibraryFile(pack: LibraryPack) {
+  triggerDownload(pack.blob, pack.name);
+}
+
+export async function packLibraryBackup(): Promise<LibraryPack> {
   const rows = await listStoredTracks();
   const files: { name: string; data: Blob }[] = [];
   const tracks: BackupMeta["tracks"] = [];
+  let hasLocalAudio = false;
   for (const row of rows) {
     const stored = (await getStoredTrack(row.id)) ?? row;
-    const audioName =
-      stored.youtubeId || stored.ibroadcastId
-        ? undefined
-        : stored.audio.size > 0
-          ? `audio/${stored.id}.${extFor(stored.format)}`
-          : undefined;
-    const coverName = stored.cover && stored.cover.size > 0 ? `cover/${stored.id}.jpg` : undefined;
-    if (audioName) files.push({ name: audioName, data: stored.audio });
+    const audioName = isRealAudio(stored.audio) ? `audio/${stored.id}.${extFor(stored.format)}` : undefined;
+    const coverName = stored.cover && stored.cover.size > 32 ? `cover/${stored.id}.jpg` : undefined;
+    if (audioName) {
+      files.push({ name: audioName, data: stored.audio });
+      hasLocalAudio = true;
+    }
     if (coverName && stored.cover) files.push({ name: coverName, data: stored.cover });
     const { audio: _a, cover: _c, ...meta } = stored;
     tracks.push({
@@ -68,19 +174,57 @@ export async function exportLibraryBackup() {
       coverFile: coverName,
     });
   }
+  const playlists = loadPlaylists();
   const catalog: BackupMeta = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     tracks,
+    playlists,
   };
   files.unshift({
     name: "library.json",
     data: new Blob([JSON.stringify(catalog)], { type: "application/json" }),
   });
+  files.push({
+    name: "README.txt",
+    data: new Blob(
+      [
+        [
+          "Sondergram library",
+          "",
+          "Open Sondergram on the other phone or computer.",
+          "Settings → Move library → Restore zip.",
+          "You can also drop this zip onto the Library page.",
+          "",
+          "This pack has your songs, artwork, likes, and playlists.",
+          "Streaming titles play the same way they do here.",
+          "Soulseek still needs your Soulseek login on the new device.",
+        ].join("\n"),
+      ],
+      { type: "text/plain" },
+    ),
+  });
   const zip = await zipBlobs(files);
   const stamp = new Date().toISOString().slice(0, 10);
-  triggerDownload(zip, `sondergram-library-${stamp}.zip`);
-  return tracks.length;
+  const name = `sondergram-library-${stamp}.zip`;
+  const file = new File([zip], name, { type: "application/zip" });
+  const albums = new Set(tracks.map(albumKeyOf)).size;
+  return {
+    blob: zip,
+    file,
+    name,
+    tracks: tracks.length,
+    albums,
+    playlists: playlists.length,
+    bytes: zip.size,
+    hasLocalAudio,
+  };
+}
+
+export async function exportLibraryBackup() {
+  const pack = await packLibraryBackup();
+  downloadLibraryFile(pack);
+  return pack.tracks;
 }
 
 export async function importLibraryBackup(file: File) {
@@ -90,22 +234,55 @@ export async function importLibraryBackup(file: File) {
   if (!catalogBlob) throw new Error("Not a Sondergram library backup");
   const catalog = JSON.parse(await catalogBlob.text()) as BackupMeta;
   if (!catalog?.tracks?.length) throw new Error("Backup has no tracks");
-  const existing = new Set((await listStoredTracks()).map((t) => t.id));
+  const existingRows = await listStoredTracks();
+  const existingIds = new Set(existingRows.map((t) => t.id));
+  const existingKeys = new Map(existingRows.map((t) => [catalogKey(t), t.id]));
+  const idMap = new Map<string, string>();
   let imported = 0;
   for (const row of catalog.tracks) {
-    if (existing.has(row.id)) continue;
+    const key = catalogKey(row);
+    const already = existingIds.has(row.id) ? row.id : existingKeys.get(key);
+    if (already) {
+      idMap.set(row.id, already);
+      continue;
+    }
     const audio = row.audioFile ? map.get(row.audioFile) : undefined;
     const cover = row.coverFile ? map.get(row.coverFile) : undefined;
-    if (!row.youtubeId && !row.ibroadcastId && (!audio || audio.size === 0)) continue;
+    if (!isCatalogRow(row) && !isRealAudio(audio ?? null)) continue;
+    const placeholder = new Blob([row.soulseekId || row.deezerId || row.spotifyId || row.appleId || row.id], {
+      type: "text/plain",
+    });
     await putStoredTrack({
       ...row,
       tags: row.tags ?? [],
-      audio: audio ?? new Blob([row.youtubeId || row.ibroadcastId || ""], { type: "text/plain" }),
+      audio: isRealAudio(audio ?? null) && audio ? audio : placeholder,
       cover: cover && cover.size > 0 ? cover : null,
       addedAt: row.addedAt || Date.now(),
     });
-    existing.add(row.id);
+    existingIds.add(row.id);
+    existingKeys.set(key, row.id);
+    idMap.set(row.id, row.id);
     imported += 1;
+  }
+  if (catalog.playlists?.length) {
+    const have = loadPlaylists();
+    const haveIds = new Set(have.map((p) => p.id));
+    const haveNames = new Set(have.map((p) => p.name.toLowerCase()));
+    const extra: UserPlaylist[] = [];
+    for (const list of catalog.playlists) {
+      if (!list?.name || haveIds.has(list.id) || haveNames.has(list.name.toLowerCase())) continue;
+      const trackIds = (list.trackIds || []).map((id) => idMap.get(id)).filter((id): id is string => Boolean(id));
+      if (!trackIds.length) continue;
+      extra.push({
+        id: list.id,
+        name: list.name,
+        trackIds,
+        createdAt: list.createdAt || Date.now(),
+      });
+      haveIds.add(list.id);
+      haveNames.add(list.name.toLowerCase());
+    }
+    if (extra.length) savePlaylists([...have, ...extra].slice(0, 40));
   }
   return imported;
 }

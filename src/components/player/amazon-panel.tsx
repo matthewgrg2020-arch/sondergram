@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AudioLines, LogOut } from "lucide-react";
 import { loadAmSession, saveAmSession, type AmSession } from "@/lib/player/amazon";
 import { usePlayer } from "@/lib/player/store";
+import { StreamCatalog } from "./stream-catalog";
 
 export function AmazonPanel() {
   const tracks = usePlayer((s) => s.tracks);
@@ -21,9 +22,8 @@ export function AmazonPanel() {
         Amazon Music
       </h2>
       <p className="max-w-xl text-sm leading-relaxed text-muted">
-        Paste an Amazon Music album, artist, or playlist link. Sondergram reads the catalog page for titles,
-        artists, year, and artwork. Playback uses public previews (Amazon does not allow third-party full
-        streams). An ARL cookie can list albums from your own library.
+        Paste an Amazon Music album, artist, or playlist link — or search below. Results add to your library
+        with cover and metadata. Playback uses public previews unless you own the files.
       </p>
 
       <form
@@ -123,6 +123,24 @@ export function AmazonPanel() {
       {amTracks.length > 0 ? (
         <p className="text-xs text-subtle">{amTracks.length} Amazon titles in Sondergram</p>
       ) : null}
+
+      <AmazonSearch />
     </section>
+  );
+}
+
+function AmazonSearch() {
+  const [q, setQ] = useState("");
+  return (
+    <div className="space-y-3">
+      <p className="text-xs uppercase tracking-widest text-subtle">Search Amazon Music</p>
+      <input
+        className="h-11 w-full max-w-xl rounded-lg bg-raised px-3 text-sm outline-none"
+        value={q}
+        placeholder="Artist, album, or song"
+        onChange={(e) => setQ(e.target.value)}
+      />
+      <StreamCatalog query={q} locked="Amazon" />
+    </div>
   );
 }

@@ -83,57 +83,25 @@ function score(hit: AlbumHit, artist: string, album: string) {
   return n;
 }
 
-async function wikiDescription(artist: string, album: string) {
-  const query = [album, artist, "album"].filter((part) => part && !/^unknown/i.test(part)).join(" ");
-  if (!query) return "";
-  try {
-    const searchUrl = new URL("https://en.wikipedia.org/w/api.php");
-    searchUrl.searchParams.set("action", "query");
-    searchUrl.searchParams.set("list", "search");
-    searchUrl.searchParams.set("srsearch", query);
-    searchUrl.searchParams.set("srlimit", "5");
-    searchUrl.searchParams.set("format", "json");
-    searchUrl.searchParams.set("origin", "*");
-    const searchRes = await fetch(searchUrl.toString());
-    if (!searchRes.ok) return "";
-    const search = (await searchRes.json()) as { query?: { search?: { title: string }[] } };
-    const title = search.query?.search?.find((row) => {
-      const t = row.title.toLowerCase();
-      return t.includes(album.trim().toLowerCase().slice(0, 12)) || t.includes("album");
-    })?.title ?? search.query?.search?.[0]?.title;
-    if (!title) return "";
-    const extractUrl = new URL("https://en.wikipedia.org/w/api.php");
-    extractUrl.searchParams.set("action", "query");
-    extractUrl.searchParams.set("prop", "extracts");
-    extractUrl.searchParams.set("exintro", "1");
-    extractUrl.searchParams.set("explaintext", "1");
-    extractUrl.searchParams.set("titles", title);
-    extractUrl.searchParams.set("format", "json");
-    extractUrl.searchParams.set("origin", "*");
-    const extractRes = await fetch(extractUrl.toString());
-    if (!extractRes.ok) return "";
-    const data = (await extractRes.json()) as {
-      query?: { pages?: Record<string, { extract?: string }> };
-    };
-    const page = Object.values(data.query?.pages ?? {})[0];
-    const text = (page?.extract || "").replace(/\s+/g, " ").trim();
-    if (text.length < 40) return "";
-    return text.slice(0, 600);
-  } catch {
-    return "";
-  }
-}
-
 export async function searchAlbums(artist: string, album: string, track?: string): Promise<AlbumHit[]> {
   const cleanArtist = /^unknown/i.test(artist) ? "" : artist.trim();
   const cleanAlbum = /^unknown/i.test(album) ? "" : album.trim();
   const term = [cleanArtist, cleanAlbum || track || ""].filter(Boolean).join(" ").trim();
   if (!term) return [];
 
-  const [albums, songs, deezer] = await Promise.all([
+  try {
+    const { searchAlbumHits } = await import("./cover-search-api");
+    const hits = await searchAlbumHits({
+      data: { artist: cleanArtist, album: cleanAlbum, track: track || "" },
+    });
+    if (hits?.length) return hits;
+  } catch {
+    /* fall through to the browser catalogs */
+  }
+
+  const [albums, songs] = await Promise.all([
     itunesSearch(cleanAlbum ? `${cleanArtist} ${cleanAlbum}`.trim() : term, "album"),
     itunesSearch([cleanArtist, track || cleanAlbum].filter(Boolean).join(" "), "song"),
-    deezerAlbums(cleanArtist, cleanAlbum || track || ""),
   ]);
 
   const hits: AlbumHit[] = [];
@@ -147,41 +115,8 @@ export async function searchAlbums(artist: string, album: string, track?: string
   };
   for (const row of albums) push(fromItunes(row));
   for (const row of songs) push(fromItunes(row));
-  for (const hit of deezer) push(hit);
   hits.sort((a, b) => score(b, cleanArtist, cleanAlbum) - score(a, cleanArtist, cleanAlbum));
-  const top = hits.slice(0, 12);
-  await Promise.all(
-    top.slice(0, 4).map(async (hit) => {
-      if (!hit.description) {
-        hit.description = await wikiDescription(hit.artist || cleanArtist, hit.title || cleanAlbum);
-      }
-    }),
-  );
-  return top;
-}
-
-async function deezerAlbums(artist: string, album: string): Promise<AlbumHit[]> {
-  const q = encodeURIComponent([artist, album].filter(Boolean).join(" "));
-  if (!q) return [];
-  try {
-    const res = await fetch(`https://api.deezer.com/search/album?q=${q}&limit=8`);
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      data?: { title?: string; cover_xl?: string; cover_big?: string; release_date?: string; artist?: { name?: string }; nb_tracks?: number; explicit_lyrics?: boolean }[];
-    };
-    return (data.data ?? []).map((row) => ({
-      title: (row.title || "").trim() || "Unknown album",
-      artist: (row.artist?.name || artist).trim() || "Unknown artist",
-      year: yearOf(row.release_date),
-      genre: "",
-      artwork: row.cover_xl || row.cover_big || "",
-      description: "",
-      explicit: Boolean(row.explicit_lyrics),
-      trackCount: Number(row.nb_tracks) || 0,
-    }));
-  } catch {
-    return [];
-  }
+  return hits.slice(0, 12);
 }
 
 export async function lookupAlbum(artist: string, album: string, track?: string): Promise<AlbumHit | null> {
@@ -189,13 +124,86 @@ export async function lookupAlbum(artist: string, album: string, track?: string)
   return hits[0] ?? null;
 }
 
-export async function blobFromUrl(src: string): Promise<Blob | null> {
+export type TracklistSong = {
+  trackNo: number;
+  title: string;
+  artist: string;
+  album: string;
+};
+
+export async function lookupTracklist(artist: string, album: string): Promise<TracklistSong[]> {
+  const a = artist.trim();
+  const b = album.trim();
+  if (!a && !b) return [];
+  const url = new URL("https://itunes.apple.com/search");
+  url.searchParams.set("term", [a, b].filter(Boolean).join(" "));
+  url.searchParams.set("media", "music");
+  url.searchParams.set("entity", "song");
+  url.searchParams.set("limit", "50");
   try {
-    const res = await fetch(src);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    if (!blob.type.startsWith("image/") && blob.size === 0) return null;
-    return blob;
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      results?: (ItunesResult & { trackNumber?: number; trackName?: string; collectionName?: string })[];
+    };
+    const groups = new Map<string, TracklistSong[]>();
+    for (const row of data.results ?? []) {
+      const title = (row.trackName || "").trim();
+      const col = (row.collectionName || "").trim();
+      const art = (row.artistName || a).trim();
+      const n = Number(row.trackNumber) || 0;
+      if (!title) continue;
+      const hay = `${art} ${col}`.toLowerCase();
+      if (b && !hay.includes(b.toLowerCase()) && !b.toLowerCase().includes(col.toLowerCase())) continue;
+      if (a && !hay.includes(a.toLowerCase()) && !a.toLowerCase().includes(art.toLowerCase())) continue;
+      const key = `${art.toLowerCase()}::${col.toLowerCase()}`;
+      const list = groups.get(key) ?? [];
+      if (!list.some((song) => song.trackNo === n && song.title === title)) {
+        list.push({ trackNo: n, title, artist: art, album: col || b });
+      }
+      groups.set(key, list);
+    }
+    let best: TracklistSong[] = [];
+    for (const list of groups.values()) {
+      if (list.length > best.length) best = list;
+    }
+    return best.sort((x, y) => x.trackNo - y.trackNo);
+  } catch {
+    return [];
+  }
+}
+
+export async function blobFromUrl(src: string): Promise<Blob | null> {
+  if (!src) return null;
+  if (/^(blob:|data:)/i.test(src)) {
+    try {
+      const res = await fetch(src);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return blob.size > 400 ? blob : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const { proxyCoverUrl } = await import("./covers");
+    const res = await fetch(proxyCoverUrl(src));
+    if (res.ok) {
+      const blob = await res.blob();
+      const type = blob.type || "";
+      if (blob.size > 400 && (!type || type.startsWith("image/"))) return blob;
+    }
+  } catch {
+    /* try the server function next */
+  }
+  try {
+    const { fetchCoverImage } = await import("./cover-search-api");
+    const row = await fetchCoverImage({ data: { url: src } });
+    if (!row?.ok) return null;
+    const bin = atob(row.b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: row.type || "image/jpeg" });
   } catch {
     return null;
   }

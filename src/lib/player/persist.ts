@@ -26,6 +26,10 @@ export type StoredTrack = {
   deezerId?: string;
   spotifyId?: string;
   archiveId?: string;
+  bandcampId?: string;
+  bandcampUrl?: string;
+  qobuzId?: string;
+  appleId?: string;
   previewUrl?: string;
   trackNo?: number;
   diskNo?: number;
@@ -45,6 +49,7 @@ export type StoredTrack = {
   artistTags?: string[];
   metaEdited?: boolean;
   amazonId?: string;
+  soulseekId?: string;
   replayGain?: number;
   audio: Blob;
   audioType?: string;
@@ -254,7 +259,20 @@ export async function getStoredTrack(id: string): Promise<StoredTrack | undefine
 
 export async function putStoredTrack(track: StoredTrack) {
   await requestPersist();
-  if (!track.youtubeId && !track.ibroadcastId && track.audio.size > 0) await writeOpfs(track.id, track.audio);
+  if (
+    !track.youtubeId &&
+    !track.ibroadcastId &&
+    !track.deezerId &&
+    !track.spotifyId &&
+    !track.amazonId &&
+    !track.archiveId &&
+    !track.bandcampId &&
+    !track.soulseekId &&
+    !track.previewUrl &&
+    track.audio.size > 0
+  ) {
+    await writeOpfs(track.id, track.audio);
+  }
   const audioType = track.audio.type || track.audioType || "audio/mpeg";
   const coverType = track.cover?.type || "image/jpeg";
   let coverPayload: ArrayBuffer | null = null;
@@ -283,6 +301,21 @@ export async function deleteStoredTrack(id: string) {
   const db = await openDb();
   const tx = db.transaction(STORE, "readwrite");
   tx.objectStore(STORE).delete(id);
+  await txDone(tx);
+}
+
+export async function clearStoredLibrary() {
+  const db = await openDb();
+  const rows = await storeGetAll(db);
+  for (const row of rows) {
+    try {
+      await deleteOpfs(row.id);
+    } catch {
+      /* leftover file */
+    }
+  }
+  const tx = db.transaction(STORE, "readwrite");
+  tx.objectStore(STORE).clear();
   await txDone(tx);
 }
 
@@ -321,24 +354,48 @@ export async function updateStoredMeta(
       | "artistTags"
       | "metaEdited"
       | "amazonId"
+      | "soulseekId"
       | "replayGain"
+      | "format"
+      | "lossless"
+      | "archiveId"
+      | "bandcampId"
+      | "bandcampUrl"
+      | "qobuzId"
+      | "appleId"
+      | "youtubeId"
     >
   >,
 ) {
+  await requestPersist();
   const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  const store = tx.objectStore(STORE);
-  const current = await new Promise<RawRow | undefined>((resolve, reject) => {
-    const req = store.get(id);
-    req.onsuccess = () => resolve(req.result as RawRow | undefined);
-    req.onerror = () => reject(req.error);
-  });
-  if (!current) return;
-  const next: RawRow = { ...current, ...patch };
-  if (patch.cover instanceof Blob) {
-    next.cover = await patch.cover.arrayBuffer();
-    next.coverType = patch.cover.type || "image/jpeg";
+  const current = await storeGet(db, id);
+  const { cover: coverPatch, ...rest } = patch;
+  let cover = current?.cover ?? null;
+  let coverType = current?.coverType || "image/jpeg";
+  if (coverPatch instanceof Blob && coverPatch.size > 0) {
+    cover = await coverPatch.arrayBuffer();
+    coverType = coverPatch.type || "image/jpeg";
   }
-  store.put(next);
-  await txDone(tx);
+  const base: RawRow =
+    current ??
+    ({
+      id,
+      name: "",
+      artist: "",
+      album: "",
+      genre: "",
+      tags: [],
+      year: "",
+      format: "",
+      sampleRate: null,
+      bitDepth: null,
+      bitrate: null,
+      channels: null,
+      lossless: false,
+      audio: new ArrayBuffer(0),
+      cover: null,
+      addedAt: Date.now(),
+    } as RawRow);
+  await storePut(db, { ...base, ...rest, cover, coverType, id });
 }

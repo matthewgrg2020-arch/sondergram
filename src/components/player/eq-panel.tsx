@@ -2,6 +2,7 @@ import { EQ_BANDS, EQ_MAX, EQ_MIN, EQ_PRESETS } from "@/lib/player/constants";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { usePlayer } from "@/lib/player/store";
+import { EqGraph } from "./eq-graph";
 
 function formatDb(value: number) {
   const rounded = Math.round(value * 10) / 10;
@@ -20,13 +21,25 @@ export function EqPanel() {
   const saveCustomPreset = usePlayer((s) => s.saveCustomPreset);
   const deleteCustomPreset = usePlayer((s) => s.deleteCustomPreset);
   const [name, setName] = useState("");
+  const [sliders, setSliders] = useState(false);
 
   return (
-    <section className="panel p-4 sm:p-5">
+    <section className="panel p-4 sm:p-5 xl:col-span-2">
       <div className="mb-4 flex items-baseline justify-between gap-3">
         <h2 className="font-display text-lg tracking-tight text-fg">Equalizer</h2>
-        <span className="text-xs uppercase tracking-widest text-subtle">31 band · saved</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSliders((v) => !v)}
+            className="text-xs uppercase tracking-widest text-subtle hover:text-fg"
+          >
+            {sliders ? "Hide sliders" : "Sliders"}
+          </button>
+          <span className="text-xs uppercase tracking-widest text-subtle">31 band · graph</span>
+        </div>
       </div>
+
+      <EqGraph />
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         {EQ_PRESETS.map((preset) => (
@@ -90,6 +103,22 @@ export function EqPanel() {
         </button>
       </form>
 
+      <div className="mt-4 mb-3 flex items-center gap-3">
+        <span className="text-[11px] uppercase tracking-widest text-subtle">Preamp</span>
+        <input
+          className="h-1.5 flex-1 accent-hot"
+          type="range"
+          min={EQ_MIN}
+          max={EQ_MAX}
+          step={0.5}
+          value={preamp}
+          aria-label="Preamp"
+          onChange={(e) => setPreamp(Number(e.target.value))}
+        />
+        <span className="w-10 text-right font-mono text-[11px] text-muted">{formatDb(preamp)}</span>
+      </div>
+
+      {sliders ? (
       <div className="flex gap-3 overflow-x-auto pb-1">
         <label className="flex shrink-0 flex-col items-center gap-1.5 border-r border-border pr-3">
           <span className="font-mono text-[10px] tabular-nums text-muted">{formatDb(preamp)}</span>
@@ -127,6 +156,7 @@ export function EqPanel() {
           ))}
         </div>
       </div>
+      ) : null}
     </section>
   );
 }

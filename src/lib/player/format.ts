@@ -116,6 +116,35 @@ export function labelFromCodec(container?: string, codec?: string, fallback = "A
   return fallback;
 }
 
+export function formatKhz(sampleRate?: number | null) {
+  if (!sampleRate) return "";
+  const hz = sampleRate < 500 ? sampleRate * 1000 : sampleRate;
+  const khz = hz / 1000;
+  if (!Number.isFinite(khz) || khz <= 0) return "";
+  return Number.isInteger(khz) ? String(khz) : khz.toFixed(1).replace(/\.0$/, "");
+}
+
+export function formatSign(info: {
+  format?: string;
+  lossless?: boolean;
+  sampleRate?: number | null;
+  bitDepth?: number | null;
+  bitrate?: number | null;
+  tags?: string[];
+}) {
+  const fmt = (info.format || "AUDIO").replace(/^\s+|\s+$/g, "").toUpperCase() || "AUDIO";
+  const rate = formatKhz(info.sampleRate);
+  if (rate && info.bitDepth) return `${fmt} ${rate} / ${info.bitDepth}`;
+  if (rate) return `${fmt} ${rate}`;
+  const raw = info.bitrate || 0;
+  if (!info.lossless && raw > 32) {
+    const kbps = raw > 2000 ? Math.round(raw / 1000) : Math.round(raw);
+    return `${fmt} ${kbps}`;
+  }
+  if ((info.tags || []).some((tag) => /atmos/i.test(tag))) return "ATMOS";
+  return fmt;
+}
+
 export function formatHz(sampleRate?: number | null) {
   if (!sampleRate) return null;
   if (sampleRate >= 1000) {

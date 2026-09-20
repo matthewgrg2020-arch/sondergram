@@ -2,11 +2,14 @@ import { ChevronDown, Dices, Plus, Smartphone } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { groupAlbums, isCompilation, type AlbumGroup } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
+import { useLibraryView, type CoverSize, type TitleMode } from "@/lib/player/library-view";
+import { homeGreeting, libraryMixes } from "@/lib/player/mixes";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { AlbumTile, albumBadges } from "./album-tile";
 
 type HomeTab = "home" | "new" | "picks" | "aoty";
-type Size = "s" | "m" | "l";
+type Size = CoverSize;
+type Titles = TitleMode;
 
 const TABS: { id: HomeTab; label: string }[] = [
   { id: "home", label: "Home" },
@@ -20,21 +23,15 @@ const SIZE_OPTS: { id: Size; label: string }[] = [
   { id: "m", label: "Medium" },
   { id: "l", label: "Large" },
 ];
+const TITLE_OPTS: { id: Titles; label: string }[] = [
+  { id: "on", label: "Show" },
+  { id: "off", label: "Cover only" },
+];
 
 function tileSize(size: Size) {
   if (size === "s") return "8.5rem";
   if (size === "l") return "14.5rem";
   return "11.25rem";
-}
-
-function loadSize(): Size {
-  try {
-    const value = localStorage.getItem("sondergram:lib-size");
-    if (value === "s" || value === "m" || value === "l") return value;
-  } catch {
-    /* private */
-  }
-  return "m";
 }
 
 function songsOf(album: AlbumGroup, tracks: Track[]) {
@@ -56,12 +53,15 @@ export function ListenNow({
   const plays = usePlayer((s) => s.plays);
   const recent = usePlayer((s) => s.recent);
   const playIds = usePlayer((s) => s.playIds);
+  const playlists = usePlayer((s) => s.playlists);
+  const playPlaylist = usePlayer((s) => s.playPlaylist);
   const djMix = usePlayer((s) => s.djMix);
   const queueNextMany = usePlayer((s) => s.queueNextMany);
+  const removeTracks = usePlayer((s) => s.removeTracks);
   const addFiles = usePlayer((s) => s.addFiles);
   const inputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<HomeTab>("home");
-  const [size, setSize] = useState<Size>(loadSize);
+  const { size, titles, setSize, setTitles } = useLibraryView();
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
   const yearNow = String(new Date().getFullYear());
 
@@ -117,6 +117,9 @@ export function ListenNow({
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [tracks]);
 
+  const mixes = useMemo(() => libraryMixes(tracks, plays, recent), [tracks, plays, recent]);
+  const greeting = homeGreeting();
+
   const smart = useMemo(() => {
     const liked = tracks.filter((t) => t.liked).map((t) => t.id);
     const unplayed = tracks.filter((t) => !(plays[t.id] ?? 0)).map((t) => t.id);
@@ -124,11 +127,13 @@ export function ListenNow({
     const stars = albums.filter((a) => a.rating >= 4.5).flatMap((a) => a.trackIds);
     const comps = albums.filter((a) => isCompilation(songsOf(a, tracks))).flatMap((a) => a.trackIds);
     const added = [...tracks].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0)).slice(0, 40).map((t) => t.id);
+    const soulseek = tracks.filter((t) => t.soulseekId).map((t) => t.id);
     return [
       { id: "unplayed", label: "Unplayed", ids: unplayed },
       { id: "liked", label: "Loved", ids: liked },
       { id: "stars", label: "5-star", ids: stars },
       { id: "lossless", label: "Lossless", ids: lossless },
+      { id: "soulseek", label: "Soulseek", ids: soulseek },
       { id: "comps", label: "Compilations", ids: comps },
       { id: "added", label: "Just in", ids: added },
     ].filter((row) => row.ids.length > 0);
@@ -173,18 +178,29 @@ export function ListenNow({
                 aria-label="Cover size"
                 value={size}
                 onChange={(e) => {
-                  const next = e.target.value as Size;
-                  setSize(next);
-                  try {
-                    localStorage.setItem("sondergram:lib-size", next);
-                  } catch {
-                    /* quota */
-                  }
+                  setSize(e.target.value as Size);
                 }}
               >
                 {SIZE_OPTS.map((option) => (
                   <option key={option.id} value={option.id}>
                     Size: {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-subtle" strokeWidth={1.75} />
+            </label>
+            <label className="relative inline-flex items-center">
+              <select
+                className="h-8 appearance-none rounded-full bg-raised py-0 pl-3 pr-7 text-xs text-fg"
+                aria-label="Album name"
+                value={titles}
+                onChange={(e) => {
+                  setTitles(e.target.value as Titles);
+                }}
+              >
+                {TITLE_OPTS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    Name: {option.label}
                   </option>
                 ))}
               </select>
@@ -258,6 +274,36 @@ export function ListenNow({
               </label>
             </div>
           ) : null}
+          {tab === "home" && mixes.length > 0 ? (
+            <div className="mb-6">
+              <p className="mb-1 text-2xl font-semibold tracking-tight">{greeting}</p>
+              <p className="mb-3 text-xs uppercase tracking-widest text-subtle">Made for you</p>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {mixes.map((row) => {
+                  const tiles = row.covers.slice(0, 4);
+                  while (tiles.length < 4) tiles.push(tiles[0] ?? null);
+                  return (
+                    <button
+                      key={row.id}
+                      type="button"
+                      onClick={() => playIds(row.trackIds)}
+                      className="w-36 shrink-0 text-left"
+                    >
+                      <div className="grid aspect-square grid-cols-2 overflow-hidden rounded-xl bg-raised">
+                        {tiles.map((src, i) => (
+                          <div key={`${row.id}-${i}`} className="bg-surface">
+                            {src ? <img src={src} alt="" className="size-full object-cover" /> : null}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-2 truncate text-sm">{row.title}</p>
+                      <p className="truncate text-xs text-muted">{row.subtitle}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           {tab === "home" && smart.length > 0 ? (
             <div className="mb-5">
               <p className="mb-3 text-xs uppercase tracking-widest text-subtle">Smart playlists</p>
@@ -271,6 +317,24 @@ export function ListenNow({
                   >
                     {row.label}
                     <span className="ml-1.5 text-subtle">{row.ids.length}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {tab === "home" && playlists.length > 0 ? (
+            <div className="mb-5">
+              <p className="mb-3 text-xs uppercase tracking-widest text-subtle">Your playlists</p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {playlists.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => playPlaylist(row.id)}
+                    className="h-9 shrink-0 rounded-full bg-raised px-3 text-xs text-fg hover:bg-accent hover:text-accent-fg"
+                  >
+                    {row.name}
+                    <span className="ml-1.5 text-subtle">{row.trackIds.length}</span>
                   </button>
                 ))}
               </div>
@@ -319,7 +383,7 @@ export function ListenNow({
             </div>
           ) : null}
         <div
-          className="grid justify-start gap-x-4 gap-y-5"
+          className={titles === "on" ? "grid justify-start gap-x-4 gap-y-5" : "grid justify-start gap-x-4 gap-y-3"}
           style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tileSize(size)}, ${tileSize(size)}))` }}
         >
           {shown.map((album) => {
@@ -333,9 +397,11 @@ export function ListenNow({
                 cover={album.coverUrl}
                 badges={albumBadges(songs)}
                 explicit={album.explicit}
+                showTitles={titles === "on"}
                 onOpen={() => (onOpenAlbum ? onOpenAlbum(album.key) : onOpenLibrary())}
                 onPlay={() => playIds(album.trackIds)}
                 onQueue={() => queueNextMany(album.trackIds)}
+                onRemove={() => removeTracks(album.trackIds)}
               />
             );
           })}

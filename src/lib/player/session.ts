@@ -38,6 +38,7 @@ export type SessionData = {
   mono: boolean;
   remaster: RemasterPreset;
   remasterAmt: number;
+  autoEq: boolean;
 };
 
 const KEY = "sondergram:session";
@@ -88,6 +89,7 @@ export function emptySession(): SessionData {
     mono: false,
     remaster: "off",
     remasterAmt: 0.72,
+    autoEq: false,
   };
 }
 
@@ -115,6 +117,7 @@ export function loadSession(): SessionData {
       remaster === "clean" || remaster === "full" || remaster === "vinyl" || remaster === "loud" ? remaster : "off";
     const amt = Number(parsed.remasterAmt);
     parsed.remasterAmt = Number.isFinite(amt) ? Math.max(0, Math.min(1, amt)) : 0.72;
+    parsed.autoEq = Boolean(parsed.autoEq);
     if (parsed.listenDay !== todayKey()) {
       parsed.listenMs = 0;
       parsed.listenDay = todayKey();

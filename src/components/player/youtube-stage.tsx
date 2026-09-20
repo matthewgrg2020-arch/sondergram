@@ -20,7 +20,7 @@ export function YoutubeStage({ active }: { active: boolean }) {
       className={cn(
         active
           ? "relative aspect-video w-full overflow-hidden rounded-lg bg-raised shadow-[var(--shadow-border)]"
-          : "pointer-events-none fixed bottom-0 left-0 z-0 h-px w-px overflow-hidden opacity-[0.02]",
+          : "pointer-events-none fixed bottom-0 left-0 z-0 h-48 w-80 overflow-hidden opacity-[0.02]",
       )}
     >
       <div

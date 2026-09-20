@@ -1,9 +1,37 @@
+import { searchPicardCovers, searchWebCovers } from "./cover-search-api";
+
+export function proxyCoverUrl(url: string) {
+  if (!url) return url;
+  if (/^(blob:|data:)/i.test(url)) return url;
+  if (url.startsWith("/api/cover")) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
+  return `/api/cover?u=${encodeURIComponent(url)}`;
+}
+
 export type CoverHit = {
+
   url: string;
   thumb: string;
   source: string;
   label: string;
 };
+
+export type CoverSource = "all" | "google" | "picard" | "catalog";
+
+async function picardCovers(artist: string, album: string): Promise<CoverHit[]> {
+  if (!artist && !album) return [];
+  try {
+    const hits = await searchPicardCovers({ data: { artist, album } });
+    return (hits ?? []).map((hit) => ({
+      url: hit.url,
+      thumb: hit.thumb || hit.url,
+      source: "MusicBrainz Picard",
+      label: hit.label || album,
+    }));
+  } catch {
+    return [];
+  }
+}
 
 function clean(value: string) {
   return /^unknown/i.test(value) ? "" : value.trim();
@@ -88,35 +116,6 @@ async function audioDbCovers(artist: string, album: string): Promise<CoverHit[]>
   return hits;
 }
 
-async function archiveCovers(artist: string, album: string): Promise<CoverHit[]> {
-  const query = encodeURIComponent(
-    [album && `release:"${album}"`, artist && `artist:"${artist}"`].filter(Boolean).join(" AND "),
-  );
-  if (!query) return [];
-  const groups = await json<{ release_groups?: { id?: string; title?: string }[] }>(
-    `https://musicbrainz.org/ws/2/release-group/?query=${query}&limit=6&fmt=json`,
-    { Accept: "application/json" },
-  );
-  const hits: CoverHit[] = [];
-  for (const group of groups?.release_groups ?? []) {
-    if (!group.id) continue;
-    const art = await json<{
-      images?: { image?: string; thumbnails?: { small?: string; large?: string; "250"?: string; "500"?: string }; front?: boolean; types?: string[] }[];
-    }>(`https://coverartarchive.org/release-group/${group.id}`);
-    for (const image of art?.images ?? []) {
-      const url = image.image || image.thumbnails?.large || image.thumbnails?.["500"] || "";
-      if (!url) continue;
-      hits.push({
-        url,
-        thumb: image.thumbnails?.small || image.thumbnails?.["250"] || url,
-        source: "Cover Art Archive",
-        label: image.front ? group.title || album : (image.types || []).join(" · ") || group.title || album,
-      });
-    }
-  }
-  return hits;
-}
-
 async function wikiCovers(artist: string, album: string): Promise<CoverHit[]> {
   const titleGuess = [album, artist].filter(Boolean).join(" ");
   if (!titleGuess) return [];
@@ -144,6 +143,22 @@ async function wikiCovers(artist: string, album: string): Promise<CoverHit[]> {
     .filter((row): row is CoverHit => Boolean(row));
 }
 
+async function googleCovers(artist: string, album: string): Promise<CoverHit[]> {
+  const q = [artist, album, "album cover"].filter(Boolean).join(" ");
+  if (!q.trim()) return [];
+  try {
+    const hits = await searchWebCovers({ data: { q } });
+    return (hits ?? []).map((hit) => ({
+      url: hit.url,
+      thumb: hit.thumb || hit.url,
+      source: hit.source || "Google",
+      label: hit.label || [album, artist].filter(Boolean).join(" · "),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function coverScore(hit: CoverHit, artist: string, album: string) {
   const hay = hit.label.toLowerCase();
   const a = album.toLowerCase();
@@ -156,19 +171,26 @@ function coverScore(hit: CoverHit, artist: string, album: string) {
   else if (r && r.length > 4 && hay.includes(r.slice(0, Math.min(r.length, 12)))) n += 2;
   if (/cd art|spine|back|poster|live|deluxe analog/i.test(hit.label)) n -= 2;
   if (hit.source === "iTunes" || hit.source === "Deezer") n += 1;
+  if (hit.source === "MusicBrainz Picard") n += 2;
+  if (hit.source === "Google") n += 1;
+  if (/^front$/i.test(hit.label) || /front/i.test(hit.label)) n += 2;
   return n;
 }
 
-export async function searchCovers(artist: string, album: string): Promise<CoverHit[]> {
+export async function searchCovers(artist: string, album: string, source: CoverSource = "all"): Promise<CoverHit[]> {
   const a = clean(artist);
   const b = clean(album);
   if (!a && !b) return [];
+  const catalog = source === "all" || source === "catalog";
+  const google = source === "all" || source === "google";
+  const picard = source === "all" || source === "picard";
   const packs = await Promise.all([
-    itunesCovers(a, b).catch(() => []),
-    deezerCovers(a, b).catch(() => []),
-    audioDbCovers(a, b).catch(() => []),
-    archiveCovers(a, b).catch(() => []),
-    wikiCovers(a, b).catch(() => []),
+    catalog ? itunesCovers(a, b).catch(() => []) : Promise.resolve([]),
+    catalog ? deezerCovers(a, b).catch(() => []) : Promise.resolve([]),
+    catalog ? audioDbCovers(a, b).catch(() => []) : Promise.resolve([]),
+    catalog ? wikiCovers(a, b).catch(() => []) : Promise.resolve([]),
+    picard ? picardCovers(a, b).catch(() => []) : Promise.resolve([]),
+    google ? googleCovers(a, b).catch(() => []) : Promise.resolve([]),
   ]);
   return unique(packs.flat()).sort((x, y) => coverScore(y, a, b) - coverScore(x, a, b));
 }

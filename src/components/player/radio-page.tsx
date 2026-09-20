@@ -8,6 +8,7 @@ export function RadioPage() {
   const radio = usePlayer((s) => s.radio);
   const toggleRadio = usePlayer((s) => s.toggleRadio);
   const playIds = usePlayer((s) => s.playIds);
+  const playRadioFrom = usePlayer((s) => s.playRadioFrom);
   const archiveRadio = usePlayer((s) => s.archiveRadio);
   const index = usePlayer((s) => s.index);
   const [concert, setConcert] = useState(false);
@@ -33,12 +34,7 @@ export function RadioPage() {
         {current ? (
           <button
             type="button"
-            onClick={() => {
-              const related = tracks
-                .filter((t) => t.id !== current.id && t.tags.some((tag) => current.tags.includes(tag)))
-                .map((t) => t.id);
-              playIds([current.id, ...related]);
-            }}
+            onClick={() => playRadioFrom(current.id)}
             className="h-11 rounded-full bg-raised px-5 text-sm"
           >
             Station from “{current.name}”

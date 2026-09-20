@@ -10,6 +10,7 @@ import {
   Moon,
   Pause,
   Play,
+  Radio,
   Repeat,
   Repeat1,
   RotateCcw,
@@ -19,6 +20,8 @@ import {
   SkipBack,
   SkipForward,
   Volume2,
+  Square,
+  Wand2,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
@@ -31,21 +34,14 @@ import { shareTrack } from "@/lib/player/share";
 import { formatRemain, formatTime } from "@/lib/player/time";
 import { useAudioClock } from "@/lib/player/clock";
 import { usePlayer } from "@/lib/player/store";
+import { albumKey } from "@/lib/player/catalog";
+import { looksLikeFilenameTitle } from "@/lib/player/soulseek";
+import { isExplicitTrack } from "@/lib/player/explicit";
+import { proxyCoverUrl } from "@/lib/player/covers";
+import { isEngineCatalog, isPreviewClip, officialCatalogUrl } from "@/lib/player/stream-search";
 import { cn } from "@/lib/utils";
+import { FormatBadge, ExplicitBadge } from "./format-badge";
 import { VideoWatch } from "./video-watch";
-
-function specLabel(track: {
-  format: string;
-  bitDepth: number | null;
-  sampleRate: number | null;
-}) {
-  const sr = track.sampleRate;
-  const rate = sr
-    ? (sr / 1000).toFixed(sr % 1000 === 0 ? 0 : 1).replace(/\.0$/, "")
-    : "";
-  if (track.bitDepth && rate) return `${track.format} ${track.bitDepth}/${rate}`;
-  return track.format;
-}
 
 type Props = {
   onClose: () => void;
@@ -55,9 +51,10 @@ type Props = {
   onSeek: (t: number) => void;
   onParty: () => void;
   onCarMode?: () => void;
+  onOpenAlbum?: (key: string) => void;
 };
 
-export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onParty, onCarMode }: Props) {
+export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onParty, onCarMode, onOpenAlbum }: Props) {
   const tracks = usePlayer((s) => s.tracks);
   const index = usePlayer((s) => s.index);
   const playing = usePlayer((s) => s.playing);
@@ -72,6 +69,10 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
   const playAlbum = usePlayer((s) => s.playAlbum);
   const skipAlbum = usePlayer((s) => s.skipAlbum);
   const clearQueue = usePlayer((s) => s.clearQueue);
+  const radio = usePlayer((s) => s.radio);
+  const toggleRadio = usePlayer((s) => s.toggleRadio);
+  const playRadioFrom = usePlayer((s) => s.playRadioFrom);
+  const playMoreLikeThis = usePlayer((s) => s.playMoreLikeThis);
   const volume = usePlayer((s) => s.volume);
   const muted = usePlayer((s) => s.muted);
   const setVolume = usePlayer((s) => s.setVolume);
@@ -80,6 +81,9 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
   const plays = usePlayer((s) => s.plays);
   const setSleep = usePlayer((s) => s.setSleep);
   const sleepUntil = usePlayer((s) => s.sleepUntil);
+  const stopAfter = usePlayer((s) => s.stopAfter);
+  const setStopAfter = usePlayer((s) => s.setStopAfter);
+  const cleanTitles = usePlayer((s) => s.cleanTitles);
   const track = index >= 0 ? tracks[index] : undefined;
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [showQueue, setShowQueue] = useState(false);
@@ -259,11 +263,13 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
     </div>
   );
 
+  const coverSrc = track?.coverUrl ? proxyCoverUrl(track.coverUrl) : null;
+
   return (
     <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-bg text-fg">
-      {track?.coverUrl ? (
+      {coverSrc ? (
         <div className="pointer-events-none absolute inset-0 lg:hidden">
-          <img src={track.coverUrl} alt="" className="size-full scale-125 object-cover opacity-40 blur-3xl" />
+          <img src={coverSrc} alt="" className="size-full scale-125 object-cover opacity-40 blur-3xl" />
           <div className="absolute inset-0 bg-gradient-to-b from-bg/40 via-bg/70 to-bg" />
         </div>
       ) : null}
@@ -274,7 +280,13 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
         </button>
         <div className="min-w-0 px-2 text-center">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-subtle">Now playing</p>
-          <p className="truncate text-xs text-muted">{track?.album || "Sondergram"}</p>
+          {track && onOpenAlbum ? (
+            <button type="button" onClick={() => onOpenAlbum(albumKey(track))} className="truncate text-xs text-muted hover:text-fg">
+              {track.album || "Sondergram"}
+            </button>
+          ) : (
+            <p className="truncate text-xs text-muted">{track?.album || "Sondergram"}</p>
+          )}
         </div>
         <button type="button" aria-label="Party visualizer" onClick={onParty} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg">
           <AudioLines className="size-5" strokeWidth={1.75} />
@@ -294,18 +306,18 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                 swipeX.current = null;
               }}
             >
-              {track?.coverUrl ? (
-                <img
-                  src={track.coverUrl}
-                  alt=""
-                  className="size-full object-cover"
-                  style={{ transform: `scale(${pulse})` }}
-                />
+              {coverSrc ? (
+                <img src={coverSrc} alt="" className="size-full object-cover" style={{ transform: `scale(${pulse})` }} />
               ) : (
                 <div className="flex size-full items-center justify-center text-7xl font-semibold text-subtle">
                   {(track?.name ?? "S").slice(0, 1)}
                 </div>
               )}
+              {track && isExplicitTrack(track) ? (
+                <span className="absolute bottom-3 left-3">
+                  <ExplicitBadge onArt className="size-6 text-xs" />
+                </span>
+              ) : null}
             </div>
           </div>
 
@@ -314,8 +326,20 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
           <div className="relative z-10 shrink-0 bg-bg px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 lg:bg-transparent lg:px-0 lg:pb-0 lg:pt-4">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-2xl font-bold tracking-tight">{track?.name ?? "Nothing playing"}</h2>
+                <h2 className="flex items-center gap-2 truncate text-2xl font-bold tracking-tight">
+                  <span className="min-w-0 truncate">
+                    {track?.trackNo ? `${track.trackNo}. ` : ""}
+                    {track?.name ?? "Nothing playing"}
+                  </span>
+                  {track && isExplicitTrack(track) ? <ExplicitBadge className="size-[18px] text-[11px]" /> : null}
+                </h2>
                 <p className="mt-0.5 truncate text-base text-muted">{track?.artist ?? ""}</p>
+                {track && looksLikeFilenameTitle(track.name) ? (
+                  <button type="button" onClick={() => cleanTitles([track.id])} className="mt-1 inline-flex items-center gap-1 text-xs text-hot">
+                    <Wand2 className="size-3" strokeWidth={1.75} />
+                    Use song title
+                  </button>
+                ) : null}
               </div>
               {track ? (
                 <button type="button" aria-label={track.liked ? "Unlike" : "Like"} onClick={() => toggleLike(track.id)} className="mt-1 flex size-11 shrink-0 items-center justify-center">
@@ -324,19 +348,35 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
               ) : null}
             </div>
             {track ? (
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-wide text-subtle">
-                {specLabel(track)}
-                {bpm ? ` · ${bpm} BPM` : ""}
-                {playCount ? ` · ${playCount} ${playCount === 1 ? "play" : "plays"}` : ""}
-                {track.archiveId ? (
-                  <>
-                    {" · "}
-                    <a href={archivePage(track.archiveId)} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
-                      Archive
-                    </a>
-                  </>
-                ) : null}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <FormatBadge
+                  label={track.format}
+                  lossless={track.lossless}
+                  sampleRate={track.sampleRate}
+                  bitDepth={track.bitDepth}
+                  bitrate={track.bitrate}
+                  tags={track.tags}
+                />
+                <p className="font-mono text-[10px] uppercase tracking-wide text-subtle">
+                  {bpm ? `${bpm} BPM` : ""}
+                  {playCount ? `${bpm ? " · " : ""}${playCount} ${playCount === 1 ? "play" : "plays"}` : ""}
+                  {isEngineCatalog(track)
+                    ? duration > 40 || track.forceYoutube
+                      ? `${bpm || playCount ? " · " : ""}Full mix`
+                      : officialCatalogUrl(track) || isPreviewClip(track.previewUrl, track.durationSec)
+                        ? `${bpm || playCount ? " · " : ""}Preview · loading full track`
+                        : `${bpm || playCount ? " · " : ""}Sound engine`
+                    : ""}
+                  {track.archiveId ? (
+                    <>
+                      {" · "}
+                      <a href={archivePage(track.archiveId)} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                        Archive
+                      </a>
+                    </>
+                  ) : null}
+                </p>
+              </div>
             ) : null}
 
             <div className="mt-4 flex items-center gap-3">
@@ -368,6 +408,22 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                   Play album
                 </button>
               ) : null}
+              {track ? (
+                <button type="button" onClick={() => void playMoreLikeThis()} className="inline-flex h-8 items-center gap-1 rounded-full bg-raised px-3 text-xs text-muted">
+                  <AudioLines className="size-3" strokeWidth={2} />
+                  More like this
+                </button>
+              ) : null}
+              {track ? (
+                <button
+                  type="button"
+                  onClick={() => (radio ? toggleRadio() : playRadioFrom(track.id))}
+                  className={cn("inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs", radio ? "bg-accent text-accent-fg" : "bg-raised text-muted")}
+                >
+                  <Radio className="size-3" strokeWidth={2} />
+                  {radio ? "Station on" : "Song radio"}
+                </button>
+              ) : null}
               <button type="button" onClick={skipAlbum} className="h-8 rounded-full bg-raised px-3 text-xs text-muted">
                 Next album
               </button>
@@ -381,6 +437,22 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
               >
                 <Moon className="size-3" strokeWidth={2} />
                 {sleepUntil ? "Sleep on" : "Sleep 15"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setStopAfter(stopAfter === "track" ? "off" : "track")}
+                className={cn("inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs", stopAfter === "track" ? "bg-accent text-accent-fg" : "bg-raised text-muted")}
+              >
+                <Square className="size-3" strokeWidth={2} />
+                Stop after song
+              </button>
+              <button
+                type="button"
+                onClick={() => setStopAfter(stopAfter === "album" ? "off" : "album")}
+                className={cn("inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs", stopAfter === "album" ? "bg-accent text-accent-fg" : "bg-raised text-muted")}
+              >
+                <Square className="size-3" strokeWidth={2} />
+                Stop after album
               </button>
             </div>
 
@@ -474,7 +546,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                       <li key={item.id}>
                         <button type="button" onClick={() => playIndex(tracks.findIndex((t) => t.id === item.id))} className="flex w-full items-center gap-3 rounded-lg py-1.5 text-left">
                           <div className="size-10 overflow-hidden rounded-md bg-raised">
-                            {item.coverUrl ? <img src={item.coverUrl} alt="" className="size-full object-cover" /> : null}
+                            {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
                           </div>
                           <span className="min-w-0">
                             <span className="block truncate text-sm">{item.name}</span>
@@ -501,7 +573,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                     <li key={item.id}>
                       <button type="button" onClick={() => playIndex(tracks.findIndex((t) => t.id === item.id))} className="flex w-full items-center gap-3 rounded-lg py-2 text-left hover:bg-surface">
                         <div className="size-12 overflow-hidden rounded-md bg-raised">
-                          {item.coverUrl ? <img src={item.coverUrl} alt="" className="size-full object-cover" /> : null}
+                          {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
                         </div>
                         <span className="min-w-0">
                           <span className="block truncate text-lg font-medium">{item.name}</span>

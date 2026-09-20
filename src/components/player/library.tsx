@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, Archive, ChevronDown, ChevronLeft, Film, Flame, FolderDown, Play, Plus, Shuffle, SlidersHorizontal, Star, X } from "lucide-react";
+import { ArrowDownToLine, Archive, Check, ChevronDown, ChevronLeft, Film, Flame, Globe, Play, Plus, Shuffle, SlidersHorizontal, Square, Star, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, groupAlbums, groupArtists, groupGenres, groupTags, similarAlbums, similarArtistsForAlbum, similarArtistsForArtist } from "@/lib/player/catalog";
 import { albumHasDownloads, downloadAlbum } from "@/lib/player/download";
@@ -12,22 +12,33 @@ import { makeDemoTone, unlockEngine } from "@/lib/player/engine";
 import { ArtworkPanel } from "./cover-search";
 import { CoverTitle } from "./cover-title";
 import { ExplicitBadge, FormatBadge } from "./format-badge";
+import { LibraryTransfer } from "./library-backup";
+import { BatchAlbumBar, BatchAlbumEditor } from "./batch-albums";
 import { Field } from "./metadata-panel";
 import { MoreMenu } from "./more-menu";
+import { RemoveAlbumButton } from "./album-tile";
 import { StarRating } from "./star-rating";
 import { TagEditor } from "./tag-editor";
 import { YoutubeForm } from "./youtube-form";
 import { VideoWatch } from "./video-watch";
 import type { AlbumHit } from "@/lib/player/lookup";
+import { proxyCoverUrl } from "@/lib/player/covers";
+import { isExplicitTrack } from "@/lib/player/explicit";
+import { useLibraryView, type CoverSize, type LibSort, type LibTab, type TitleMode } from "@/lib/player/library-view";
 
-type Tab = "songs" | "albums" | "artists" | "genres" | "tags" | "liked" | "added";
-type Size = "s" | "m" | "l";
-type SortId = "title" | "artist" | "year" | "songs" | "name" | "albums";
+type Tab = LibTab;
+type Size = CoverSize;
+type SortId = LibSort;
+type Titles = TitleMode;
 
 const SIZE_OPTS: { id: Size; label: string }[] = [
   { id: "s", label: "Small" },
   { id: "m", label: "Medium" },
   { id: "l", label: "Large" },
+];
+const TITLE_OPTS: { id: Titles; label: string }[] = [
+  { id: "on", label: "Show" },
+  { id: "off", label: "Cover only" },
 ];
 const ALBUM_SORTS: { id: SortId; label: string }[] = [
   { id: "title", label: "Title" },
@@ -54,22 +65,6 @@ const TAG_SORTS: { id: SortId; label: string }[] = [
 ];
 const GENRE_CHIPS = ["Pop", "Hip-Hop", "R&B", "Rock", "Jazz", "Soul", "Electronic", "Metal", "Folk", "Country", "Punk", "Indie", "Funk", "Blues"];
 
-function readPref<T extends string>(key: string, fallback: T, allowed: T[]) {
-  try {
-    const value = localStorage.getItem(key) as T | null;
-    if (value && allowed.includes(value)) return value;
-  } catch {
-    /* private */
-  }
-  return fallback;
-}
-function writePref(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* quota */
-  }
-}
 function shelfTile(size: Size) {
   if (size === "s") return "8.5rem";
   if (size === "l") return "14.5rem";
@@ -251,7 +246,6 @@ function FilterBar({
 export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?: string | null } = {}) {
   const tracks = usePlayer((s) => s.tracks);
   const index = usePlayer((s) => s.index);
-  const playIndex = usePlayer((s) => s.playIndex);
   const playIds = usePlayer((s) => s.playIds);
   const queueNext = usePlayer((s) => s.queueNext);
   const queueNextMany = usePlayer((s) => s.queueNextMany);
@@ -259,8 +253,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const playRest = usePlayer((s) => s.playRest);
   const addFiles = usePlayer((s) => s.addFiles);
   const addDemo = usePlayer((s) => s.addDemo);
-  const exportLibrary = usePlayer((s) => s.exportLibrary);
   const removeTrack = usePlayer((s) => s.removeTrack);
+  const removeTracks = usePlayer((s) => s.removeTracks);
   const updateAlbumTags = usePlayer((s) => s.updateAlbumTags);
   const updateAlbumMeta = usePlayer((s) => s.updateAlbumMeta);
   const updateArtistMeta = usePlayer((s) => s.updateArtistMeta);
@@ -268,12 +262,16 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const recent = usePlayer((s) => s.recent);
   const plays = usePlayer((s) => s.plays);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<Tab>(startTab ?? "albums");
+  const view = useLibraryView();
+  const [tab, setTab] = useState<Tab>(startTab ?? view.tab);
   const [openAlbum, setOpenAlbum] = useState<string | null>(startAlbum ?? null);
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openTag, setOpenTag] = useState<string | null>(null);
   const [openGenre, setOpenGenre] = useState<string | null>(null);
   const [letter, setLetter] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState({
     genre: "",
@@ -284,11 +282,9 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     liked: false,
     unplayed: false,
   });
-  const [size, setSize] = useState<Size>(() => readPref("sondergram:lib-size", "m", ["s", "m", "l"]));
-  const [sort, setSort] = useState<SortId>(() =>
-    readPref("sondergram:lib-sort", "title", ["title", "artist", "year", "songs", "name", "albums"]),
-  );
-  const [exporting, setExporting] = useState(false);
+  const size = view.size;
+  const titles = view.titles;
+  const sort = view.sort;
 
   useEffect(() => {
     if (startTab) setTab(startTab);
@@ -354,11 +350,36 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             ? ADDED_SORTS
             : ALBUM_SORTS;
   const showSize = tab === "albums" || tab === "artists" || tab === "tags" || tab === "genres" || tab === "added";
+  const showSelect =
+    (tab === "albums" && !album) ||
+    tab === "added" ||
+    (tab === "artists" && Boolean(artist) && !album) ||
+    (tab === "tags" && Boolean(tag) && !album) ||
+    (tab === "genres" && Boolean(genre) && !album);
+  const pickedAlbums = albums.filter((item) => picked.has(item.key));
+  const togglePick = (key: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    setSelecting(true);
+  };
+  const clearPicked = () => {
+    setPicked(new Set());
+    setSelecting(false);
+    setBatchOpen(false);
+  };
+  const gridSelect = {
+    selecting,
+    selected: picked,
+    onToggleSelect: togglePick,
+  };
   const letteredArtists = letter ? artists.filter((a) => a.name.toUpperCase().startsWith(letter)) : artists;
   const letteredGenres = letter ? genres.filter((g) => g.name.toUpperCase().startsWith(letter)) : genres;
   const playId = (id: string) => {
-    const i = tracks.findIndex((t) => t.id === id);
-    if (i >= 0) playIndex(i);
+    playRest(id);
   };
   const playAlbumFrom = (ids: string[], startId?: string) => {
     const from = startId ? ids.indexOf(startId) : 0;
@@ -386,9 +407,14 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
         if (first) setOpenAlbum(albumKey(first));
       }}
       onCover={(file) => setCover(album.trackIds, file)}
+      onRemoveAlbum={() => {
+        removeTracks(album.trackIds);
+        setOpenAlbum(null);
+      }}
       onOpenAlbum={setOpenAlbum}
       onOpenArtist={(key) => {
         setTab("artists");
+        view.setTab("artists");
         setOpenArtist(key);
         setOpenAlbum(null);
       }}
@@ -407,20 +433,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {tracks.length > 0 ? (
-            <button
-              type="button"
-              disabled={exporting}
-              onClick={() => {
-                setExporting(true);
-                void exportLibrary().finally(() => setExporting(false));
-              }}
-              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-3 text-sm text-fg hover:bg-accent hover:text-accent-fg disabled:opacity-40"
-            >
-              <FolderDown className="size-4" strokeWidth={1.75} />
-              {exporting ? "Exporting…" : "Export"}
-            </button>
-          ) : null}
+          {tracks.length > 0 ? <LibraryTransfer compact /> : null}
           <label className="relative inline-flex h-10 cursor-pointer items-center gap-1.5 overflow-hidden rounded-full bg-raised px-3 text-sm text-fg transition-colors duration-150 hover:bg-accent hover:text-accent-fg">
             <Plus className="size-4" strokeWidth={1.75} />
             Add
@@ -447,11 +460,13 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               type="button"
               onClick={() => {
                 setTab(id);
+                view.setTab(id);
                 setOpenAlbum(null);
                 setOpenArtist(null);
                 setOpenTag(null);
                 setOpenGenre(null);
                 setLetter(null);
+                clearPicked();
               }}
               className={cn(
                 "h-9 shrink-0 rounded-full px-3 text-xs capitalize transition-colors duration-150 sm:text-sm",
@@ -470,22 +485,28 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             value={sortOpts.some((o) => o.id === sort) ? sort : sortOpts[0].id}
             options={sortOpts}
             onChange={(value) => {
-              const next = value as SortId;
-              setSort(next);
-              writePref("sondergram:lib-sort", next);
+              view.setSort(value as SortId);
             }}
           />
           {showSize ? (
-            <Menu
-              label="Cover size"
-              value={size}
-              options={SIZE_OPTS}
-              onChange={(value) => {
-                const next = value as Size;
-                setSize(next);
-                writePref("sondergram:lib-size", next);
-              }}
-            />
+            <>
+              <Menu
+                label="Cover size"
+                value={size}
+                options={SIZE_OPTS}
+                onChange={(value) => {
+                  view.setSize(value as Size);
+                }}
+              />
+              <Menu
+                label="Album name"
+                value={titles}
+                options={TITLE_OPTS}
+                onChange={(value) => {
+                  view.setTitles(value as Titles);
+                }}
+              />
+            </>
           ) : null}
           <button
             type="button"
@@ -498,6 +519,22 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             <SlidersHorizontal className="size-3.5" strokeWidth={1.75} />
             Filters
           </button>
+          {showSelect ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (selecting) clearPicked();
+                else setSelecting(true);
+              }}
+              className={cn(
+                "inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs",
+                selecting ? "bg-accent text-accent-fg" : "bg-raised text-fg",
+              )}
+            >
+              {selecting ? <Check className="size-3.5" strokeWidth={2} /> : <Square className="size-3.5" strokeWidth={1.75} />}
+              {selecting ? "Done" : "Select"}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {tracks.length > 0 && browsing && filtersOpen ? (
@@ -517,7 +554,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             />
           ) : null}
           {tab === "albums" && !album ? (
-            <AlbumGrid albums={albums} tracks={tracks} size={size} onOpen={setOpenAlbum} onPlayAlbum={playIds} onQueueMany={queueNextMany} />
+            <AlbumGrid albums={albums} tracks={tracks} size={size} showTitles={titles === "on"} onOpen={setOpenAlbum} onPlayAlbum={playIds} onQueueMany={queueNextMany} {...gridSelect} />
           ) : null}
           {tab === "albums" && album ? albumView : null}
           {tab === "artists" && !artist ? (
@@ -539,6 +576,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               artists={artists}
               tracks={tracks}
               size={size}
+              showTitles={titles === "on"}
               onBack={() => setOpenArtist(null)}
               onOpenAlbum={setOpenAlbum}
               onOpenArtist={(key) => {
@@ -555,6 +593,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                   patch,
                 )
               }
+              {...gridSelect}
             />
           ) : null}
           {tab === "artists" && artist && album ? albumView : null}
@@ -564,10 +603,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               tag={tag}
               tracks={tracks}
               size={size}
+              showTitles={titles === "on"}
               onBack={() => setOpenTag(null)}
               onOpenAlbum={setOpenAlbum}
               onPlayAlbum={playIds}
               onQueueMany={queueNextMany}
+              {...gridSelect}
             />
           ) : null}
           {tab === "tags" && album ? albumView : null}
@@ -588,10 +629,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               genre={genre}
               tracks={tracks}
               size={size}
+              showTitles={titles === "on"}
               onBack={() => setOpenGenre(null)}
               onOpenAlbum={setOpenAlbum}
               onPlayAlbum={playIds}
               onQueueMany={queueNextMany}
+              {...gridSelect}
             />
           ) : null}
           {tab === "genres" && album ? albumView : null}
@@ -609,7 +652,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           {tab === "added" ? (
             <div>
               <p className="mb-3 text-xs uppercase tracking-widest text-subtle">Recently added</p>
-              <AlbumGrid albums={addedAlbums} tracks={scoped} size={size} onOpen={setOpenAlbum} onPlayAlbum={playIds} onQueueMany={queueNextMany} />
+              <AlbumGrid albums={addedAlbums} tracks={scoped} size={size} showTitles={titles === "on"} onOpen={setOpenAlbum} onPlayAlbum={playIds} onQueueMany={queueNextMany} {...gridSelect} />
               <p className="mb-3 mt-8 text-xs uppercase tracking-widest text-subtle">New tracks</p>
               <SongList
                 tracks={addedSongs}
@@ -650,8 +693,32 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <p className="py-6 text-sm leading-relaxed text-muted">Heart a song while it plays. Liked tracks collect here.</p>
             )
           ) : null}
+          {picked.size > 0 ? (
+            <BatchAlbumBar
+              count={picked.size}
+              onEdit={() => setBatchOpen(true)}
+              onPlay={() => {
+                playIds(pickedAlbums.flatMap((item) => item.trackIds));
+                clearPicked();
+              }}
+              onRemove={() => {
+                removeTracks(pickedAlbums.flatMap((item) => item.trackIds));
+                clearPicked();
+              }}
+              onClear={clearPicked}
+            />
+          ) : null}
         </div>
       )}
+      {batchOpen && pickedAlbums.length > 0 ? (
+        <BatchAlbumEditor
+          albums={pickedAlbums}
+          onClose={() => {
+            setBatchOpen(false);
+            clearPicked();
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -723,27 +790,34 @@ function Cover({
   rounded = "lg",
   label,
   compact,
+  explicit,
 }: {
   src: string | null;
   rounded?: "md" | "lg" | "full";
   label?: string;
   compact?: boolean;
+  explicit?: boolean;
 }) {
   const letter = (label ?? "S").trim().slice(0, 1).toUpperCase() || "S";
   return (
     <div
       className={cn(
-        "aspect-square w-full overflow-hidden bg-raised",
+        "relative aspect-square w-full overflow-hidden bg-raised",
         rounded === "full" ? "rounded-full" : "rounded-md",
       )}
     >
       {src ? (
-        <img src={src} alt="" className="size-full object-cover" loading="lazy" decoding="async" />
+        <img src={src} alt="" className="size-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
       ) : (
         <div className="flex size-full items-center justify-center bg-raised">
           <span className={cn("font-display text-subtle", compact ? "text-lg" : "text-3xl")}>{letter}</span>
         </div>
       )}
+      {explicit && rounded !== "full" ? (
+        <span className="absolute bottom-1.5 left-1.5">
+          <ExplicitBadge onArt />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -755,6 +829,10 @@ function AlbumGrid({
   onPlayAlbum,
   onQueueMany,
   size = "m",
+  showTitles = true,
+  selecting = false,
+  selected,
+  onToggleSelect,
 }: {
   albums: ReturnType<typeof groupAlbums>;
   tracks: Track[];
@@ -762,13 +840,17 @@ function AlbumGrid({
   onPlayAlbum?: (ids: string[]) => void;
   onQueueMany?: (ids: string[]) => void;
   size?: Size;
+  showTitles?: boolean;
+  selecting?: boolean;
+  selected?: Set<string>;
+  onToggleSelect?: (key: string) => void;
 }) {
   const compact = size === "s";
   const dense = size === "s";
   const tile = shelfTile(size);
   return (
     <div
-      className="grid justify-start gap-x-4 gap-y-6"
+      className={cn("grid justify-start gap-x-4", showTitles ? "gap-y-6" : "gap-y-3")}
       style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}, ${tile}))` }}
     >
       {albums.map((album) => {
@@ -776,49 +858,91 @@ function AlbumGrid({
           .map((id) => tracks.find((t) => t.id === id))
           .filter((t): t is Track => Boolean(t));
         const canDownload = albumHasDownloads(songs);
+        const on = Boolean(selected?.has(album.key));
+        const openOrToggle = () => {
+          if (selecting && onToggleSelect) onToggleSelect(album.key);
+          else onOpen(album.key);
+        };
         return (
           <div key={album.key} className="min-w-0 text-left">
             <div className="group/cover relative">
-              <button type="button" onClick={() => onOpen(album.key)} className="w-full text-left">
-                <Cover src={album.coverUrl} label={album.title} compact={compact} />
+              <button
+                type="button"
+                onClick={openOrToggle}
+                className="w-full text-left"
+                aria-label={selecting ? `${on ? "Deselect" : "Select"} ${album.title}` : `${album.title} — ${album.artist}`}
+                aria-pressed={selecting ? on : undefined}
+              >
+                <Cover src={album.coverUrl} label={album.title} compact={compact} explicit={album.explicit} />
               </button>
-              {onPlayAlbum ? (
+              {selecting ? (
                 <button
                   type="button"
-                  aria-label={`Play ${album.title}`}
-                  onPointerDown={() => unlockEngine()}
-                  onClick={() => onPlayAlbum(album.trackIds)}
+                  aria-hidden
+                  tabIndex={-1}
+                  onClick={openOrToggle}
                   className={cn(
-                    "absolute flex items-center justify-center rounded-full bg-hot text-hot-fg shadow-sm sm:opacity-0 sm:group-hover/cover:opacity-100",
-                    dense ? "bottom-1 right-1 size-8" : "bottom-1.5 right-1.5 size-9",
+                    "absolute right-1.5 top-1.5 z-20 flex items-center justify-center rounded-full shadow-sm",
+                    dense ? "size-7" : "size-8",
+                    on ? "bg-hot text-hot-fg" : "bg-bg/80 text-fg",
                   )}
                 >
-                  <Play className="ml-0.5 size-3.5" strokeWidth={2} fill="currentColor" />
+                  {on ? <Check className="size-3.5" strokeWidth={2.5} /> : <Square className="size-3.5" strokeWidth={1.75} />}
                 </button>
-              ) : null}
-              <MoreMenu
-                className={cn(
-                  "absolute z-10 sm:opacity-0 sm:group-hover/cover:opacity-100",
-                  dense ? "right-1 top-1" : "right-1.5 top-1.5",
-                )}
-                label={`More for ${album.title}`}
-                items={[
-                  ...(onPlayAlbum ? [{ label: "Play", onClick: () => onPlayAlbum(album.trackIds) }] : []),
-                  ...(onQueueMany ? [{ label: "Play next", onClick: () => onQueueMany(album.trackIds) }] : []),
-                  ...(canDownload
-                    ? [{ label: "Download", onClick: () => void downloadAlbum({ title: album.title, artist: album.artist, tracks: songs }) }]
-                    : []),
-                ]}
-              />
+              ) : (
+                <>
+                  {onPlayAlbum ? (
+                    <button
+                      type="button"
+                      aria-label={`Play ${album.title}`}
+                      onPointerDown={() => unlockEngine()}
+                      onClick={() => onPlayAlbum(album.trackIds)}
+                      className={cn(
+                        "absolute flex items-center justify-center rounded-full bg-hot text-hot-fg shadow-sm sm:opacity-0 sm:group-hover/cover:opacity-100",
+                        dense ? "bottom-1 right-1 size-8" : "bottom-1.5 right-1.5 size-9",
+                      )}
+                    >
+                      <Play className="ml-0.5 size-3.5" strokeWidth={2} fill="currentColor" />
+                    </button>
+                  ) : null}
+                  <MoreMenu
+                    className={cn(
+                      "absolute left-1.5 top-1.5 z-10 sm:opacity-0 sm:group-hover/cover:opacity-100",
+                      dense && "left-1 top-1",
+                    )}
+                    label={`More for ${album.title}`}
+                    items={[
+                      ...(onPlayAlbum ? [{ label: "Play", onClick: () => onPlayAlbum(album.trackIds) }] : []),
+                      ...(onQueueMany ? [{ label: "Play next", onClick: () => onQueueMany(album.trackIds) }] : []),
+                      ...(onToggleSelect ? [{ label: "Select", onClick: () => onToggleSelect(album.key) }] : []),
+                      ...(canDownload
+                        ? [{ label: "Download", onClick: () => void downloadAlbum({ title: album.title, artist: album.artist, tracks: songs }) }]
+                        : []),
+                      {
+                        label: "Remove album",
+                        danger: true,
+                        onClick: () => usePlayer.getState().removeTracks(album.trackIds),
+                      },
+                    ]}
+                  />
+                  <RemoveAlbumButton
+                    title={album.title}
+                    dense={dense}
+                    onRemove={() => usePlayer.getState().removeTracks(album.trackIds)}
+                  />
+                </>
+              )}
             </div>
-            <button type="button" onClick={() => onOpen(album.key)} className="mt-2 w-full text-left">
-              <p className={cn("flex items-center gap-1.5 text-fg", compact ? "text-xs" : "text-sm font-medium")}>
-                <span className="min-w-0 truncate">{album.title}</span>
-                {album.explicit ? <ExplicitBadge /> : null}
-              </p>
-              <p className="mt-0.5 truncate text-xs text-muted">{album.artist}</p>
-              {album.rating ? <div className="mt-1"><StarRating value={album.rating} size="sm" /></div> : null}
-            </button>
+            {showTitles ? (
+              <button type="button" onClick={openOrToggle} className="mt-2 w-full text-left">
+                <p className={cn("flex items-center gap-1.5 text-fg", compact ? "text-xs" : "text-sm font-medium")}>
+                  <span className="min-w-0 truncate">{album.title}</span>
+                  {album.explicit ? <ExplicitBadge /> : null}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-muted">{album.artist}</p>
+                {album.rating ? <div className="mt-1"><StarRating value={album.rating} size="sm" /></div> : null}
+              </button>
+            ) : null}
           </div>
         );
       })}
@@ -861,6 +985,10 @@ function ArtistDetail({
   artists,
   tracks,
   size,
+  showTitles = true,
+  selecting,
+  selected,
+  onToggleSelect,
   onBack,
   onOpenAlbum,
   onOpenArtist,
@@ -874,6 +1002,10 @@ function ArtistDetail({
   artists: ReturnType<typeof groupArtists>;
   tracks: Track[];
   size: Size;
+  showTitles?: boolean;
+  selecting?: boolean;
+  selected?: Set<string>;
+  onToggleSelect?: (key: string) => void;
   onBack: () => void;
   onOpenAlbum: (key: string) => void;
   onOpenArtist: (key: string) => void;
@@ -922,7 +1054,7 @@ function ArtistDetail({
         </div>
       ) : null}
       <p className="mb-3 text-xs uppercase tracking-widest text-subtle">Albums</p>
-      <AlbumGrid albums={artist.albums} tracks={tracks} size={size} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} />
+      <AlbumGrid albums={artist.albums} tracks={tracks} size={size} showTitles={showTitles} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} selecting={selecting} selected={selected} onToggleSelect={onToggleSelect} />
       {related.length > 0 ? <SimilarArtists artists={related} onOpen={onOpenArtist} /> : null}
     </div>
   );
@@ -946,6 +1078,7 @@ function AlbumDetail({
   onCover,
   onOpenAlbum,
   onOpenArtist,
+  onRemoveAlbum,
 }: {
   album: ReturnType<typeof groupAlbums>[number];
   albums: ReturnType<typeof groupAlbums>;
@@ -964,6 +1097,7 @@ function AlbumDetail({
   onCover: (file: File) => void;
   onOpenAlbum: (key: string) => void;
   onOpenArtist: (key: string) => void;
+  onRemoveAlbum?: () => void;
 }) {
   const songs = album.trackIds
     .map((id) => tracks.find((t) => t.id === id))
@@ -974,7 +1108,6 @@ function AlbumDetail({
   const [saving, setSaving] = useState(false);
   const [looking, setLooking] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const lookupAlbumOnline = usePlayer((s) => s.lookupAlbumOnline);
   const searchAlbumOnline = usePlayer((s) => s.searchAlbumOnline);
   const applyAlbumHit = usePlayer((s) => s.applyAlbumHit);
   const lookupAlbumHits = usePlayer((s) => s.lookupAlbumHits);
@@ -982,6 +1115,15 @@ function AlbumDetail({
   const findOnArchive = usePlayer((s) => s.findOnArchive);
   const [archiving, setArchiving] = useState(false);
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
+
+  const openLookup = () => {
+    setAlbumHits([]);
+    setLooking(true);
+    void searchAlbumOnline(album.trackIds)
+      .then((hits) => setAlbumHits(hits))
+      .catch(() => setAlbumHits([]))
+      .finally(() => setLooking(false));
+  };
   const listed = expanded || songs.length <= 12 ? songs : songs.slice(0, 12);
   const totalSec = songs.reduce((n, t) => n + (t.durationSec || 0), 0);
   const totalBytes = songs.reduce((n, t) => n + (t.bytes || 0), 0);
@@ -1012,6 +1154,7 @@ function AlbumDetail({
             album={album.title}
             trackIds={album.trackIds}
             onFile={onCover}
+            onRemoveAlbum={onRemoveAlbum}
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -1071,6 +1214,15 @@ function AlbumDetail({
               <Archive className="size-4" strokeWidth={1.75} />
               {archiving ? "Archive…" : "Find on Archive"}
             </button>
+            <button
+              type="button"
+              disabled={looking}
+              onClick={openLookup}
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-raised px-4 text-sm font-medium"
+            >
+              <Globe className="size-4" strokeWidth={1.75} />
+              {looking ? "Looking up…" : "Look up online"}
+            </button>
             <div className="ml-auto flex items-center gap-1">
               <button
                 type="button"
@@ -1089,21 +1241,18 @@ function AlbumDetail({
                 label={`More for ${album.title}`}
                 items={[
                   { label: "Play next", onClick: () => onQueueMany(album.trackIds) },
+                  { label: "Clean titles", onClick: () => usePlayer.getState().cleanTitles(album.trackIds) },
                   {
-                    label: looking ? "Looking up…" : "Look up online",
+                    label: "Match tracklist",
                     onClick: () => {
-                      setLooking(true);
-                      void searchAlbumOnline(album.trackIds)
-                        .then((hits) => {
-                          if (hits.length === 0) {
-                            void lookupAlbumOnline(album.trackIds);
-                            return;
-                          }
-                          setAlbumHits(hits);
-                        })
-                        .finally(() => setLooking(false));
+                      void usePlayer.getState().matchTracklist(album.trackIds);
                     },
                   },
+                  {
+                    label: looking ? "Looking up…" : "Look up online",
+                    onClick: openLookup,
+                  },
+                  ...(onRemoveAlbum ? [{ label: "Remove album", onClick: onRemoveAlbum, danger: true }] : []),
                 ]}
               />
             </div>
@@ -1264,11 +1413,11 @@ function AlbumDetail({
       {relatedAlbums.length > 0 ? <SimilarAlbums albums={relatedAlbums} onOpen={onOpenAlbum} /> : null}
       {relatedArtists.length > 0 ? <SimilarArtists artists={relatedArtists} onOpen={onOpenArtist} /> : null}
       {albumHits ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-3 sm:items-center">
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3 pb-28 sm:items-center sm:pb-6">
           <div className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface text-fg shadow-2xl">
             <div className="flex items-center justify-between gap-3 px-4 py-3">
               <p className="text-sm font-semibold">Choose the album</p>
-              <button type="button" aria-label="Close" onClick={() => setAlbumHits(null)} className="flex size-9 items-center justify-center rounded-full bg-raised">
+              <button type="button" aria-label="Close" onClick={() => setAlbumHits(null)} className="flex size-10 items-center justify-center rounded-full bg-raised">
                 <X className="size-4" strokeWidth={1.75} />
               </button>
             </div>
@@ -1276,6 +1425,14 @@ function AlbumDetail({
               Pick the match for {album.artist} — {album.title}. Artwork and metadata apply only after you choose.
             </p>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+              {looking && albumHits.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted">Searching iTunes and catalogs…</p>
+              ) : null}
+              {!looking && albumHits.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted">
+                  No album match. Edit the title or artist below, then look up again.
+                </p>
+              ) : null}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {albumHits.map((hit) => (
                   <button
@@ -1287,7 +1444,14 @@ function AlbumDetail({
                     className="text-left"
                   >
                     <div className="aspect-square overflow-hidden rounded-lg bg-raised">
-                      {hit.artwork ? <img src={hit.artwork} alt="" className="size-full object-cover" /> : null}
+                      {hit.artwork ? (
+                        <img
+                          src={proxyCoverUrl(hit.artwork)}
+                          alt=""
+                          className="size-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : null}
                     </div>
                     <p className="mt-1.5 truncate text-xs font-medium">{hit.title}</p>
                     <p className="truncate text-[10px] text-muted">
@@ -1340,6 +1504,10 @@ function TagDetail({
   tag,
   tracks,
   size,
+  showTitles = true,
+  selecting,
+  selected,
+  onToggleSelect,
   onBack,
   onOpenAlbum,
   onPlayAlbum,
@@ -1348,6 +1516,10 @@ function TagDetail({
   tag: ReturnType<typeof groupTags>[number];
   tracks: Track[];
   size: Size;
+  showTitles?: boolean;
+  selecting?: boolean;
+  selected?: Set<string>;
+  onToggleSelect?: (key: string) => void;
   onBack: () => void;
   onOpenAlbum: (key: string) => void;
   onPlayAlbum: (ids: string[]) => void;
@@ -1360,7 +1532,7 @@ function TagDetail({
       <p className="mb-5 text-sm text-muted">
         {tag.albums.length} {tag.albums.length === 1 ? "album" : "albums"}
       </p>
-      <AlbumGrid albums={tag.albums} tracks={tracks} size={size} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} />
+      <AlbumGrid albums={tag.albums} tracks={tracks} size={size} showTitles={showTitles} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} selecting={selecting} selected={selected} onToggleSelect={onToggleSelect} />
     </div>
   );
 }
@@ -1500,7 +1672,7 @@ function SongList({
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
                   <span className="block truncate text-sm tracking-tight">{track.name}</span>
-                  {track.explicit ? <ExplicitBadge /> : null}
+                  {isExplicitTrack(track) ? <ExplicitBadge /> : null}
                   {track.popular ? (
                     <span className="inline-flex items-center gap-0.5 rounded-full bg-hot/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-hot">
                       <Flame className="size-3" strokeWidth={2} />
@@ -1523,9 +1695,26 @@ function SongList({
               {active ? (
                 <ActiveRemain />
               ) : numbered && track.durationSec ? (
-                <span className="w-11 shrink-0 text-right font-mono text-xs tabular-nums text-subtle">{formatTime(track.durationSec)}</span>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <FormatBadge
+                    label={track.format}
+                    lossless={track.lossless}
+                    sampleRate={track.sampleRate}
+                    bitDepth={track.bitDepth}
+                    bitrate={track.bitrate}
+                    tags={track.tags}
+                  />
+                  <span className="w-11 text-right font-mono text-xs tabular-nums text-subtle">{formatTime(track.durationSec)}</span>
+                </span>
               ) : (
-                <FormatBadge label={track.format} lossless={track.lossless} />
+                <FormatBadge
+                  label={track.format}
+                  lossless={track.lossless}
+                  sampleRate={track.sampleRate}
+                  bitDepth={track.bitDepth}
+                  bitrate={track.bitrate}
+                  tags={track.tags}
+                />
               )}
             </button>
             {onWatch ? (
@@ -1671,6 +1860,10 @@ function GenreDetail({
   genre,
   tracks,
   size,
+  showTitles = true,
+  selecting,
+  selected,
+  onToggleSelect,
   onBack,
   onOpenAlbum,
   onPlayAlbum,
@@ -1679,6 +1872,10 @@ function GenreDetail({
   genre: ReturnType<typeof groupGenres>[number];
   tracks: Track[];
   size: Size;
+  showTitles?: boolean;
+  selecting?: boolean;
+  selected?: Set<string>;
+  onToggleSelect?: (key: string) => void;
   onBack: () => void;
   onOpenAlbum: (key: string) => void;
   onPlayAlbum: (ids: string[]) => void;
@@ -1722,7 +1919,7 @@ function GenreDetail({
           Play next
         </button>
       </div>
-      <AlbumGrid albums={genre.albums} tracks={tracks} size={size} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} />
+      <AlbumGrid albums={genre.albums} tracks={tracks} size={size} showTitles={showTitles} onOpen={onOpenAlbum} onPlayAlbum={onPlayAlbum} onQueueMany={onQueueMany} selecting={selecting} selected={selected} onToggleSelect={onToggleSelect} />
     </div>
   );
 }

@@ -114,7 +114,14 @@ export function Playlist() {
                   <span className="block truncate text-sm">{track.name}</span>
                   <span className="block truncate text-xs text-muted">{creditLine(track)}</span>
                 </span>
-                <FormatBadge label={track.format} lossless={track.lossless} />
+                <FormatBadge
+                  label={track.format}
+                  lossless={track.lossless}
+                  sampleRate={track.sampleRate}
+                  bitDepth={track.bitDepth}
+                  bitrate={track.bitrate}
+                  tags={track.tags}
+                />
               </button>
               <button
                 type="button"

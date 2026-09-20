@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { formatSpecs } from "@/lib/player/format";
+import { useCoverPalette, coverVars } from "@/lib/player/cover-color";
+import { proxyCoverUrl } from "@/lib/player/covers";
 import type { Track } from "@/lib/player/store";
 import { FormatBadge } from "./format-badge";
 
@@ -14,78 +14,25 @@ function hashHue(name: string) {
   return h % 40;
 }
 
-async function sampleColor(url: string) {
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = 16;
-    canvas.height = 16;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, 16, 16);
-    const data = ctx.getImageData(0, 0, 16, 16).data;
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let n = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const lum = data[i] + data[i + 1] + data[i + 2];
-      if (lum < 40 || lum > 700) continue;
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
-      n += 1;
-    }
-    if (!n) return null;
-    return `${Math.round(r / n)} ${Math.round(g / n)} ${Math.round(b / n)}`;
-  } catch {
-    return null;
-  }
-}
-
 export function Artwork({ track, playing }: Props) {
   const name = track?.name ?? "";
   const coverUrl = track?.coverUrl ?? null;
   const shift = hashHue(name || "empty");
-  const [glow, setGlow] = useState<string | null>(null);
-  const specs = track
-    ? formatSpecs({
-        bitDepth: track.bitDepth,
-        sampleRate: track.sampleRate,
-        bitrate: track.bitrate,
-        channels: track.channels,
-        lossless: track.lossless,
-      })
-    : "";
-
-  useEffect(() => {
-    let live = true;
-    setGlow(null);
-    if (!coverUrl) return;
-    void sampleColor(coverUrl).then((color) => {
-      if (live) setGlow(color);
-    });
-    return () => {
-      live = false;
-    };
-  }, [coverUrl]);
+  const palette = useCoverPalette(coverUrl);
 
   return (
-    <div className="relative flex items-center justify-center py-2">
+    <div className="relative flex items-center justify-center py-2" style={coverVars(palette)}>
       <div
         className="relative z-10 aspect-square w-[min(100%,18rem)] overflow-hidden rounded-xl bg-raised shadow-[var(--shadow-border)]"
-        style={
-          glow
-            ? { boxShadow: `0 0 0 1px rgb(${glow} / 0.25), 0 18px 50px rgb(${glow} / 0.28)` }
-            : undefined
-        }
+        style={{
+          boxShadow: `0 0 0 1px rgb(${palette.accent} / 0.22), 0 18px 50px rgb(${palette.mid} / 0.45)`,
+        }}
       >
         {coverUrl ? (
           <img
-            src={coverUrl}
+            src={proxyCoverUrl(coverUrl)}
             alt=""
+            referrerPolicy="no-referrer"
             className="size-full object-cover outline outline-1 -outline-offset-1 outline-fg/10"
           />
         ) : (
@@ -104,11 +51,15 @@ export function Artwork({ track, playing }: Props) {
           </>
         )}
         {track ? (
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-bg/80 px-3 py-2">
-            <FormatBadge label={track.format} lossless={track.lossless} />
-            {specs ? (
-              <span className="truncate font-mono text-xs tabular-nums text-muted">{specs}</span>
-            ) : null}
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-start bg-bg/80 px-3 py-2">
+            <FormatBadge
+              label={track.format}
+              lossless={track.lossless}
+              sampleRate={track.sampleRate}
+              bitDepth={track.bitDepth}
+              bitrate={track.bitrate}
+              tags={track.tags}
+            />
           </div>
         ) : null}
       </div>

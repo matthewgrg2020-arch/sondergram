@@ -1,4 +1,5 @@
 import { formatFromFilename, labelFromCodec } from "./format";
+import { isExplicitContent } from "./explicit";
 
 export type FileTags = {
   title: string;
@@ -150,7 +151,18 @@ export async function readFileTags(file: Blob, filename = ""): Promise<FileTags>
     const duration = meta.format.duration && Number.isFinite(meta.format.duration) ? meta.format.duration : 0;
     const advisory = nativeText(meta, ["ITUNESADVISORY", "RTNG"]).toLowerCase();
     const comment = (meta.common.comment ?? []).join(" ");
-    const explicit = advisory === "1" || advisory === "explicit" || /\bexplicit\b/i.test(comment);
+    const flagged = advisory === "1" || advisory === "explicit" || /\bexplicit\b/i.test(comment);
+    const explicit =
+      flagged ||
+      isExplicitContent({
+        explicit: flagged,
+        name: title,
+        artist,
+        album,
+        albumArtist,
+        genre,
+        tags,
+      });
     let coverUrl: string | null = null;
     let coverBlob: Blob | null = null;
     const pic = meta.common.picture?.[0];
