@@ -4,6 +4,7 @@ node_modules
 .tanstack
 .android-sdk
 .jdk
+.go
 .git
 dist
 dist-apk
@@ -12,3 +13,8 @@ ios
 artifacts
 attachments
 screenshots
+desktop
+*.exe
+public/sondergram.exe
+public/sondergram.apk
+public/sondergram-android.zip
