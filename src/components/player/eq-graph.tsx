@@ -81,6 +81,11 @@ function formatDb(v: number) {
   return n > 0 ? `+${n}` : `${n}`;
 }
 
+function isMobileUi() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+}
+
 const RANGES = [6, 12, 30] as const;
 
 export function EqGraph() {
@@ -92,6 +97,7 @@ export function EqGraph() {
   const eqRef = useRef(eq);
   const preRef = useRef(preamp);
   const dragRef = useRef<number | null>(null);
+  const visibleRef = useRef(true);
   const [range, setRange] = useState<(typeof RANGES)[number]>(12);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const rangeRef = useRef(range);
@@ -103,28 +109,53 @@ export function EqGraph() {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
-    const bins = new Uint8Array(4096);
+
+    const mobile = isMobileUi();
+    const bins = new Uint8Array(mobile ? 1024 : 2048);
     let raf = 0;
     let last = 0;
+    const minFrameMs = mobile ? 80 : 33; // ~12fps phone, ~30fps desktop
+    const stepPx = mobile ? 8 : 3;
+    const curveStep = mobile ? 6 : 2;
+    const maxDpr = mobile ? 1 : 2;
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        visibleRef.current = Boolean(entry?.isIntersecting);
+      },
+      { threshold: 0.05 },
+    );
+    io.observe(wrap);
+
+    const onVis = () => {
+      if (document.hidden) visibleRef.current = false;
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     const paint = (stamp: number) => {
       raf = requestAnimationFrame(paint);
-      if (stamp - last < 24) return;
+      if (!visibleRef.current || document.hidden) return;
+      if (stamp - last < minFrameMs) return;
       last = stamp;
+
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       if (w < 8 || h < 8) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-        canvas.width = Math.floor(w * dpr);
-        canvas.height = Math.floor(h * dpr);
+
+      const dpr = Math.min(maxDpr, window.devicePixelRatio || 1);
+      const tw = Math.floor(w * dpr);
+      const th = Math.floor(h * dpr);
+      if (canvas.width !== tw || canvas.height !== th) {
+        canvas.width = tw;
+        canvas.height = th;
         canvas.style.width = `${w}px`;
         canvas.style.height = `${h}px`;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#141416";
+      ctx.fillRect(0, 0, w, h);
 
       const rng = rangeRef.current;
       const gains = eqRef.current;
@@ -135,13 +166,12 @@ export function EqGraph() {
         const eng = getEngine();
         analyser = eng.analyser;
         sr = eng.ctx.sampleRate || 44100;
-        if (analyser.fftSize < 2048) analyser.fftSize = 2048;
+        // Keep FFT modest on phones — large fftSize is a common jank source
+        const want = mobile ? 1024 : 2048;
+        if (analyser.fftSize !== want) analyser.fftSize = want;
       } catch {
         analyser = null;
       }
-
-      ctx.fillStyle = "#141416";
-      ctx.fillRect(0, 0, w, h);
 
       ctx.strokeStyle = "rgba(255,255,255,0.05)";
       ctx.lineWidth = 1;
@@ -150,7 +180,7 @@ export function EqGraph() {
       ctx.lineTo(w, h / 2);
       ctx.stroke();
 
-      const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+      const freqs = mobile ? [50, 200, 1000, 5000, 20000] : [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
       ctx.fillStyle = "rgba(255,255,255,0.28)";
       ctx.font = "10px ui-sans-serif, system-ui";
       ctx.textAlign = "center";
@@ -163,33 +193,21 @@ export function EqGraph() {
         ctx.stroke();
         ctx.fillText(formatHz(f), x, h - 6);
       }
-      const dbLines = [-rng, -rng / 2, rng / 2, rng];
-      ctx.textAlign = "right";
-      for (const db of dbLines) {
-        const y = yOf(db, h, rng);
-        ctx.strokeStyle = "rgba(255,255,255,0.04)";
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.28)";
-        ctx.fillText(formatDb(db), w - 6, y - 3);
-      }
 
+      // Spectrum fill — skip every other bin on mobile
       if (analyser) {
         const n = analyser.frequencyBinCount;
         const data = n > bins.length ? new Uint8Array(n) : bins;
         analyser.getByteFrequencyData(data);
         ctx.beginPath();
         ctx.moveTo(0, h);
-        for (let i = 1; i < n; i++) {
+        const stride = mobile ? 4 : 1;
+        for (let i = 1; i < n; i += stride) {
           const f = (i * sr) / analyser.fftSize;
           if (f < F_MIN) continue;
           if (f > F_MAX) break;
-          const mag = (data[i] / 255) * rng * 0.9;
-          const x = xOf(f, w);
-          const y = yOf(mag, h, rng);
-          ctx.lineTo(x, y);
+          const mag = (data[i]! / 255) * rng * 0.9;
+          ctx.lineTo(xOf(f, w), yOf(mag, h, rng));
         }
         ctx.lineTo(w, h);
         ctx.closePath();
@@ -197,13 +215,14 @@ export function EqGraph() {
         ctx.fill();
       }
 
+      // Per-band fills only for active bands, coarse step
       for (let i = 0; i < EQ_BANDS.length; i++) {
         const g = gains[i] ?? 0;
         if (Math.abs(g) < 0.2) continue;
-        const f0 = EQ_BANDS[i].freq;
+        const f0 = EQ_BANDS[i]!.freq;
         ctx.beginPath();
         let started = false;
-        for (let px = 0; px <= w; px += 3) {
+        for (let px = 0; px <= w; px += stepPx) {
           const f = fOf(px, w);
           const db = peakingMag(f, f0, EQ_Q, g, sr);
           const y = yOf(db + pre * 0.15, h, rng);
@@ -215,19 +234,20 @@ export function EqGraph() {
         }
         ctx.lineTo(w, h / 2);
         ctx.closePath();
-        const col = COLORS[i % COLORS.length];
+        const col = COLORS[i % COLORS.length]!;
         ctx.fillStyle = `${col}33`;
         ctx.fill();
       }
 
+      // Sum curve
       ctx.beginPath();
-      for (let px = 0; px <= w; px += 2) {
+      for (let px = 0; px <= w; px += curveStep) {
         const f = fOf(px, w);
         let db = pre;
         for (let i = 0; i < EQ_BANDS.length; i++) {
           const g = gains[i] ?? 0;
           if (Math.abs(g) < 0.01) continue;
-          db += peakingMag(f, EQ_BANDS[i].freq, EQ_Q, g, sr);
+          db += peakingMag(f, EQ_BANDS[i]!.freq, EQ_Q, g, sr);
         }
         const y = yOf(db, h, rng);
         if (px === 0) ctx.moveTo(px, y);
@@ -241,11 +261,11 @@ export function EqGraph() {
         const g = gains[i] ?? 0;
         const active = Math.abs(g) >= 0.2 || dragRef.current === i;
         if (!active) continue;
-        const x = xOf(EQ_BANDS[i].freq, w);
+        const x = xOf(EQ_BANDS[i]!.freq, w);
         const y = yOf(g + pre, h, rng);
         ctx.beginPath();
-        ctx.arc(x, y, 7, 0, Math.PI * 2);
-        ctx.fillStyle = COLORS[i % COLORS.length];
+        ctx.arc(x, y, mobile ? 9 : 7, 0, Math.PI * 2);
+        ctx.fillStyle = COLORS[i % COLORS.length]!;
         ctx.fill();
         ctx.lineWidth = 2;
         ctx.strokeStyle = "#111";
@@ -254,7 +274,11 @@ export function EqGraph() {
     };
 
     raf = requestAnimationFrame(paint);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      io.disconnect();
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, []);
 
   const bandAt = (clientX: number, clientY: number) => {
@@ -264,10 +288,10 @@ export function EqGraph() {
     const y = clientY - box.top;
     const freq = fOf(x, box.width);
     let i = nearestBand(freq);
-    let best = 28;
+    let best = 36;
     for (let n = 0; n < EQ_BANDS.length; n++) {
       const g = eqRef.current[n] ?? 0;
-      const nx = xOf(EQ_BANDS[n].freq, box.width);
+      const nx = xOf(EQ_BANDS[n]!.freq, box.width);
       const ny = yOf(g + preRef.current, box.height, rangeRef.current);
       const d = Math.hypot(nx - x, ny - y);
       if (d < best) {
@@ -283,10 +307,13 @@ export function EqGraph() {
     if (!box) return;
     const y = clientY - box.top;
     const x = clientX - box.left;
-    const db = Math.max(EQ_MIN, Math.min(EQ_MAX, Math.round(dbOf(y, box.height, rangeRef.current) * 2) / 2 - preRef.current));
+    const db = Math.max(
+      EQ_MIN,
+      Math.min(EQ_MAX, Math.round(dbOf(y, box.height, rangeRef.current) * 2) / 2 - preRef.current),
+    );
     const next = nearestBand(fOf(x, box.width));
-    const curX = xOf(EQ_BANDS[band].freq, box.width);
-    const nextX = xOf(EQ_BANDS[next].freq, box.width);
+    const curX = xOf(EQ_BANDS[band]!.freq, box.width);
+    const nextX = xOf(EQ_BANDS[next]!.freq, box.width);
     if (next !== band && dragRef.current != null && Math.abs(x - nextX) + 10 < Math.abs(x - curX)) {
       const cur = eqRef.current[band] ?? 0;
       if (Math.abs(cur) > 0.01) setEqBand(band, 0);
@@ -319,7 +346,7 @@ export function EqGraph() {
       </div>
       <div
         ref={wrapRef}
-        className="relative h-64 w-full cursor-crosshair overflow-hidden rounded-lg bg-[#141416] ring-1 ring-white/10 sm:h-80"
+        className="relative h-48 w-full touch-none cursor-crosshair overflow-hidden rounded-lg bg-[#141416] ring-1 ring-white/10 sm:h-72 md:h-80"
         onPointerDown={(e) => {
           (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
           const hit = bandAt(e.clientX, e.clientY);
@@ -328,9 +355,8 @@ export function EqGraph() {
           setHover(hit);
         }}
         onPointerMove={(e) => {
-          const hit = bandAt(e.clientX, e.clientY);
-          setHover(hit);
           if (dragRef.current == null) return;
+          // Avoid React state updates on every move when not dragging (was mobile jank)
           applyPointer(e.clientX, e.clientY, dragRef.current);
         }}
         onPointerUp={() => {
@@ -345,13 +371,15 @@ export function EqGraph() {
         }}
       >
         <canvas ref={canvasRef} className="absolute inset-0 size-full" />
-        {hover && wrapRef.current ? (
+        {hover ? (
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-[11px] text-fg">
             {EQ_BANDS[hover.i]?.label} Hz · {formatDb(eq[hover.i] ?? 0)} dB
           </div>
         ) : null}
       </div>
-      <p className="text-[11px] text-subtle">Drag nodes to boost or cut. Move sideways to slide the band. Double-click to flatten a point.</p>
+      <p className="text-[11px] text-subtle">
+        Drag nodes to boost or cut. Move sideways to slide the band. Double-click to flatten a point.
+      </p>
     </div>
   );
 }
