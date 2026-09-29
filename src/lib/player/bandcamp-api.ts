@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { artUrl, normalizeCover, parseBandcampUrl, type BcAlbum, type BcHit, type BcTrack } from "./bandcamp";
+import { genreSlug, normalizeCover, parseBandcampUrl, type BcAlbum, type BcHit, type BcTrack } from "./bandcamp";
 
 type Json = Record<string, unknown>;
 
@@ -48,7 +48,7 @@ function meta(html: string, key: string) {
   return decodeHtml(a?.[1] || b?.[1] || "");
 }
 
-async function fetchHtml(url: string) {
+async function fetchHtml(url: string, loose = false) {
   const headers = {
     Accept: "text/html,application/xhtml+xml",
     "User-Agent": UA,
@@ -57,10 +57,10 @@ async function fetchHtml(url: string) {
   const res = await fetch(url, { headers, redirect: "follow" });
   const text = await res.text();
   if (!res.ok) throw new Error(`Bandcamp returned ${res.status}.`);
-  if (/cdn-cgi\/challenge|just a moment|attention required/i.test(text) && !/data-tralbum/i.test(text)) {
+  if (/cdn-cgi\/challenge|just a moment|attention required/i.test(text) && !/data-tralbum|bandcamp/i.test(text)) {
     throw new Error("Bandcamp blocked this request. Try the album link again.");
   }
-  if (!/bandcamp|tralbum|MusicAlbum/i.test(text)) throw new Error("That page is not a Bandcamp album.");
+  if (!loose && !/bandcamp|tralbum|MusicAlbum/i.test(text)) throw new Error("That page is not a Bandcamp album.");
   return { html: text, url: res.url };
 }
 
@@ -118,7 +118,14 @@ function ldTracks(ld: Json, artist: string, album: string, year: string, cover: 
   return rows.map((row, i) => {
     const item = asJson(asJson(row).item || row);
     const props = Array.isArray(item.additionalProperty) ? item.additionalProperty : [];
-    const trackId = str(props.find((p) => str(asJson(p).name) === "track_id") ? asJson(props.find((p) => str(asJson(p).name) === "track_id") as Json).value : "") || str(item["@id"]) || `${pageUrl}#${i + 1}`;
+    const trackId =
+      str(
+        props.find((p) => str(asJson(p).name) === "track_id")
+          ? asJson(props.find((p) => str(asJson(p).name) === "track_id") as Json).value
+          : "",
+      ) ||
+      str(item["@id"]) ||
+      `${pageUrl}#${i + 1}`;
     return {
       id: trackId,
       name: str(item.name) || `Track ${i + 1}`,
@@ -284,6 +291,88 @@ async function searchHits(q: string): Promise<BcHit[]> {
   return hits.slice(0, 18);
 }
 
+/** Discover albums by Bandcamp tag / genre (tag page + search fallback). */
+async function discoverGenre(genre: string): Promise<BcHit[]> {
+  const label = str(genre);
+  if (!label) return [];
+  const slug = genreSlug(label);
+  const hits: BcHit[] = [];
+  const seen = new Set<string>();
+
+  const push = (hit: BcHit) => {
+    const key = hit.url.replace(/\/$/, "").toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    hits.push({ ...hit, genre: label });
+  };
+
+  // Tag page: bandcamp.com/tag/ambient
+  try {
+    const page = await fetchHtml(`https://bandcamp.com/tag/${encodeURIComponent(slug)}`, true);
+    const html = page.html;
+    // data-item / album cards
+    const albumHrefs = [
+      ...html.matchAll(/href=["'](https?:\/\/[^"']+\/album\/[^"'?#]+)/gi),
+      ...html.matchAll(/href=["'](\/album\/[^"'?#]+)/gi),
+    ];
+    for (const m of albumHrefs) {
+      let url = m[1] || "";
+      if (url.startsWith("/")) url = `https://bandcamp.com${url}`;
+      if (!/\/album\//i.test(url)) continue;
+      push({
+        url: url.replace(/\/$/, ""),
+        title: "Album",
+        artist: "",
+        cover: "",
+        kind: "album",
+        genre: label,
+      });
+    }
+    // Try to enrich titles from nearby text in list items
+    const cardRe =
+      /href=["'](https?:\/\/[^"']+\.bandcamp\.com\/album\/[^"'?#]+)["'][^>]*>[\s\S]{0,400}?alt=["']([^"']+)["']/gi;
+    let cm: RegExpExecArray | null;
+    while ((cm = cardRe.exec(html))) {
+      const url = (cm[1] || "").replace(/\/$/, "");
+      const alt = decodeHtml(cm[2] || "");
+      if (!url) continue;
+      const existing = hits.find((h) => h.url === url);
+      if (existing && existing.title === "Album" && alt) existing.title = alt;
+      else
+        push({
+          url,
+          title: alt || "Album",
+          artist: "",
+          cover: "",
+          kind: "album",
+          genre: label,
+        });
+    }
+    // art ids on tag pages
+    const artRe =
+      /href=["'](https?:\/\/[^"']+\.bandcamp\.com\/album\/[^"'?#]+)["'][\s\S]{0,600}?\/img\/a(\d+)_\d+\.jpg/gi;
+    while ((cm = artRe.exec(html))) {
+      const url = (cm[1] || "").replace(/\/$/, "");
+      const artId = cm[2];
+      const existing = hits.find((h) => h.url === url);
+      if (existing && !existing.cover) existing.cover = normalizeCover("", artId);
+    }
+  } catch {
+    /* tag page blocked or empty — fall through */
+  }
+
+  // Discover-style search fallback
+  if (hits.length < 8) {
+    const searched = await searchHits(label);
+    for (const hit of searched) push({ ...hit, genre: label });
+  }
+
+  // Prefer albums
+  const albums = hits.filter((h) => h.kind === "album");
+  const rest = hits.filter((h) => h.kind !== "album");
+  return [...albums, ...rest].slice(0, 24);
+}
+
 export const bcImport = createServerFn({ method: "POST" })
   .validator((d: { url?: string }) => d)
   .handler(async ({ data }) => {
@@ -296,6 +385,10 @@ export const bcSearch = createServerFn({ method: "POST" })
   .validator((d: { q?: string }) => d)
   .handler(async ({ data }) => ({ hits: await searchHits(str(data.q)) }));
 
+export const bcDiscover = createServerFn({ method: "POST" })
+  .validator((d: { genre?: string }) => d)
+  .handler(async ({ data }) => ({ hits: await discoverGenre(str(data.genre)) }));
+
 export const bcStream = createServerFn({ method: "POST" })
   .validator((d: { url?: string; id?: string; name?: string; artist?: string; album?: string }) => d)
   .handler(async ({ data }) => {
@@ -306,7 +399,12 @@ export const bcStream = createServerFn({ method: "POST" })
       const hits = await searchHits(q);
       const want = `${str(data.artist)} ${str(data.album)}`.toLowerCase();
       const hit =
-        hits.find((h) => h.kind === "album" && want && `${h.artist} ${h.title}`.toLowerCase().includes(str(data.album).toLowerCase())) ||
+        hits.find(
+          (h) =>
+            h.kind === "album" &&
+            want &&
+            `${h.artist} ${h.title}`.toLowerCase().includes(str(data.album).toLowerCase()),
+        ) ||
         hits.find((h) => h.kind === "album") ||
         hits.find((h) => h.kind === "track") ||
         hits[0];
@@ -322,5 +420,10 @@ export const bcStream = createServerFn({ method: "POST" })
       album.tracks.find((t) => name && t.name.toLowerCase().includes(name)) ||
       album.tracks[0];
     if (!match?.url) throw new Error("Bandcamp has no stream for that track.");
-    return { url: match.url, duration: match.duration, cover: match.cover || album.cover, page: match.page || album.url };
+    return {
+      url: match.url,
+      duration: match.duration,
+      cover: match.cover || album.cover,
+      page: match.page || album.url,
+    };
   });
