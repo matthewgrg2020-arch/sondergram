@@ -31,7 +31,52 @@ export type BcHit = {
   artist: string;
   cover: string;
   kind: "album" | "track" | "artist";
+  genre?: string;
 };
+
+/** Common Bandcamp Discover / tag genres */
+export const BC_GENRES = [
+  "electronic",
+  "rock",
+  "metal",
+  "alternative",
+  "hip-hop-rap",
+  "experimental",
+  "punk",
+  "folk",
+  "pop",
+  "ambient",
+  "soundtrack",
+  "world",
+  "jazz",
+  "acoustic",
+  "funk",
+  "r-b-soul",
+  "classical",
+  "reggae",
+  "country",
+  "blues",
+  "latin",
+  "soul",
+  "house",
+  "techno",
+  "lo-fi",
+  "indie",
+  "shoegaze",
+  "drone",
+  "idm",
+  "vaporwave",
+] as const;
+
+export function genreSlug(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\//g, "-")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 export function parseBandcampUrl(input: string) {
   const text = input.trim().split(/\s+/)[0] || "";

@@ -1,7 +1,7 @@
-import { Disc3, LoaderCircle, Play, Plus } from "lucide-react";
+import { Disc3, Dices, LoaderCircle, Play, Plus } from "lucide-react";
 import { useState } from "react";
-import { parseBandcampUrl, type BcHit } from "@/lib/player/bandcamp";
-import { bcSearch } from "@/lib/player/bandcamp-api";
+import { BC_GENRES, parseBandcampUrl, type BcHit } from "@/lib/player/bandcamp";
+import { bcDiscover, bcSearch } from "@/lib/player/bandcamp-api";
 import { groupAlbums } from "@/lib/player/catalog";
 import { usePlayer } from "@/lib/player/store";
 
@@ -10,6 +10,7 @@ export function BandcampPanel() {
   const tracks = usePlayer((s) => s.tracks);
   const playIds = usePlayer((s) => s.playIds);
   const [query, setQuery] = useState("");
+  const [genre, setGenre] = useState<string | null>(null);
   const [hits, setHits] = useState<BcHit[]>([]);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
@@ -30,6 +31,42 @@ export function BandcampPanel() {
     }
   };
 
+  const runSearch = (q: string) => {
+    const text = q.trim();
+    if (!text) return;
+    setBusy(true);
+    setMessage(null);
+    setGenre(null);
+    void bcSearch({ data: { q: text } })
+      .then((result) => {
+        setHits(result.hits);
+        if (result.hits.length === 0) setMessage("Nothing matched that search.");
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "Search failed."))
+      .finally(() => setBusy(false));
+  };
+
+  const runGenre = (g: string) => {
+    setBusy(true);
+    setMessage(null);
+    setGenre(g);
+    setQuery(g);
+    void bcDiscover({ data: { genre: g } })
+      .then((result) => {
+        setHits(result.hits);
+        if (result.hits.length === 0) setMessage(`No Bandcamp finds for ${g} right now.`);
+        else setMessage(`${result.hits.length} ${g} releases`);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "Genre search failed."))
+      .finally(() => setBusy(false));
+  };
+
+  const crateDig = () => {
+    if (!hits.length) return;
+    const pick = hits[Math.floor(Math.random() * hits.length)];
+    if (pick) void addUrl(pick.url, true);
+  };
+
   return (
     <section className="space-y-4 px-5 py-4">
       <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
@@ -37,9 +74,30 @@ export function BandcampPanel() {
         Bandcamp
       </h2>
       <p className="max-w-xl text-sm leading-relaxed text-muted">
-        Paste an album, track, or artist link. Sondergram pulls artwork, year, tags, and streamable tracks into your
-        library. Search works without an account.
+        Paste an album link, search by name, or dig by genre. Sondergram pulls artwork, year, tags, and streamable
+        tracks into your library.
       </p>
+
+      <div>
+        <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Genres</p>
+        <div className="flex flex-wrap gap-1.5">
+          {BC_GENRES.map((g) => (
+            <button
+              key={g}
+              type="button"
+              disabled={busy}
+              onClick={() => runGenre(g)}
+              className={
+                genre === g
+                  ? "h-8 rounded-full bg-hot px-3 text-xs font-medium text-hot-fg"
+                  : "h-8 rounded-full bg-raised px-3 text-xs text-fg hover:bg-accent hover:text-accent-fg"
+              }
+            >
+              {g.replace(/-/g, " ")}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <form
         className="flex flex-col gap-2 sm:flex-row"
@@ -49,17 +107,7 @@ export function BandcampPanel() {
             void addUrl(paste, true);
             return;
           }
-          const q = query.trim();
-          if (!q) return;
-          setBusy(true);
-          setMessage(null);
-          void bcSearch({ data: { q } })
-            .then((result) => {
-              setHits(result.hits);
-              if (result.hits.length === 0) setMessage("Nothing matched that search.");
-            })
-            .catch((err) => setMessage(err instanceof Error ? err.message : "Search failed."))
-            .finally(() => setBusy(false));
+          runSearch(query);
         }}
       >
         <input
@@ -78,6 +126,18 @@ export function BandcampPanel() {
         >
           {busy ? "…" : paste ? "Add album" : "Search"}
         </button>
+        {hits.length > 1 ? (
+          <button
+            type="button"
+            disabled={adding !== null}
+            onClick={crateDig}
+            className="inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium"
+            title="Play a random result"
+          >
+            <Dices className="size-4" strokeWidth={1.75} />
+            Crate dig
+          </button>
+        ) : null}
       </form>
       {message ? <p className="text-sm text-muted">{message}</p> : null}
 
@@ -94,6 +154,7 @@ export function BandcampPanel() {
                 <p className="truncate text-sm font-medium">{hit.title}</p>
                 <p className="truncate text-xs text-muted">
                   {hit.artist} · {hit.kind}
+                  {hit.genre ? ` · ${hit.genre}` : ""}
                 </p>
                 <div className="mt-2 flex gap-2">
                   <button
