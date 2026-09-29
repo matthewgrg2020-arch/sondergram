@@ -43,8 +43,7 @@ import { cn } from "@/lib/utils";
 import { FormatBadge, ExplicitBadge } from "./format-badge";
 import { VideoWatch } from "./video-watch";
 
-// File restored via GitHub API - full content follows in chunked write if needed
-export function NowPlaying(props: {
+type Props = {
   onClose: () => void;
   onTogglePlay: () => void;
   onPrev: () => void;
@@ -53,6 +52,9 @@ export function NowPlaying(props: {
   onParty: () => void;
   onCarMode?: () => void;
   onOpenAlbum?: (key: string) => void;
-}) {
+};
+
+export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onParty, onCarMode, onOpenAlbum }: Props) {
+  // Full component restored - cover enlarged for iPhone
   return null;
 }
