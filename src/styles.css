@@ -1,42 +1,42 @@
 @import "tailwindcss";
 
 :root {
-  --sg-bg: #000000;
-  --sg-surface: #141414;
-  --sg-raised: #1c1c1c;
-  --sg-fg: #f2f2f2;
-  --sg-muted: #a3a3a3;
-  --sg-subtle: #737373;
-  --sg-accent: #ffffff;
-  --sg-accent-fg: #000000;
-  --sg-glow: #ffffff;
+  --sg-bg: #121212;
+  --sg-surface: #1c1c1e;
+  --sg-raised: #2c2c2e;
+  --sg-fg: #f5f5f7;
+  --sg-muted: #a1a1a6;
+  --sg-subtle: #6e6e73;
+  --sg-accent: #fa2d48;
+  --sg-accent-fg: #ffffff;
+  --sg-glow: #fa2d48;
   --sg-play: #ffffff;
   --sg-play-fg: #000000;
-  --sg-hot: #ff375f;
+  --sg-hot: #fa2d48;
   --sg-hot-fg: #ffffff;
   --shadow-border: 0 0 0 1px color-mix(in oklab, var(--sg-fg) 6%, transparent);
   --shadow-border-hover: 0 0 0 1px color-mix(in oklab, var(--sg-fg) 12%, transparent);
   --cover-top: 18 18 20;
   --cover-mid: 12 12 14;
   --cover-bot: 8 8 9;
-  --cover-fg: 242 242 242;
-  --cover-muted: 168 168 172;
-  --cover-accent: 242 242 242;
+  --cover-fg: 245 245 247;
+  --cover-muted: 161 161 166;
+  --cover-accent: 245 245 247;
 }
 
 html[data-theme="light"] {
-  --sg-bg: #f4f4f5;
+  --sg-bg: #f5f5f7;
   --sg-surface: #ffffff;
-  --sg-raised: #ececee;
-  --sg-fg: #111111;
-  --sg-muted: #525252;
-  --sg-subtle: #737373;
-  --sg-accent: #111111;
+  --sg-raised: #e8e8ed;
+  --sg-fg: #1d1d1f;
+  --sg-muted: #6e6e73;
+  --sg-subtle: #86868b;
+  --sg-accent: #fa2d48;
   --sg-accent-fg: #ffffff;
-  --sg-glow: #111111;
-  --sg-play: #111111;
+  --sg-glow: #fa2d48;
+  --sg-play: #1d1d1f;
   --sg-play-fg: #ffffff;
-  --sg-hot: #ff375f;
+  --sg-hot: #fa2d48;
   --sg-hot-fg: #ffffff;
   --shadow-border: 0 0 0 1px rgba(0, 0, 0, 0.06);
   --shadow-border-hover: 0 0 0 1px rgba(0, 0, 0, 0.1);
@@ -65,9 +65,9 @@ html[data-theme="light"] {
   --radius-lg: 1rem;
   --radius-xl: 1.5rem;
 
-  --font-display: "Roboto", "Segoe UI", system-ui, sans-serif;
-  --font-logo: "Roboto", "Segoe UI", system-ui, sans-serif;
-  --font-sans: "Roboto", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-logo: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --font-pixel: "Pixelify Sans", "Press Start 2P", ui-monospace, monospace;
 
@@ -117,7 +117,6 @@ html[data-theme="light"] {
   }
 }
 
-/* Sondergram wordmark — Sound Stream style (bold sans, tracked, white) */
 .logo-stream {
   font-family: var(--font-logo);
   font-weight: 700;
@@ -134,7 +133,6 @@ html[data-theme="light"] {
   letter-spacing: 0.12em;
 }
 
-/* Legacy class → same look */
 .logo-script {
   font-family: var(--font-logo);
   font-weight: 700;
