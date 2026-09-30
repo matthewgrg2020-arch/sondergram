@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, Pencil, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, Globe, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, groupAlbums, groupArtists } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { proxyCoverUrl } from "@/lib/player/covers";
+import type { AlbumHit } from "@/lib/player/lookup";
 import { useLibraryView, type CoverSize, type LibTab, type TitleMode } from "@/lib/player/library-view";
 import { ArtworkPanel } from "./cover-search";
 import { Field } from "./metadata-panel";
@@ -30,6 +31,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const updateAlbumMeta = usePlayer((s) => s.updateAlbumMeta);
   const updateMeta = usePlayer((s) => s.updateMeta);
   const removeTracks = usePlayer((s) => s.removeTracks);
+  const searchAlbumOnline = usePlayer((s) => s.searchAlbumOnline);
+  const applyAlbumHit = usePlayer((s) => s.applyAlbumHit);
   const inputRef = useRef<HTMLInputElement>(null);
   const view = useLibraryView();
   const [tab, setTab] = useState<Tab>(startTab ?? view.tab);
@@ -37,6 +40,9 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openYear, setOpenYear] = useState<string | null>(null);
   const [editTrackId, setEditTrackId] = useState<string | null>(null);
+  const [looking, setLooking] = useState(false);
+  const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
+  const [applying, setApplying] = useState(false);
   const size = view.size;
   const titles = view.titles;
 
@@ -102,6 +108,29 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     updateAlbumMeta(ids, patch);
     const first = usePlayer.getState().tracks.find((t) => t.id === ids[0]);
     if (first) setOpenAlbum(albumKey(first));
+  };
+
+  const openLookup = () => {
+    if (!album) return;
+    setAlbumHits([]);
+    setLooking(true);
+    void searchAlbumOnline(album.trackIds)
+      .then((hits) => setAlbumHits(hits))
+      .catch(() => setAlbumHits([]))
+      .finally(() => setLooking(false));
+  };
+
+  const pickHit = async (hit: AlbumHit) => {
+    if (!album) return;
+    setApplying(true);
+    try {
+      await applyAlbumHit(album.trackIds, hit);
+      setAlbumHits(null);
+      const first = usePlayer.getState().tracks.find((t) => t.id === album.trackIds[0]);
+      if (first) setOpenAlbum(albumKey(first));
+    } finally {
+      setApplying(false);
+    }
   };
 
   const gridStyle = {
@@ -215,6 +244,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             onClick={() => {
               setOpenAlbum(null);
               setEditTrackId(null);
+              setAlbumHits(null);
             }}
             className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
           >
@@ -243,6 +273,15 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                   className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg"
                 >
                   Play
+                </button>
+                <button
+                  type="button"
+                  disabled={looking}
+                  onClick={openLookup}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10 disabled:opacity-60"
+                >
+                  <Globe className="size-4" strokeWidth={1.75} />
+                  {looking ? "Looking up…" : "Look up online"}
                 </button>
                 <p className="text-xs text-subtle">
                   {[album.year, `${album.trackIds.length} songs`].filter(Boolean).join(" · ")}
@@ -289,6 +328,10 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     onChange={(tags) => patchAlbumMeta(album.trackIds, { tags })}
                   />
                 </div>
+                <p className="mt-3 text-[11px] text-subtle">
+                  Tip: fix the title/artist first, then use <strong className="text-fg">Look up online</strong> to pull
+                  artwork and catalog metadata from iTunes and other sources.
+                </p>
               </div>
             </div>
           </div>
@@ -360,6 +403,63 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               );
             })}
           </div>
+
+          {albumHits !== null ? (
+            <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3 pb-28 sm:items-center sm:pb-6">
+              <div className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface text-fg shadow-2xl">
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <p className="text-sm font-semibold">Choose the album</p>
+                  <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setAlbumHits(null)}
+                    className="flex size-10 items-center justify-center rounded-full bg-raised"
+                  >
+                    <X className="size-4" strokeWidth={1.75} />
+                  </button>
+                </div>
+                <p className="px-4 pb-3 text-xs text-muted">
+                  Pick the match for {album.artist} — {album.title}. Artwork and metadata apply only after you choose.
+                </p>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                  {looking && albumHits.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted">Searching iTunes and catalogs…</p>
+                  ) : null}
+                  {!looking && albumHits.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted">
+                      No album match. Edit the title or artist, then look up again.
+                    </p>
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {albumHits.map((hit) => (
+                      <button
+                        key={`${hit.artist}-${hit.title}-${hit.year}-${hit.artwork}`}
+                        type="button"
+                        disabled={applying}
+                        onClick={() => void pickHit(hit)}
+                        className="text-left disabled:opacity-60"
+                      >
+                        <div className="aspect-square overflow-hidden rounded-lg bg-raised">
+                          {hit.artwork ? (
+                            <img
+                              src={proxyCoverUrl(hit.artwork)}
+                              alt=""
+                              className="size-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : null}
+                        </div>
+                        <p className="mt-1.5 truncate text-xs font-medium">{hit.title}</p>
+                        <p className="truncate text-[10px] text-muted">
+                          {[hit.artist, hit.year, hit.genre].filter(Boolean).join(" · ")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
