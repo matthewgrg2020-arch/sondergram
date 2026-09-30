@@ -117,36 +117,30 @@ html[data-theme="light"] {
   }
 }
 
-/* Sound Stream wordmark — bold rounded sans, white on dark */
+/* Sondergram wordmark — Sound Stream style (bold sans, tracked, white) */
 .logo-stream {
-  display: flex;
-  flex-direction: column;
   font-family: var(--font-logo);
   font-weight: 700;
-  font-size: clamp(1.35rem, 4vw, 1.75rem);
-  line-height: 0.95;
-  letter-spacing: 0.14em;
+  font-size: clamp(1.15rem, 3.5vw, 1.45rem);
+  line-height: 1.05;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-fg);
+  white-space: nowrap;
 }
 
 .logo-stream.logo-nav {
-  font-size: 1.05rem;
-  letter-spacing: 0.16em;
-  gap: 0.12em;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
 }
 
-.logo-stream span {
-  display: block;
-}
-
-/* Keep old class as alias so any leftover markup still looks right */
+/* Legacy class → same look */
 .logo-script {
   font-family: var(--font-logo);
   font-weight: 700;
-  font-size: clamp(1.5rem, 5vw, 2.25rem);
+  font-size: clamp(1.15rem, 3.5vw, 1.45rem);
   line-height: 1.05;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-fg);
   background: none;
@@ -156,8 +150,8 @@ html[data-theme="light"] {
 }
 
 .logo-script.logo-nav {
-  font-size: 1.1rem;
-  letter-spacing: 0.14em;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
   filter: none;
 }
 
