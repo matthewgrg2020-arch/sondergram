@@ -73,7 +73,7 @@ const FOOT: { id: AppView; label: string; icon: typeof Library }[] = [
 const MOBILE: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "listen", label: "Home", icon: House },
   { id: "library", label: "Library", icon: Library },
-  { id: "studio", label: "Sound", icon: aSlidersHorizontal },
+  { id: "studio", label: "Sound", icon: SlidersHorizontal },
   { id: "search", label: "Search", icon: Search },
   { id: "settings", label: "Settings", icon: Settings },
 ];
