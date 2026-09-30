@@ -17,6 +17,7 @@ import {
   Share2,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Youtube,
 } from "lucide-react";
 import { useState } from "react";
@@ -37,6 +38,7 @@ export type AppView =
   | "find"
   | "archive"
   | "bandcamp"
+  | "rym"
   | "arcod"
   | "soulseek"
   | "liked"
@@ -57,6 +59,7 @@ const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "deezer", label: "Deezer", icon: AudioLines },
   { id: "amazon", label: "Amazon", icon: AudioLines },
   { id: "bandcamp", label: "Bandcamp", icon: Disc3 },
+  { id: "rym", label: "RateYourMusic", icon: Star },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "soulseek", label: "Soulseek", icon: Share2 },
   { id: "find", label: "Find files", icon: FolderDown },
