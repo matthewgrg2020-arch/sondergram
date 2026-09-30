@@ -249,7 +249,6 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 </p>
               </div>
 
-              {/* Explicit Edit Metadata section */}
               <div className="rounded-2xl border border-border bg-raised/60 p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <Pencil className="size-4 text-accent" strokeWidth={2} />
@@ -344,13 +343,10 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                         onSave={(artistName) => updateMeta(t.id, { artist: artistName })}
                       />
                       <Field
-                        label="Track #"
-                        value={t.trackNo != null ? String(t.trackNo) : ""}
-                        placeholder="1"
-                        onSave={(v) => {
-                          const n = Number.parseInt(v, 10);
-                          updateMeta(t.id, { trackNo: Number.isFinite(n) ? n : undefined });
-                        }}
+                        label="Album"
+                        value={t.album}
+                        placeholder="Album"
+                        onSave={(albumName) => updateMeta(t.id, { album: albumName })}
                       />
                       <Field
                         label="Year"
