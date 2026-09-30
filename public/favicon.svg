@@ -1,9 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" fill="#0a0a0b"/>
-  <rect x="8" y="12" width="2" height="14" fill="#d4d0c8"/>
-  <rect x="6" y="12" width="6" height="4" fill="#d4d0c8"/>
-  <rect x="16" y="6" width="2" height="20" fill="#d4d0c8"/>
-  <rect x="14" y="6" width="6" height="4" fill="#d4d0c8"/>
-  <rect x="24" y="18" width="2" height="8" fill="#d4d0c8"/>
-  <rect x="22" y="18" width="6" height="4" fill="#d4d0c8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#060e24"/>
+  <defs>
+    <mask id="arc">
+      <rect width="512" height="512" fill="black"/>
+      <circle cx="256" cy="-110" r="420" fill="white"/>
+      <circle cx="256" cy="-110" r="330" fill="black"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" fill="#ff7314" mask="url(#arc)"/>
+  <g fill="#ffffff">
+    <rect x="146" y="236" width="28" height="112" rx="14"/>
+    <rect x="192" y="188" width="28" height="160" rx="14"/>
+    <rect x="238" y="132" width="28" height="216" rx="14"/>
+    <rect x="284" y="200" width="28" height="148" rx="14"/>
+    <rect x="330" y="220" width="28" height="128" rx="14"/>
+  </g>
+  <text x="256" y="400" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-weight="700" font-size="48" fill="#ffffff" letter-spacing="0.12em">SOUND</text>
+  <text x="256" y="452" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-weight="700" font-size="42" fill="#ffffff" letter-spacing="0.14em">STREAM</text>
 </svg>
