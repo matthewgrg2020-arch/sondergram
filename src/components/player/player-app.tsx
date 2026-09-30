@@ -1,1 +1,37 @@
-PLACEHOLDER
+import { ChevronLeft, ChevronRight, Moon, Plus, Search, Sun } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EqPanel } from "./eq-panel";
+import { ExtrasPanel } from "./extras-panel";
+import { ApkCard } from "./apk-card";
+import { SpotifyPanel } from "./spotify-panel";
+import { DeezerPanel } from "./deezer-panel";
+import { IbroadcastPanel } from "./ibroadcast-panel";
+import { ArchivePanel } from "./archive-panel";
+import { BandcampPanel } from "./bandcamp-panel";
+import { RymPanel } from "./rym-panel";
+import { ArcodPanel } from "./arcod-panel";
+import { SoulseekPanel } from "./soulseek-panel";
+import { AmazonPanel } from "./amazon-panel";
+import { FindAudioPanel } from "./find-audio-panel";
+import { AddMusicCard } from "./add-music-card";
+import { LastFmCard } from "./lastfm-card";
+import { DuplicatesCard } from "./duplicates-card";
+import { Library } from "./library";
+import { LibraryBackup, LibraryClear } from "./library-backup";
+import { ListenCard, SpatialCard, TempoPitch } from "./mix-panel";
+import { RemasterPanel } from "./remaster-panel";
+import { CarMode } from "./car-mode";
+import { ListenNow } from "./listen-now";
+import { MiniPlayer } from "./mini-player";
+import { NowPlaying } from "./now-playing";
+import { PartyViz } from "./party-viz";
+import { RadioPage } from "./radio-page";
+import { RecentPage } from "./recent-page";
+import { SearchPage } from "./search-page";
+import { Sidebar, MobileDock, type AppView } from "./sidebar";
+import { StatsPage } from "./stats-page";
+import { YoutubeForm } from "./youtube-form";
+import { YoutubeStage } from "./youtube-stage";
+
+// NOTE: full PlayerApp restored in follow-up if truncated — this bootstrap keeps deploy alive
+export { PlayerApp } from "./player-app-core";
