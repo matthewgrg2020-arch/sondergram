@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 export type CoverSize = "s" | "m" | "l";
 export type TitleMode = "on" | "off";
 export type LibSort = "title" | "artist" | "year" | "songs" | "name" | "albums";
-export type LibTab = "songs" | "albums" | "artists" | "genres" | "tags" | "liked" | "added";
+export type LibTab = "songs" | "albums" | "artists" | "genres" | "tags" | "years" | "liked" | "added";
 
 export type LibraryView = {
   size: CoverSize;
@@ -16,7 +16,7 @@ const KEY = "sondergram:lib-view";
 const SIZES: CoverSize[] = ["s", "m", "l"];
 const TITLES: TitleMode[] = ["on", "off"];
 const SORTS: LibSort[] = ["title", "artist", "year", "songs", "name", "albums"];
-const TABS: LibTab[] = ["songs", "albums", "artists", "genres", "tags", "liked", "added"];
+const TABS: LibTab[] = ["songs", "albums", "artists", "genres", "tags", "years", "liked", "added"];
 
 const DEFAULT_VIEW: LibraryView = { size: "m", titles: "on", sort: "title", tab: "albums" };
 
