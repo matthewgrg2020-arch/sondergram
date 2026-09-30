@@ -11,14 +11,12 @@ import {
   LayoutGrid,
   Library,
   ListMusic,
-  Music2,
   Radio,
   Search,
   Settings,
   Share2,
   SlidersHorizontal,
   Sparkles,
-  User,
   Youtube,
 } from "lucide-react";
 import { useState } from "react";
@@ -52,13 +50,6 @@ const TOP: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "radio", label: "Radio", icon: Radio },
 ];
 
-const LIBRARY: { id: AppView; label: string; icon: typeof Library }[] = [
-  { id: "recent", label: "Recently Added", icon: Clock3 },
-  { id: "library", label: "Artists", icon: User },
-  { id: "library", label: "Albums", icon: Disc3 },
-  { id: "library", label: "Songs", icon: Music2 },
-];
-
 const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "ibroadcast", label: "iBroadcast", icon: Cloud },
   { id: "youtube", label: "YouTube", icon: Youtube },
@@ -74,14 +65,6 @@ const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
 
 const FOOT: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "liked", label: "Favorite Songs", icon: Heart },
-  { id: "studio", label: "Sound", icon: aSliders },
-  { id: "stats", label: "Recap", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: Settings },
-];
-
-// fix typo - can't use aSliders
-const FOOT_FIXED: { id: AppView; label: string; icon: typeof Library }[] = [
-  { id: "liked", label: "Favorite Songs", icon: Heart },
   { id: "studio", label: "Sound", icon: SlidersHorizontal },
   { id: "stats", label: "Recap", icon: Sparkles },
   { id: "settings", label: "Settings", icon: Settings },
@@ -90,7 +73,7 @@ const FOOT_FIXED: { id: AppView; label: string; icon: typeof Library }[] = [
 const MOBILE: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "listen", label: "Home", icon: House },
   { id: "library", label: "Library", icon: Library },
-  { id: "studio", label: "Sound", icon: SlidersHorizontal },
+  { id: "studio", label: "Sound", icon: aSlidersHorizontal },
   { id: "search", label: "Search", icon: Search },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -105,13 +88,11 @@ function NavBtn({
   onClick,
   icon: Icon,
   label,
-  indent,
 }: {
   active: boolean;
   onClick: () => void;
   icon: typeof Library;
   label: string;
-  indent?: boolean;
 }) {
   return (
     <button
@@ -119,7 +100,6 @@ function NavBtn({
       onClick={onClick}
       className={cn(
         "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors",
-        indent && "pl-8",
         active ? "bg-white/10 font-medium text-white" : "text-white/55 hover:bg-white/5 hover:text-white/90",
       )}
     >
@@ -153,8 +133,8 @@ export function Sidebar({ view, onView }: Props) {
         <nav className="flex flex-col gap-0.5">
           {TOP.map((item) => (
             <NavBtn
-              key={item.id + item.label}
-              active={view === item.id && item.id !== "recent" ? true : view === item.id}
+              key={item.label}
+              active={view === item.id}
               onClick={() => onView(item.id)}
               icon={item.icon}
               label={item.label}
@@ -188,12 +168,7 @@ export function Sidebar({ view, onView }: Props) {
         </button>
         {plOpen ? (
           <nav className="flex flex-col gap-0.5">
-            <NavBtn
-              active={false}
-              onClick={() => onView("library")}
-              icon={ListMusic}
-              label="All Playlists"
-            />
+            <NavBtn active={false} onClick={() => onView("library")} icon={ListMusic} label="All Playlists" />
             {playlists.slice(0, 12).map((pl) => (
               <button
                 key={pl.id}
@@ -231,7 +206,7 @@ export function Sidebar({ view, onView }: Props) {
         ) : null}
 
         <nav className="mt-4 flex flex-col gap-0.5 border-t border-white/8 pt-3">
-          {FOOT_FIXED.map((item) => (
+          {FOOT.map((item) => (
             <NavBtn
               key={item.id}
               active={view === item.id}
