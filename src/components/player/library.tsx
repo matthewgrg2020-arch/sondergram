@@ -10,6 +10,7 @@ import { useLibraryView, type CoverSize, type LibTab, type TitleMode } from "@/l
 import { ArtworkPanel } from "./cover-search";
 import { Field } from "./metadata-panel";
 import { TagEditor } from "./tag-editor";
+import { FormatBadge } from "./format-badge";
 
 type Tab = LibTab;
 type Size = CoverSize;
@@ -127,8 +128,6 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     }
   };
 
-  // Explicit columns so size is predictable on iPhone
-  // Small = more tiles, Large = fewer / bigger tiles
   const gridClass =
     size === "s"
       ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"
@@ -285,6 +284,31 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 <p className="text-xs text-subtle">
                   {[album.year, `${album.trackIds.length} songs`].filter(Boolean).join(" · ")}
                 </p>
+                <div className="mt-1.5 flex w-full flex-wrap gap-1.5">
+                  {(() => {
+                    const songs = songsOf(album.trackIds);
+                    const labels = new Set<string>();
+                    for (const t of songs) {
+                      const fmt = (t.format || "").toUpperCase();
+                      if (fmt) labels.add(fmt);
+                    }
+                    return [...labels].slice(0, 4).map((fmt) => {
+                      const sample = songs.find((t) => (t.format || "").toUpperCase() === fmt);
+                      return sample ? (
+                        <FormatBadge
+                          key={fmt}
+                          label={sample.format || fmt}
+                          lossless={sample.lossless}
+                          sampleRate={sample.sampleRate}
+                          bitDepth={sample.bitDepth}
+                          bitrate={sample.bitrate}
+                          tags={sample.tags}
+                          className="rounded bg-raised px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted"
+                        />
+                      ) : null;
+                    });
+                  })()}
+                </div>
               </div>
 
               <div className="rounded-2xl border border-border bg-raised/60 p-4">
@@ -354,7 +378,20 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                         ) : null}
                       </div>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm">{t.name}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="block min-w-0 truncate text-sm">{t.name}</span>
+                          {t.format ? (
+                            <FormatBadge
+                              label={t.format}
+                              lossless={t.lossless}
+                              sampleRate={t.sampleRate}
+                              bitDepth={t.bitDepth}
+                              bitrate={t.bitrate}
+                              tags={t.tags}
+                              className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted"
+                            />
+                          ) : null}
+                        </span>
                         <span className="block truncate text-xs text-muted">{t.artist}</span>
                       </span>
                     </button>
@@ -540,7 +577,20 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     ) : null}
                   </div>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">{t.name}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="block min-w-0 truncate text-sm">{t.name}</span>
+                      {t.format ? (
+                        <FormatBadge
+                          label={t.format}
+                          lossless={t.lossless}
+                          sampleRate={t.sampleRate}
+                          bitDepth={t.bitDepth}
+                          bitrate={t.bitrate}
+                          tags={t.tags}
+                          className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted"
+                        />
+                      ) : null}
+                    </span>
                     <span className="block truncate text-xs text-muted">{t.artist}</span>
                   </span>
                   {t.year ? <span className="text-xs text-subtle">{t.year}</span> : null}
