@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { groupAlbums, groupArtists } from "@/lib/player/catalog";
+import { albumKey, groupAlbums, groupArtists } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { proxyCoverUrl } from "@/lib/player/covers";
 import { useLibraryView, type CoverSize, type LibTab, type TitleMode } from "@/lib/player/library-view";
+import { ArtworkPanel } from "./cover-search";
+import { Field } from "./metadata-panel";
 
 type Tab = LibTab;
 type Size = CoverSize;
@@ -23,6 +25,9 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const playIds = usePlayer((s) => s.playIds);
   const playRest = usePlayer((s) => s.playRest);
   const addFiles = usePlayer((s) => s.addFiles);
+  const setCover = usePlayer((s) => s.setCover);
+  const updateAlbumMeta = usePlayer((s) => s.updateAlbumMeta);
+  const removeTracks = usePlayer((s) => s.removeTracks);
   const inputRef = useRef<HTMLInputElement>(null);
   const view = useLibraryView();
   const [tab, setTab] = useState<Tab>(startTab ?? view.tab);
@@ -84,6 +89,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     setOpenAlbum(null);
     setOpenArtist(null);
     setOpenYear(null);
+  };
+
+  const patchAlbumMeta = (ids: string[], patch: Partial<Pick<Track, "album" | "year" | "albumArtist" | "genre" | "artist">>) => {
+    updateAlbumMeta(ids, patch);
+    const first = usePlayer.getState().tracks.find((t) => t.id === ids[0]);
+    if (first) setOpenAlbum(albumKey(first));
   };
 
   const gridStyle = {
@@ -222,27 +233,64 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             <ChevronLeft className="size-4" strokeWidth={1.75} />
             Back
           </button>
-          <div className="mb-4 flex gap-4">
-            <div className="size-28 shrink-0 overflow-hidden rounded-lg bg-raised sm:size-36">
-              {album.coverUrl ? (
-                <img src={proxyCoverUrl(album.coverUrl)} alt="" className="size-full object-cover" />
-              ) : null}
-            </div>
+
+          <div className="mb-6 grid gap-5 lg:grid-cols-[14rem_1fr]">
+            <ArtworkPanel
+              src={album.coverUrl}
+              artist={album.artist}
+              album={album.title}
+              trackIds={album.trackIds}
+              onFile={(file) => setCover(album.trackIds, file)}
+              onRemoveAlbum={() => {
+                removeTracks(album.trackIds);
+                setOpenAlbum(null);
+              }}
+            />
+
             <div className="min-w-0">
-              <h3 className="text-xl font-semibold tracking-tight">{album.title}</h3>
-              <p className="text-sm text-muted">{album.artist}</p>
-              <p className="text-xs text-subtle">
-                {[album.year, `${album.trackIds.length} songs`].filter(Boolean).join(" · ")}
-              </p>
-              <button
-                type="button"
-                onClick={() => playIds(album.trackIds)}
-                className="mt-3 h-9 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg"
-              >
-                Play
-              </button>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => playIds(album.trackIds)}
+                  className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg"
+                >
+                  Play
+                </button>
+                <p className="text-xs text-subtle">
+                  {[album.year, `${album.trackIds.length} songs`].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field
+                  label="Album"
+                  value={album.title}
+                  placeholder="Album title"
+                  onSave={(title) => patchAlbumMeta(album.trackIds, { album: title })}
+                />
+                <Field
+                  label="Artist"
+                  value={album.artist}
+                  placeholder="Artist name"
+                  onSave={(artistName) => patchAlbumMeta(album.trackIds, { artist: artistName, albumArtist: artistName })}
+                />
+                <Field
+                  label="Year"
+                  value={album.year || ""}
+                  placeholder="1998"
+                  onSave={(year) => patchAlbumMeta(album.trackIds, { year })}
+                />
+                <Field
+                  label="Genre"
+                  value={songsOf(album.trackIds)[0]?.genre || ""}
+                  placeholder="Genre"
+                  onSave={(genre) => patchAlbumMeta(album.trackIds, { genre })}
+                />
+              </div>
             </div>
           </div>
+
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">Tracks</h3>
           <SongRows list={songsOf(album.trackIds)} />
         </div>
       ) : null}
