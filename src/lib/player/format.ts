@@ -186,3 +186,27 @@ export function formatSpecs(info: {
 export function creditLine(track: { artist: string; album?: string; genre: string; year: string }) {
   return [track.artist, track.album, track.year].filter(Boolean).join("  ·  ");
 }
+
+export function formatTrackTime(sec?: number | null) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const total = Math.round(n);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+export function formatDuration(sec?: number | null) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const total = Math.round(n);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) {
+    const extra = m > 0 ? ` ${m} min` : "";
+    return `${h} hr${extra}`;
+  }
+  return `${Math.max(1, m)} min`;
+}
