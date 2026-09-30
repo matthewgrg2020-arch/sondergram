@@ -96,6 +96,12 @@ function blobFromStored(value: unknown, type = "application/octet-stream"): Blob
   return new Blob([], { type });
 }
 
+function isRealAudioBlob(blob: Blob | null | undefined) {
+  if (!blob || blob.size < 1024) return false;
+  if (/^text\//i.test(blob.type || "")) return false;
+  return true;
+}
+
 async function requestPersist() {
   try {
     await navigator.storage?.persist?.();
@@ -210,6 +216,7 @@ export async function getAudioBlob(id: string): Promise<Blob | null> {
   const type = row.audioType || "audio/mpeg";
   const blob = blobFromStored(row.audio, type);
   if (blob.size > 0) {
+    // Promote IDB audio into OPFS when possible (e.g. after zip restore)
     void writeOpfs(id, blob);
     return blob;
   }
@@ -234,8 +241,9 @@ async function stripLegacyAudio() {
     if (!row) continue;
     if ((await audioSize(row.audio)) > 0) {
       const blob = blobFromStored(row.audio, row.audioType || "audio/mpeg");
-      await writeOpfs(String(id), blob);
-      await storePut(db, { ...row, audio: new ArrayBuffer(0) });
+      const ok = await writeOpfs(String(id), blob);
+      // Only clear IDB payload after OPFS has a copy
+      if (ok) await storePut(db, { ...row, audio: new ArrayBuffer(0) });
     }
     await yieldUi();
   }
@@ -259,19 +267,10 @@ export async function getStoredTrack(id: string): Promise<StoredTrack | undefine
 
 export async function putStoredTrack(track: StoredTrack) {
   await requestPersist();
-  if (
-    !track.youtubeId &&
-    !track.ibroadcastId &&
-    !track.deezerId &&
-    !track.spotifyId &&
-    !track.amazonId &&
-    !track.archiveId &&
-    !track.bandcampId &&
-    !track.soulseekId &&
-    !track.previewUrl &&
-    track.audio.size > 0
-  ) {
-    await writeOpfs(track.id, track.audio);
+  const hasRealAudio = isRealAudioBlob(track.audio);
+  let opfsOk = false;
+  if (hasRealAudio) {
+    opfsOk = await writeOpfs(track.id, track.audio);
   }
   const audioType = track.audio.type || track.audioType || "audio/mpeg";
   const coverType = track.cover?.type || "image/jpeg";
@@ -283,9 +282,18 @@ export async function putStoredTrack(track: StoredTrack) {
       coverPayload = null;
     }
   }
+  // If OPFS write failed, keep audio bytes in IndexedDB so restore/playback still works
+  let audioPayload: ArrayBuffer = new ArrayBuffer(0);
+  if (hasRealAudio && !opfsOk) {
+    try {
+      audioPayload = await track.audio.arrayBuffer();
+    } catch {
+      audioPayload = new ArrayBuffer(0);
+    }
+  }
   const record = {
     ...track,
-    audio: new ArrayBuffer(0),
+    audio: audioPayload,
     audioType,
     cover: coverPayload,
     coverType,
