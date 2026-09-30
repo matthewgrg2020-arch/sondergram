@@ -134,13 +134,19 @@ export function formatSign(info: {
 }) {
   const fmt = (info.format || "AUDIO").replace(/^\s+|\s+$/g, "").toUpperCase() || "AUDIO";
   const rate = formatKhz(info.sampleRate);
-  if (rate && info.bitDepth) return `${fmt} ${rate} / ${info.bitDepth}`;
-  if (rate) return `${fmt} ${rate}`;
   const raw = info.bitrate || 0;
-  if (!info.lossless && raw > 32) {
-    const kbps = raw > 2000 ? Math.round(raw / 1000) : Math.round(raw);
-    return `${fmt} ${kbps}`;
+  const kbps = raw > 32 ? (raw > 2000 ? Math.round(raw / 1000) : Math.round(raw)) : 0;
+
+  // Lossless: FLAC 24/96, WAV 16/44.1, etc.
+  if (info.lossless || /^(FLAC|WAV|AIFF|ALAC)$/i.test(fmt)) {
+    if (info.bitDepth && rate) return `${fmt} ${info.bitDepth}/${rate}`;
+    if (rate) return `${fmt} ${rate} kHz`;
+    return fmt;
   }
+
+  // Lossy: MP3 320 kbps, AAC 256 kbps
+  if (kbps > 0) return `${fmt} ${kbps} kbps`;
+  if (rate) return `${fmt} ${rate} kHz`;
   if ((info.tags || []).some((tag) => /atmos/i.test(tag))) return "ATMOS";
   return fmt;
 }
@@ -166,7 +172,11 @@ export function formatSpecs(info: {
   if (info.bitDepth) parts.push(`${info.bitDepth}-bit`);
   const hz = formatHz(info.sampleRate);
   if (hz) parts.push(hz);
-  if (!info.lossless && info.bitrate) parts.push(`${Math.round(info.bitrate / 1000)} kbps`);
+  if (!info.lossless && info.bitrate) {
+    const raw = info.bitrate;
+    const kbps = raw > 2000 ? Math.round(raw / 1000) : Math.round(raw);
+    parts.push(`${kbps} kbps`);
+  }
   if (info.channels === 1) parts.push("Mono");
   if (info.channels === 2) parts.push("Stereo");
   if (info.channels && info.channels > 2) parts.push(`${info.channels} ch`);
