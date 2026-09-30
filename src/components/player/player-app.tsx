@@ -188,12 +188,10 @@ export function PlayerApp() {
       if (!state.playing) return;
       if (isYoutubePlayback(state.tracks[state.index])) return;
       if (hidden) {
-        // Prefer keeping Web Audio graph (EQ) alive; engine falls back only if needed
         setBackgroundOutput(true);
         void getEngine().ctx.resume().catch(() => undefined);
         return;
       }
-      // Returning to app: restore EQ path without reloading the previous track
       setBackgroundOutput(false);
       void resumeEngine();
     };
@@ -258,7 +256,6 @@ export function PlayerApp() {
     setYoutubeHandlers({ onEnded: () => autoNext() });
   }, [autoNext]);
 
-  // Load a track only when the track id actually changes (not on every resume)
   useEffect(() => {
     if (!track) return;
     if (lastTrackIdRef.current === track.id) return;
@@ -283,7 +280,7 @@ export function PlayerApp() {
             pauseOutput();
           }
         } catch {
-          /* stream fail — user can skip */
+          /* stream fail */
         }
       }
     })();
@@ -313,7 +310,6 @@ export function PlayerApp() {
       const out = outputAudio();
       const duration = Number.isFinite(out.duration) ? out.duration : 0;
       setTimes(out.currentTime || 0, duration);
-      // Near-end gapless advance while backgrounded (iOS sometimes skips ended)
       if (
         usePlayer.getState().playing &&
         duration > 3 &&
@@ -391,7 +387,7 @@ export function PlayerApp() {
           ) : null}
           {view === "settings" ? (
             <div className="space-y-4 px-5 py-4">
-              <AddMusicCard />
+              <AddMusicCard onView={goView} />
               <LibraryBackup />
               <LibraryClear />
               <LastFmCard />
