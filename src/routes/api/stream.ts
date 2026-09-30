@@ -54,7 +54,8 @@ function refererFor(url: URL) {
 }
 
 async function proxy(request: Request) {
-  const target = new URL(request.url).searchParams.get("u") || "";
+  const params = new URL(request.url).searchParams;
+  const target = params.get("u") || params.get("url") || "";
   let url: URL;
   try {
     url = new URL(target);
