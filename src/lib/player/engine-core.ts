@@ -208,7 +208,8 @@ function proxyStreamUrl(url: string) {
   try {
     const u = new URL(url, typeof location !== "undefined" ? location.href : "https://sondergram.vercel.app");
     if (u.protocol !== "http:" && u.protocol !== "https:") return url;
-    return `/api/stream?url=${encodeURIComponent(url)}`;
+    // Must use ?u= — /api/stream reads searchParams.get("u")
+    return `/api/stream?u=${encodeURIComponent(url)}`;
   } catch {
     return url;
   }
@@ -299,6 +300,19 @@ export async function beginPlayback(url: string, at = 0) {
         }
         return;
       } catch {
+        // Last resort: try direct URL (no proxy) then plain element without graph
+        if (!blob && graphSrc !== url) {
+          try {
+            await playEl(eng.audio, url, at, true, gen);
+            if (gen !== playGen) {
+              silenceAll();
+              return;
+            }
+            return;
+          } catch {
+            /* fall through */
+          }
+        }
         if (dspActive()) {
           try {
             await playEl(eng.audio, url, at, true, gen);
@@ -359,7 +373,7 @@ export function setBackgroundOutput(on: boolean) {
     eng.graphActive = true;
     applyOutputGain();
     if (raw && !raw.startsWith("data:")) {
-      const graphSrc = proxyStreamUrl(raw);
+      const graphSrc = proxyStreamUrl(raw.startsWith("/api/stream") ? (new URL(raw, location.href).searchParams.get("u") || raw) : raw);
       if (eng.audio.src !== graphSrc && eng.audio.currentSrc !== graphSrc) {
         const sameTime = eng.audio.currentTime || 0;
         if (sameTime < 0.5 && t > 1) {
