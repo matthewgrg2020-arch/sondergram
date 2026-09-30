@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, Pencil, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, groupAlbums, groupArtists } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
@@ -8,6 +8,7 @@ import { proxyCoverUrl } from "@/lib/player/covers";
 import { useLibraryView, type CoverSize, type LibTab, type TitleMode } from "@/lib/player/library-view";
 import { ArtworkPanel } from "./cover-search";
 import { Field } from "./metadata-panel";
+import { TagEditor } from "./tag-editor";
 
 type Tab = LibTab;
 type Size = CoverSize;
@@ -27,6 +28,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const addFiles = usePlayer((s) => s.addFiles);
   const setCover = usePlayer((s) => s.setCover);
   const updateAlbumMeta = usePlayer((s) => s.updateAlbumMeta);
+  const updateMeta = usePlayer((s) => s.updateMeta);
   const removeTracks = usePlayer((s) => s.removeTracks);
   const inputRef = useRef<HTMLInputElement>(null);
   const view = useLibraryView();
@@ -34,6 +36,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [openAlbum, setOpenAlbum] = useState<string | null>(startAlbum ?? null);
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openYear, setOpenYear] = useState<string | null>(null);
+  const [editTrackId, setEditTrackId] = useState<string | null>(null);
   const size = view.size;
   const titles = view.titles;
 
@@ -89,9 +92,13 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     setOpenAlbum(null);
     setOpenArtist(null);
     setOpenYear(null);
+    setEditTrackId(null);
   };
 
-  const patchAlbumMeta = (ids: string[], patch: Partial<Pick<Track, "album" | "year" | "albumArtist" | "genre" | "artist">>) => {
+  const patchAlbumMeta = (
+    ids: string[],
+    patch: Partial<Pick<Track, "album" | "year" | "albumArtist" | "genre" | "artist" | "tags">>,
+  ) => {
     updateAlbumMeta(ids, patch);
     const first = usePlayer.getState().tracks.find((t) => t.id === ids[0]);
     if (first) setOpenAlbum(albumKey(first));
@@ -117,28 +124,6 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               {item.year ? <p className="truncate text-[11px] text-subtle">{item.year}</p> : null}
             </>
           ) : null}
-        </button>
-      ))}
-    </div>
-  );
-
-  const SongRows = ({ list }: { list: Track[] }) => (
-    <div className="divide-y divide-border">
-      {list.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => playRest(t.id)}
-          className="flex w-full items-center gap-3 px-1 py-2 text-left hover:bg-raised"
-        >
-          <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
-            {t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}
-          </div>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{t.name}</span>
-            <span className="block truncate text-xs text-muted">{t.artist}</span>
-          </span>
-          {t.year ? <span className="text-xs text-subtle">{t.year}</span> : null}
         </button>
       ))}
     </div>
@@ -227,7 +212,10 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
         <div>
           <button
             type="button"
-            onClick={() => setOpenAlbum(null)}
+            onClick={() => {
+              setOpenAlbum(null);
+              setEditTrackId(null);
+            }}
             className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
           >
             <ChevronLeft className="size-4" strokeWidth={1.75} />
@@ -247,8 +235,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               }}
             />
 
-            <div className="min-w-0">
-              <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="min-w-0 space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => playIds(album.trackIds)}
@@ -261,37 +249,121 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 </p>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  label="Album"
-                  value={album.title}
-                  placeholder="Album title"
-                  onSave={(title) => patchAlbumMeta(album.trackIds, { album: title })}
-                />
-                <Field
-                  label="Artist"
-                  value={album.artist}
-                  placeholder="Artist name"
-                  onSave={(artistName) => patchAlbumMeta(album.trackIds, { artist: artistName, albumArtist: artistName })}
-                />
-                <Field
-                  label="Year"
-                  value={album.year || ""}
-                  placeholder="1998"
-                  onSave={(year) => patchAlbumMeta(album.trackIds, { year })}
-                />
-                <Field
-                  label="Genre"
-                  value={songsOf(album.trackIds)[0]?.genre || ""}
-                  placeholder="Genre"
-                  onSave={(genre) => patchAlbumMeta(album.trackIds, { genre })}
-                />
+              {/* Explicit Edit Metadata section */}
+              <div className="rounded-2xl border border-border bg-raised/60 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Pencil className="size-4 text-accent" strokeWidth={2} />
+                  <h3 className="text-sm font-semibold tracking-tight">Edit metadata</h3>
+                  <span className="text-[11px] text-subtle">Applies to all tracks on this album</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    label="Album"
+                    value={album.title}
+                    placeholder="Album title"
+                    onSave={(title) => patchAlbumMeta(album.trackIds, { album: title })}
+                  />
+                  <Field
+                    label="Artist"
+                    value={album.artist}
+                    placeholder="Artist name"
+                    onSave={(artistName) =>
+                      patchAlbumMeta(album.trackIds, { artist: artistName, albumArtist: artistName })
+                    }
+                  />
+                  <Field
+                    label="Year"
+                    value={album.year || ""}
+                    placeholder="1998"
+                    onSave={(year) => patchAlbumMeta(album.trackIds, { year })}
+                  />
+                  <Field
+                    label="Genre"
+                    value={songsOf(album.trackIds)[0]?.genre || ""}
+                    placeholder="Genre"
+                    onSave={(genre) => patchAlbumMeta(album.trackIds, { genre })}
+                  />
+                </div>
+                <div className="mt-3">
+                  <TagEditor
+                    tags={songsOf(album.trackIds)[0]?.tags || []}
+                    onChange={(tags) => patchAlbumMeta(album.trackIds, { tags })}
+                  />
+                </div>
               </div>
             </div>
           </div>
 
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">Tracks</h3>
-          <SongRows list={songsOf(album.trackIds)} />
+          <p className="mb-2 text-xs text-subtle">Tap the pencil to edit a song title or artist</p>
+          <div className="divide-y divide-border">
+            {songsOf(album.trackIds).map((t) => {
+              const editing = editTrackId === t.id;
+              return (
+                <div key={t.id} className="py-2">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => playRest(t.id)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left hover:opacity-90"
+                    >
+                      <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
+                        {t.coverUrl ? (
+                          <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" />
+                        ) : null}
+                      </div>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">{t.name}</span>
+                        <span className="block truncate text-xs text-muted">{t.artist}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Edit track"
+                      onClick={() => setEditTrackId(editing ? null : t.id)}
+                      className={cn(
+                        "flex size-9 shrink-0 items-center justify-center rounded-full",
+                        editing ? "bg-accent text-accent-fg" : "bg-raised text-muted hover:text-fg",
+                      )}
+                    >
+                      <Pencil className="size-3.5" strokeWidth={2} />
+                    </button>
+                  </div>
+                  {editing ? (
+                    <div className="mt-2 grid gap-2 rounded-xl bg-raised p-3 sm:grid-cols-2">
+                      <Field
+                        label="Title"
+                        value={t.name}
+                        placeholder="Song title"
+                        onSave={(name) => updateMeta(t.id, { name })}
+                      />
+                      <Field
+                        label="Artist"
+                        value={t.artist}
+                        placeholder="Artist"
+                        onSave={(artistName) => updateMeta(t.id, { artist: artistName })}
+                      />
+                      <Field
+                        label="Track #"
+                        value={t.trackNo != null ? String(t.trackNo) : ""}
+                        placeholder="1"
+                        onSave={(v) => {
+                          const n = Number.parseInt(v, 10);
+                          updateMeta(t.id, { trackNo: Number.isFinite(n) ? n : undefined });
+                        }}
+                      />
+                      <Field
+                        label="Year"
+                        value={t.year || ""}
+                        placeholder="1998"
+                        onSave={(year) => updateMeta(t.id, { year })}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 
@@ -358,9 +430,29 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               ))}
             </div>
           ) : null}
-          {tab === "songs" ? <SongRows list={tracks} /> : null}
-          {tab === "liked" ? <SongRows list={liked} /> : null}
-          {tab === "added" ? <SongRows list={added} /> : null}
+          {tab === "songs" || tab === "liked" || tab === "added" ? (
+            <div className="divide-y divide-border">
+              {(tab === "songs" ? tracks : tab === "liked" ? liked : added).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => playRest(t.id)}
+                  className="flex w-full items-center gap-3 px-1 py-2 text-left hover:bg-raised"
+                >
+                  <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
+                    {t.coverUrl ? (
+                      <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" />
+                    ) : null}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{t.name}</span>
+                    <span className="block truncate text-xs text-muted">{t.artist}</span>
+                  </span>
+                  {t.year ? <span className="text-xs text-subtle">{t.year}</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </>
       ) : null}
     </section>
