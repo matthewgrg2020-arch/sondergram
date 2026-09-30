@@ -2,10 +2,7 @@
 import { BAND_COUNT, EQ_BANDS, EQ_Q, type EqGains } from "./constants";
 import {
   createSpatial,
-  disconnectSpatial,
   setSpatial as applySpatialState,
-  spatialNodes,
-  wireSpatial,
   type SpatialGraph,
   type SpatialPreset,
 } from "./spatial";
@@ -13,9 +10,6 @@ import {
 export type IsolateMode = "mix" | "vocals" | "instruments" | "drums" | "bass";
 export type RemasterPreset = "off" | "clean" | "full" | "vinyl" | "loud";
 export type { SpatialPreset };
-
-// CRITICAL iOS FIX: when DSP (EQ) is active, never switch to bgAudio on track change while backgrounded.
-// Full engine body is loaded from the previous working build — this stub is replaced by full push.
 
 export function isAppleMobile() {
   if (typeof navigator === "undefined") return false;
@@ -39,13 +33,21 @@ let lastPreamp = 0;
 let bassLockDb = 0;
 let lastRemaster: RemasterPreset = "off";
 let lastRemasterAmt = 0.7;
-const SILENCE = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
+function finite(n: number, fallback = 0) {
+  return Number.isFinite(n) ? n : fallback;
+}
 function dbToGain(db: number) {
-  return Math.pow(10, db / 20);
+  const d = finite(db, 0);
+  return Math.pow(10, d / 20);
 }
 function eqIsActive() {
-  return lastRemaster !== "off" || Math.abs(lastPreamp) > 0.05 || Math.abs(bassLockDb) > 0.05 || lastGains.some((g) => Math.abs(g) > 0.05);
+  return (
+    lastRemaster !== "off" ||
+    Math.abs(lastPreamp) > 0.05 ||
+    Math.abs(bassLockDb) > 0.05 ||
+    lastGains.some((g) => Math.abs(g) > 0.05)
+  );
 }
 function dspActive() {
   if (eqIsActive()) return true;
@@ -59,9 +61,7 @@ function prepareAudioElement(el: HTMLAudioElement, graph = false) {
   el.setAttribute("playsinline", "");
   el.setAttribute("webkit-playsinline", "");
   (el as any).playsInline = true;
-  if (!graph) {
-    el.muted = false;
-  }
+  if (!graph) el.muted = false;
 }
 
 function seekEl(el: HTMLAudioElement, time: number) {
@@ -86,20 +86,25 @@ function ensureEngine() {
   const ctx = new AC();
   const source = ctx.createMediaElementSource(audio);
   const preamp = ctx.createGain();
+  preamp.gain.value = 1;
   const filters: BiquadFilterNode[] = [];
   let prev: AudioNode = preamp;
   for (let i = 0; i < BAND_COUNT; i++) {
     const f = ctx.createBiquadFilter();
     f.type = i === 0 ? "lowshelf" : i === BAND_COUNT - 1 ? "highshelf" : "peaking";
-    f.frequency.value = EQ_BANDS[i];
-    f.Q.value = EQ_Q;
+    // EQ_BANDS entries are { freq, label } objects
+    const freq = finite((EQ_BANDS[i] as any)?.freq ?? EQ_BANDS[i], 1000);
+    f.frequency.value = freq;
+    f.Q.value = finite(EQ_Q, 1);
     f.gain.value = 0;
     prev.connect(f);
     prev = f;
     filters.push(f);
   }
   const gain = ctx.createGain();
+  gain.gain.value = 1;
   const panner = ctx.createStereoPanner();
+  panner.pan.value = 0;
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 2048;
   prev.connect(gain);
@@ -109,7 +114,15 @@ function ensureEngine() {
   source.connect(preamp);
   const spatial = createSpatial(ctx);
   engine = {
-    audio, bgAudio, ctx, source, preamp, filters, gain, panner, analyser,
+    audio,
+    bgAudio,
+    ctx,
+    source,
+    preamp,
+    filters,
+    gain,
+    panner,
+    analyser,
     isolateMode: "mix" as IsolateMode,
     spatial,
     apple: isAppleMobile(),
@@ -137,8 +150,7 @@ export function pauseOutput() {
 }
 
 export function seekOutput(t: number) {
-  const el = outputAudio();
-  seekEl(el, t);
+  seekEl(outputAudio(), t);
 }
 
 export async function resumeEngine() {
@@ -261,7 +273,7 @@ export async function beginPlayback(url: string, at = 0) {
 
   const blob = url.startsWith("blob:") || url.startsWith("data:");
   const hiddenApple = Boolean(eng.apple && typeof document !== "undefined" && document.visibilityState === "hidden");
-  // KEY FIX: keep Web Audio (EQ) path when DSP is active — iOS drops EQ if we switch to bgAudio on track change
+  // Keep Web Audio (EQ) when DSP active — iOS drops EQ if switched to bgAudio on track change
   const forceGraph = dspActive() || !hiddenApple;
   const graphSrc = blob ? url : proxyStreamUrl(url);
 
@@ -304,7 +316,6 @@ export async function beginPlayback(url: string, at = 0) {
     }
   }
 
-  // No DSP and hidden on Apple: use native bgAudio for reliable background play
   if (gen !== playGen) {
     silenceAll();
     return;
@@ -342,33 +353,20 @@ export function setBackgroundOutput(on: boolean) {
     return;
   }
   if (!on) {
-    // Returning to foreground — restore graph path without restarting track
     eng.ctx.resume().catch(() => {});
     const t = Number.isFinite(eng.bgAudio.currentTime) ? eng.bgAudio.currentTime : eng.audio.currentTime;
     const raw = (eng.audio.currentSrc || eng.audio.src || lastPlayUrl || "").trim();
-    if (!raw || raw.startsWith("data:")) {
-      // Already on graph or no src — just ensure graph is active and playing
-      eng.graphActive = true;
-      applyOutputGain();
-      eng.audio.play().catch(() => {});
-      eng.bgAudio.muted = true;
-      eng.bgAudio.volume = 0;
-      return;
-    }
     eng.graphActive = true;
     applyOutputGain();
-    const graphSrc = proxyStreamUrl(raw);
-    if (eng.audio.src !== graphSrc && eng.audio.currentSrc !== graphSrc) {
-      // Only change src if different — avoid restart
-      const sameTime = eng.audio.currentTime || 0;
-      if (sameTime < 0.5 && t > 1) {
-        // Graph element was idle; sync from bg
-        if (eng.audio.src !== graphSrc) eng.audio.src = graphSrc;
-        seekEl(eng.audio, t);
-      }
-    } else {
-      // Same source — just ensure playing at current position
-      if (Math.abs((eng.audio.currentTime || 0) - t) > 1.5 && t > 0.5) {
+    if (raw && !raw.startsWith("data:")) {
+      const graphSrc = proxyStreamUrl(raw);
+      if (eng.audio.src !== graphSrc && eng.audio.currentSrc !== graphSrc) {
+        const sameTime = eng.audio.currentTime || 0;
+        if (sameTime < 0.5 && t > 1) {
+          eng.audio.src = graphSrc;
+          seekEl(eng.audio, t);
+        }
+      } else if (Math.abs((eng.audio.currentTime || 0) - t) > 1.5 && t > 0.5) {
         seekEl(eng.audio, t);
       }
     }
@@ -379,11 +377,9 @@ export function setBackgroundOutput(on: boolean) {
     eng.bgAudio.pause();
     return;
   }
-  // Going to background
   const out = outputAudio();
   if (out.paused || out.ended) return;
   if (dspActive()) {
-    // Keep EQ alive — do not switch to bgAudio
     eng.ctx.resume().catch(() => {});
     eng.graphActive = true;
     applyOutputGain();
@@ -393,7 +389,6 @@ export function setBackgroundOutput(on: boolean) {
     eng.bgAudio.volume = 0;
     return;
   }
-  // No DSP: native element is more reliable for pure background on iOS
   const src = eng.audio.currentSrc || eng.audio.src || lastPlayUrl;
   if (!src || src.startsWith("data:")) return;
   prepareAudioElement(eng.bgAudio);
@@ -401,7 +396,7 @@ export function setBackgroundOutput(on: boolean) {
     eng.bgAudio.src = src;
     eng.bgAudio.load();
   }
-  eng.bgAudio.playbackRate = eng.audio.playbackRate;
+  eng.bgAudio.playbackRate = finite(eng.audio.playbackRate, 1);
   const t = eng.graphActive ? eng.audio.currentTime : eng.bgAudio.currentTime;
   seekEl(eng.bgAudio, t);
   eng.graphActive = false;
@@ -419,41 +414,43 @@ export function applyEq(gains: number[]) {
   const { filters } = ensureEngine();
   const n = Math.min(filters.length, gains.length);
   lastGains = gains.slice();
-  for (let i = 0; i < n; i++) filters[i].gain.value = gains[i];
-  // If EQ becomes active while on bg path, promote
+  for (let i = 0; i < n; i++) {
+    filters[i].gain.value = finite(gains[i], 0);
+  }
   if (dspActive() && engine && !engine.graphActive) {
     setBackgroundOutput(false);
   }
 }
 export function applyPreamp(db: number) {
-  lastPreamp = db;
-  ensureEngine().preamp.gain.value = dbToGain(db);
+  lastPreamp = finite(db, 0);
+  ensureEngine().preamp.gain.value = dbToGain(lastPreamp);
 }
 export function setBassLock(db: number) {
-  bassLockDb = db;
+  bassLockDb = finite(db, 0);
 }
 export function setIsolateMode(m: string) {
   ensureEngine().isolateMode = m as IsolateMode;
 }
 export function setSpatialMode(p: string, a?: number) {
   const eng = ensureEngine();
-  if (eng.spatial) applySpatialState(eng.spatial, p as SpatialPreset, a ?? 0.5);
+  if (eng.spatial) applySpatialState(eng.spatial, p as SpatialPreset, finite(a ?? 0.5, 0.5));
 }
 export function setMonoMode(_m: boolean) {}
 export function setRemaster(p: string, a?: number) {
   lastRemaster = p as RemasterPreset;
-  lastRemasterAmt = a ?? 0.7;
+  lastRemasterAmt = finite(a ?? 0.7, 0.7);
 }
 export function setBalance(v: number) {
-  ensureEngine().panner.pan.value = v;
+  ensureEngine().panner.pan.value = Math.max(-1, Math.min(1, finite(v, 0)));
 }
 export function setMasterGain(v: number) {
-  ensureEngine().gain.gain.value = v;
+  ensureEngine().gain.gain.value = Math.max(0, finite(v, 1));
 }
 export function setPlaybackRate(r: number) {
   const eng = ensureEngine();
-  eng.audio.playbackRate = r;
-  if (eng.bgAudio) eng.bgAudio.playbackRate = r;
+  const rate = Math.max(0.25, Math.min(4, finite(r, 1)));
+  eng.audio.playbackRate = rate;
+  if (eng.bgAudio) eng.bgAudio.playbackRate = rate;
 }
 export function setFadeMul(_v: number) {}
 export function setNormalizeMul(_v: number) {}
