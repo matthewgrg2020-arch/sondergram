@@ -38,8 +38,24 @@ const AUDIO_EXT: Record<string, string> = {
   YT: "txt",
 };
 
+const MIME_BY_FORMAT: Record<string, string> = {
+  MP3: "audio/mpeg",
+  FLAC: "audio/flac",
+  WAV: "audio/wav",
+  AIFF: "audio/aiff",
+  ALAC: "audio/mp4",
+  M4A: "audio/mp4",
+  AAC: "audio/aac",
+  OGG: "audio/ogg",
+  OPUS: "audio/ogg",
+};
+
 function extFor(format: string) {
   return AUDIO_EXT[format.toUpperCase()] ?? "bin";
+}
+
+function mimeForFormat(format: string) {
+  return MIME_BY_FORMAT[(format || "").toUpperCase()] ?? "audio/mpeg";
 }
 
 function isRealAudio(blob: Blob | undefined | null) {
@@ -104,6 +120,25 @@ function catalogKey(row: {
 
 function albumKeyOf(row: { artist?: string; albumArtist?: string; album?: string }) {
   return `${(row.albumArtist || row.artist || "").toLowerCase()}::${(row.album || "").toLowerCase()}`;
+}
+
+function findZipBlob(map: Map<string, Blob>, path?: string) {
+  if (!path) return undefined;
+  const norm = path.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (map.has(norm)) return map.get(norm);
+  const lower = norm.toLowerCase();
+  if (map.has(lower)) return map.get(lower);
+  const base = norm.split("/").pop() || norm;
+  for (const [key, blob] of map) {
+    const k = key.replace(/\\/g, "/");
+    if (k === norm || k === base || k.endsWith("/" + base) || k.endsWith(base)) return blob;
+  }
+  return undefined;
+}
+
+function typedBlob(blob: Blob, mime: string) {
+  if (blob.type === mime) return blob;
+  return new Blob([blob], { type: mime });
 }
 
 function triggerDownload(blob: Blob, name: string) {
@@ -229,8 +264,13 @@ export async function exportLibraryBackup() {
 
 export async function importLibraryBackup(file: File) {
   const entries = await unzipBlobs(file);
-  const map = new Map(entries.map((e) => [e.name.replace(/\\/g, "/"), e.data]));
-  const catalogBlob = map.get("library.json");
+  const map = new Map<string, Blob>();
+  for (const e of entries) {
+    const name = e.name.replace(/\\/g, "/");
+    map.set(name, e.data);
+    map.set(name.toLowerCase(), e.data);
+  }
+  const catalogBlob = map.get("library.json") || map.get("LIBRARY.JSON");
   if (!catalogBlob) throw new Error("Not a Sondergram library backup");
   const catalog = JSON.parse(await catalogBlob.text()) as BackupMeta;
   if (!catalog?.tracks?.length) throw new Error("Backup has no tracks");
@@ -239,24 +279,47 @@ export async function importLibraryBackup(file: File) {
   const existingKeys = new Map(existingRows.map((t) => [catalogKey(t), t.id]));
   const idMap = new Map<string, string>();
   let imported = 0;
+  let withAudio = 0;
   for (const row of catalog.tracks) {
     const key = catalogKey(row);
     const already = existingIds.has(row.id) ? row.id : existingKeys.get(key);
     if (already) {
       idMap.set(row.id, already);
+      // If existing row has no playable audio, try to fill from zip
+      const audioRaw = findZipBlob(map, row.audioFile);
+      if (isRealAudio(audioRaw ?? null) && audioRaw) {
+        const existing = await getStoredTrack(already);
+        if (!existing || !isRealAudio(existing.audio)) {
+          const mime = mimeForFormat(row.format || existing?.format || "MP3");
+          await putStoredTrack({
+            ...(existing || (row as StoredTrack)),
+            id: already,
+            audio: typedBlob(audioRaw, mime),
+            audioType: mime,
+            cover: existing?.cover ?? null,
+          });
+          withAudio += 1;
+        }
+      }
       continue;
     }
-    const audio = row.audioFile ? map.get(row.audioFile) : undefined;
-    const cover = row.coverFile ? map.get(row.coverFile) : undefined;
-    if (!isCatalogRow(row) && !isRealAudio(audio ?? null)) continue;
-    const placeholder = new Blob([row.soulseekId || row.deezerId || row.spotifyId || row.appleId || row.id], {
-      type: "text/plain",
-    });
+    const audioRaw = findZipBlob(map, row.audioFile);
+    const coverRaw = findZipBlob(map, row.coverFile);
+    if (!isCatalogRow(row) && !isRealAudio(audioRaw ?? null)) continue;
+    const mime = mimeForFormat(row.format || "MP3");
+    const audio =
+      isRealAudio(audioRaw ?? null) && audioRaw
+        ? typedBlob(audioRaw, mime)
+        : new Blob([row.soulseekId || row.deezerId || row.spotifyId || row.appleId || row.id], {
+            type: "text/plain",
+          });
+    if (isRealAudio(audio)) withAudio += 1;
     await putStoredTrack({
       ...row,
       tags: row.tags ?? [],
-      audio: isRealAudio(audio ?? null) && audio ? audio : placeholder,
-      cover: cover && cover.size > 0 ? cover : null,
+      audio,
+      audioType: isRealAudio(audio) ? mime : row.audioType,
+      cover: coverRaw && coverRaw.size > 0 ? typedBlob(coverRaw, "image/jpeg") : null,
       addedAt: row.addedAt || Date.now(),
     });
     existingIds.add(row.id);
