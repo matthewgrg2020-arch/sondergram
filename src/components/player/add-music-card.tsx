@@ -1,4 +1,4 @@
-import { Archive, AudioLines, Cloud, Disc3, FileAudio, Plus, Search, Share2, Youtube } from "lucide-react";
+import { Archive, AudioLines, Cloud, Disc3, FileAudio, Plus, Search, Share2, Star, Youtube } from "lucide-react";
 import { useState } from "react";
 import { parseArchiveId } from "@/lib/player/archive";
 import { parseBandcampUrl } from "@/lib/player/bandcamp";
@@ -9,6 +9,7 @@ import type { AppView } from "./sidebar";
 const SOURCES: { id: AppView; label: string; hint: string; icon: typeof Youtube }[] = [
   { id: "archive", label: "Internet Archive", hint: "Paste a details link", icon: Archive },
   { id: "bandcamp", label: "Bandcamp", hint: "Album or artist link", icon: Disc3 },
+  { id: "rym", label: "RateYourMusic", hint: "Charts, genres, find on Bandcamp", icon: Star },
   { id: "youtube", label: "YouTube", hint: "Watch or queue a video", icon: Youtube },
   { id: "find", label: "Find files", hint: "FLAC, MP3, WAV", icon: FileAudio },
   { id: "deezer", label: "Deezer", hint: "ARL or catalog", icon: AudioLines },
@@ -19,7 +20,7 @@ const SOURCES: { id: AppView; label: string; hint: string; icon: typeof Youtube 
   { id: "soulseek", label: "Soulseek", hint: "Search and add album folders", icon: Share2 },
 ];
 
-export function AddMusicCard({ onView }: { onView: (view: AppView) => void }) {
+export function AddMusicCard({ onView }: { onView?: (view: AppView) => void }) {
   const addFiles = usePlayer((s) => s.addFiles);
   const importArchive = usePlayer((s) => s.importArchive);
   const importBandcamp = usePlayer((s) => s.importBandcamp);
@@ -37,7 +38,7 @@ export function AddMusicCard({ onView }: { onView: (view: AppView) => void }) {
         Add music
       </h3>
       <p className="mt-1 text-sm leading-relaxed text-muted">
-        Drop files, paste a link, or search Amazon, Apple Music, Deezer, Spotify, Bandcamp and more.
+        Drop files, paste a link, or search Amazon, Apple Music, Deezer, Spotify, Bandcamp, RateYourMusic and more.
       </p>
 
       <form
@@ -115,8 +116,8 @@ export function AddMusicCard({ onView }: { onView: (view: AppView) => void }) {
             <button
               key={item.id}
               type="button"
-              onClick={() => onView(item.id)}
-              className="flex items-start gap-2 rounded-xl bg-raised px-3 py-3 text-left"
+              onClick={() => onView?.(item.id)}
+              className="flex items-start gap-2 rounded-xl bg-raised px-3 py-3 text-left active:bg-white/10"
             >
               <Icon className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={1.75} />
               <span>
