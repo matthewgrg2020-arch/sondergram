@@ -2,17 +2,13 @@ import {
   AudioLines,
   ChevronDown,
   Heart,
-  Moon,
   Pause,
   Play,
-  Radio,
   Repeat,
   Repeat1,
   Shuffle,
   SkipBack,
   SkipForward,
-  Square,
-  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getEngine } from "@/lib/player/engine";
@@ -23,7 +19,7 @@ import { albumKey } from "@/lib/player/catalog";
 import { isExplicitTrack } from "@/lib/player/explicit";
 import { proxyCoverUrl } from "@/lib/player/covers";
 import { cn } from "@/lib/utils";
-import { ExplicitBadge } from "./format-badge";
+import { ExplicitBadge, FormatBadge } from "./format-badge";
 
 type Props = {
   onClose: () => void;
@@ -135,6 +131,19 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                   {track && isExplicitTrack(track) ? <ExplicitBadge className="size-[18px] text-[11px]" /> : null}
                 </h2>
                 <p className="mt-0.5 truncate text-base text-muted">{track?.artist ?? ""}</p>
+                {track?.format ? (
+                  <div className="mt-1.5">
+                    <FormatBadge
+                      label={track.format}
+                      lossless={track.lossless}
+                      sampleRate={track.sampleRate}
+                      bitDepth={track.bitDepth}
+                      bitrate={track.bitrate}
+                      tags={track.tags}
+                      className="inline-block rounded-md bg-raised px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted"
+                    />
+                  </div>
+                ) : null}
               </div>
               {track ? (
                 <button type="button" aria-label={track.liked ? "Unlike" : "Like"} onClick={() => toggleLike(track.id)} className="mt-1 flex size-11 shrink-0 items-center justify-center">
