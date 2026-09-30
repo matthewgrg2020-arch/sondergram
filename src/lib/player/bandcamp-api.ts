@@ -267,7 +267,7 @@ async function searchHits(q: string): Promise<BcHit[]> {
     body: JSON.stringify({
       search_text: q,
       search_filter: "a",
-      full_page: false,
+      full_page: true,
       fan_id: null,
     }),
   });
@@ -288,169 +288,62 @@ async function searchHits(q: string): Promise<BcHit[]> {
       kind,
     });
   }
-  return hits.slice(0, 18);
+  return hits.slice(0, 48);
 }
 
-function parseTagPageHits(html: string, label: string): BcHit[] {
-  const hits: BcHit[] = [];
-  const seen = new Set<string>();
-  const push = (hit: BcHit) => {
-    const key = hit.url.replace(/\/$/, "").toLowerCase();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    hits.push({ ...hit, genre: label });
+function hitFromDiscoverItem(item: Json, label: string): BcHit | null {
+  const hints = asJson(item.url_hints);
+  const subdomain = str(hints.subdomain);
+  const slug = str(hints.slug);
+  if (!subdomain || !slug) return null;
+  const kindRaw = str(hints.item_type || item.type);
+  if (kindRaw && kindRaw !== "a" && kindRaw !== "album") return null;
+  const url = `https://${subdomain}.bandcamp.com/album/${slug}`;
+  return {
+    url,
+    title: str(item.primary_text) || "Album",
+    artist: str(item.secondary_text),
+    cover: normalizeCover("", item.art_id),
+    kind: "album",
+    genre: str(item.genre_text) || label,
   };
-
-  const albumHrefs = [
-    ...html.matchAll(/href=["'](https?:\/\/[^"']+\/album\/[^"'?#]+)/gi),
-    ...html.matchAll(/href=["'](\/album\/[^"'?#]+)/gi),
-  ];
-  for (const m of albumHrefs) {
-    let url = m[1] || "";
-    if (url.startsWith("/")) url = `https://bandcamp.com${url}`;
-    if (!/\/album\//i.test(url)) continue;
-    push({
-      url: url.replace(/\/$/, ""),
-      title: "Album",
-      artist: "",
-      cover: "",
-      kind: "album",
-      genre: label,
-    });
-  }
-
-  const cardRe =
-    /href=["'](https?:\/\/[^"']+\.bandcamp\.com\/album\/[^"'?#]+)["'][^>]*>[\s\S]{0,400}?alt=["']([^"']+)["']/gi;
-  let cm: RegExpExecArray | null;
-  while ((cm = cardRe.exec(html))) {
-    const url = (cm[1] || "").replace(/\/$/, "");
-    const alt = decodeHtml(cm[2] || "");
-    if (!url) continue;
-    const existing = hits.find((h) => h.url === url);
-    if (existing && existing.title === "Album" && alt) existing.title = alt;
-    else
-      push({
-        url,
-        title: alt || "Album",
-        artist: "",
-        cover: "",
-        kind: "album",
-        genre: label,
-      });
-  }
-
-  const artRe =
-    /href=["'](https?:\/\/[^"']+\.bandcamp\.com\/album\/[^"'?#]+)["'][\s\S]{0,600}?\/img\/a(\d+)_\d+\.jpg/gi;
-  while ((cm = artRe.exec(html))) {
-    const url = (cm[1] || "").replace(/\/$/, "");
-    const artId = cm[2];
-    const existing = hits.find((h) => h.url === url);
-    if (existing && !existing.cover) existing.cover = normalizeCover("", artId);
-  }
-
-  // Result list items with band + title
-  const listRe =
-    /href=["'](https?:\/\/[^"']+\.bandcamp\.com\/album\/[^"'?#]+)["'][\s\S]{0,800}?<div[^>]*class=["'][^"']*itemtitle[^"']*["'][^>]*>([^<]+)<\/div>[\s\S]{0,400}?<div[^>]*class=["'][^"']*itemsubtext[^"']*["'][^>]*>([^<]+)/gi;
-  while ((cm = listRe.exec(html))) {
-    const url = (cm[1] || "").replace(/\/$/, "");
-    const title = decodeHtml(cm[2] || "").trim();
-    const artist = decodeHtml(cm[3] || "").trim();
-    const existing = hits.find((h) => h.url === url);
-    if (existing) {
-      if (title) existing.title = title;
-      if (artist) existing.artist = artist;
-    } else if (url) {
-      push({ url, title: title || "Album", artist, cover: "", kind: "album", genre: label });
-    }
-  }
-
-  return hits;
 }
 
-/** Bandcamp dig_deeper API — returns structured album results for a tag. */
-async function digDeeperPage(tag: string, page: number): Promise<BcHit[]> {
+/** Working Bandcamp discover API: POST /api/discover/3/get_web */
+async function discoverWebPage(genre: string, page: number, sort: "top" | "new" = "top"): Promise<BcHit[]> {
   try {
-    const res = await fetch("https://bandcamp.com/api/discover/1/discover", {
+    const res = await fetch("https://bandcamp.com/api/discover/3/get_web", {
       method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "User-Agent": UA,
-        Referer: `https://bandcamp.com/discover/${encodeURIComponent(tag)}`,
+        Referer: `https://bandcamp.com/discover/${encodeURIComponent(genre)}`,
         Origin: "https://bandcamp.com",
       },
-      body: JSON.stringify({
-        category_id: 0,
-        tag_norm_names: [tag],
-        geoname_id: 0,
-        slice: "top",
-        time: "now",
-        cursor: null,
-        size: 48,
-        include_result_types: ["a"],
-        page,
-      }),
+      body: JSON.stringify({ p: page, s: sort, g: genre }),
     });
-    if (!res.ok) {
-      // fallback dig_deeper hub endpoint
-      const res2 = await fetch("https://bandcamp.com/api/hub/2/dig_deeper", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "User-Agent": UA,
-          Referer: `https://bandcamp.com/tag/${encodeURIComponent(tag)}`,
-          Origin: "https://bandcamp.com",
-        },
-        body: JSON.stringify({
-          filters: { format: "all", location: 0, sort: "pop", tags: [tag] },
-          page,
-        }),
-      });
-      if (!res2.ok) return [];
-      const body2 = asJson(await res2.json().catch(() => ({})));
-      return mapDigItems(body2, tag);
-    }
+    if (!res.ok) return [];
     const body = asJson(await res.json().catch(() => ({})));
-    return mapDigItems(body, tag);
+    if (body.error) return [];
+    const rows = Array.isArray(body.items) ? body.items : [];
+    const hits: BcHit[] = [];
+    for (const row of rows) {
+      const hit = hitFromDiscoverItem(asJson(row), genre);
+      if (hit) hits.push(hit);
+    }
+    return hits;
   } catch {
     return [];
   }
 }
 
-function mapDigItems(body: Json, label: string): BcHit[] {
-  const results = Array.isArray(body.results)
-    ? body.results
-    : Array.isArray(body.items)
-      ? body.items
-      : Array.isArray(asJson(body.data).results)
-        ? (asJson(body.data).results as unknown[])
-        : [];
-  const hits: BcHit[] = [];
-  for (const row of results) {
-    const item = asJson(row);
-    const band = asJson(item.band || item.artist);
-    const url =
-      str(item.item_url || item.url || item.tralbum_url) ||
-      (str(item.band_url) && str(item.item_url_path)
-        ? `${str(item.band_url).replace(/\/$/, "")}${str(item.item_url_path)}`
-        : "");
-    if (!url || !/\/album\//i.test(url)) continue;
-    const full = url.startsWith("http") ? url : `https://${url.replace(/^\/\//, "")}`;
-    hits.push({
-      url: full.replace(/\/$/, ""),
-      title: str(item.title || item.item_title || item.name) || "Album",
-      artist: str(band.name || item.artist || item.band_name),
-      cover: normalizeCover(str(item.art_url || item.image_url || item.img), item.art_id),
-      kind: "album",
-      genre: label,
-    });
-  }
-  return hits;
-}
-
-/** Discover albums by Bandcamp tag / genre across multiple pages. */
-async function discoverGenre(genre: string, page = 1, pageCount = 3): Promise<{ hits: BcHit[]; page: number; hasMore: boolean }> {
+/** Discover albums by Bandcamp genre across multiple discover pages. */
+async function discoverGenre(
+  genre: string,
+  page = 1,
+  pageCount = 3,
+): Promise<{ hits: BcHit[]; page: number; hasMore: boolean }> {
   const label = str(genre);
   if (!label) return { hits: [], page: 1, hasMore: false };
   const slug = genreSlug(label);
@@ -467,37 +360,29 @@ async function discoverGenre(genre: string, page = 1, pageCount = 3): Promise<{ 
   const start = Math.max(1, page);
   const end = start + Math.max(1, pageCount) - 1;
 
-  // 1) dig_deeper / discover API pages (best structured results)
-  for (let p = start; p <= end; p++) {
-    const dig = await digDeeperPage(slug, p);
-    for (const h of dig) push(h);
-  }
-
-  // 2) Tag HTML pages (bandcamp.com/tag/x?page=N)
-  await Promise.all(
-    Array.from({ length: end - start + 1 }, (_, i) => start + i).map(async (p) => {
-      try {
-        const qs = p <= 1 ? "" : `?page=${p}`;
-        const pageRes = await fetchHtml(`https://bandcamp.com/tag/${encodeURIComponent(slug)}${qs}`, true);
-        for (const h of parseTagPageHits(pageRes.html, label)) push(h);
-      } catch {
-        /* skip page */
-      }
+  const batches = await Promise.all(
+    Array.from({ length: end - start + 1 }, (_, i) => {
+      const p = start + i;
+      return Promise.all([discoverWebPage(slug, p, "top"), discoverWebPage(slug, p, "new")]);
     }),
   );
-
-  // 3) Search fallback only on first request if still thin
-  if (start === 1 && hits.length < 12) {
-    const searched = await searchHits(label);
-    for (const hit of searched) push({ ...hit, genre: label });
+  for (const pair of batches) {
+    for (const list of pair) {
+      for (const h of list) push(h);
+    }
   }
 
-  const albums = hits.filter((h) => h.kind === "album");
-  const rest = hits.filter((h) => h.kind !== "album");
-  const ordered = [...albums, ...rest];
-  // Assume more pages exist if we got a healthy batch
-  const hasMore = ordered.length >= 8 || end < start + 8;
-  return { hits: ordered, page: end, hasMore };
+  if (hits.length < 8) {
+    const variants = [label, slug, `${slug} album`, `best ${slug}`];
+    for (const q of variants) {
+      const searched = await searchHits(q);
+      for (const hit of searched) push({ ...hit, genre: label });
+      if (hits.length >= 24) break;
+    }
+  }
+
+  const hasMore = hits.length >= 12;
+  return { hits, page: end, hasMore };
 }
 
 export const bcImport = createServerFn({ method: "POST" })
