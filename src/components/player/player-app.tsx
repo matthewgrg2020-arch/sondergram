@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { EqPanel } from "./eq-panel";
 import { ExtrasPanel } from "./extras-panel";
 import { ApkCard } from "./apk-card";
@@ -35,23 +35,17 @@ import {
   applyEq,
   applyPreamp,
   beginPlayback,
-  getEngine,
   outputAudio,
   pauseOutput,
   primePlayback,
   resumeEngine,
   seekOutput,
-  setAudioSessionPlayback,
-  setBackgroundOutput,
   setBalance,
   setBassLock,
-  setFadeMul,
   setIsolateMode,
   setMasterGain,
   setMonoMode,
   setRemaster,
-  setNormalizeMul,
-  setReplayGainDb,
   setPlaybackRate,
   setSpatialMode,
   unlockEngine,
@@ -68,7 +62,6 @@ import {
   youtubeSeek,
   youtubeSetRate,
   youtubeSetVolume,
-  youtubeStop,
   youtubeTime,
   youtubeDuration,
 } from "@/lib/player/youtube";
@@ -245,7 +238,16 @@ export function PlayerApp() {
       <Sidebar view={view} onView={goView} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <main className="min-h-0 flex-1 overflow-y-auto">
-          {view === "listen" ? <ListenNow onOpenAlbum={(key) => { setLibraryAlbum(key); goView("library"); }} /> : null}
+          {view === "listen" ? (
+            <ListenNow
+              onOpenLibrary={() => goView("library")}
+              onOpenAlbum={(key) => {
+                setLibraryAlbum(key);
+                goView("library");
+              }}
+              onOpenAdd={() => goView("archive")}
+            />
+          ) : null}
           {view === "library" ? <Library startAlbum={libraryAlbum} /> : null}
           {view === "recent" ? <RecentPage /> : null}
           {view === "liked" ? <Library startTab="liked" /> : null}
@@ -300,11 +302,12 @@ export function PlayerApp() {
           </div>
         </main>
         <MiniPlayer
-          onOpenNow={() => setNowOpen(true)}
           onTogglePlay={togglePlay}
           onPrev={onPrev}
           onNext={onNext}
           onSeek={onSeek}
+          onExpand={() => setNowOpen(true)}
+          onLyrics={() => setNowOpen(true)}
         />
         <MobileDock view={view} onView={goView} />
       </div>
@@ -325,7 +328,15 @@ export function PlayerApp() {
         />
       ) : null}
       {party ? <PartyViz onClose={() => setParty(false)} /> : null}
-      {car ? <CarMode onClose={() => setCar(false)} onTogglePlay={togglePlay} onPrev={onPrev} onNext={onNext} /> : null}
+      {car ? (
+        <CarMode
+          onClose={() => setCar(false)}
+          onTogglePlay={togglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
+        />
+      ) : null}
     </div>
   );
 }
