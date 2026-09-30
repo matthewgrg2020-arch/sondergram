@@ -66,7 +66,7 @@ html[data-theme="light"] {
   --radius-xl: 1.5rem;
 
   --font-display: "Roboto", "Segoe UI", system-ui, sans-serif;
-  --font-logo: "Mr Dafoe", "Segoe Script", "Brush Script MT", cursive;
+  --font-logo: "Roboto", "Segoe UI", system-ui, sans-serif;
   --font-sans: "Roboto", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --font-pixel: "Pixelify Sans", "Press Start 2P", ui-monospace, monospace;
@@ -74,6 +74,7 @@ html[data-theme="light"] {
   --color-neon-pink: #ff4ecd;
   --color-neon-gold: #ffd36a;
   --color-neon-cyan: #4de8e0;
+  --color-stream-orange: #ff7314;
 }
 
 @layer base {
@@ -116,31 +117,48 @@ html[data-theme="light"] {
   }
 }
 
-@font-face {
-  font-family: "Mr Dafoe";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/mr-dafoe.woff2") format("woff2");
+/* Sound Stream wordmark — bold rounded sans, white on dark */
+.logo-stream {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-logo);
+  font-weight: 700;
+  font-size: clamp(1.35rem, 4vw, 1.75rem);
+  line-height: 0.95;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-fg);
 }
 
+.logo-stream.logo-nav {
+  font-size: 1.05rem;
+  letter-spacing: 0.16em;
+  gap: 0.12em;
+}
+
+.logo-stream span {
+  display: block;
+}
+
+/* Keep old class as alias so any leftover markup still looks right */
 .logo-script {
   font-family: var(--font-logo);
-  font-weight: 400;
-  font-size: clamp(2.75rem, 10vw, 5.25rem);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 5vw, 2.25rem);
   line-height: 1.05;
-  letter-spacing: 0.02em;
-  background-image: linear-gradient(
-    92deg,
-    var(--color-neon-pink) 0%,
-    var(--color-neon-gold) 46%,
-    var(--color-neon-cyan) 100%
-  );
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 2px 0 color-mix(in oklab, var(--color-neon-pink) 55%, black))
-    drop-shadow(0 0 18px color-mix(in oklab, var(--color-neon-pink) 40%, transparent));
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  filter: none;
+}
+
+.logo-script.logo-nav {
+  font-size: 1.1rem;
+  letter-spacing: 0.14em;
+  filter: none;
 }
 
 .cover-logo {
@@ -179,13 +197,6 @@ html[data-theme="light"] {
   color: var(--sg-fg);
   -webkit-text-stroke: 0;
   filter: none;
-}
-
-.logo-script.logo-nav {
-  font-size: 1.85rem;
-  line-height: 1.05;
-  filter: drop-shadow(0 1px 0 color-mix(in oklab, var(--color-neon-pink) 40%, black))
-    drop-shadow(0 0 10px color-mix(in oklab, var(--color-neon-pink) 30%, transparent));
 }
 
 .eq-fader {
