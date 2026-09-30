@@ -1,5 +1,5 @@
-import { ChevronRight, Ellipsis, Plus } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { ChevronRight, Dices, Ellipsis, EyeOff, Plus, Sparkles } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { groupAlbums, type AlbumGroup } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
 import { libraryMixes } from "@/lib/player/mixes";
@@ -10,6 +10,43 @@ function songsOf(album: AlbumGroup, tracks: Track[]) {
   return album.trackIds
     .map((id) => tracks.find((t) => t.id === id))
     .filter((t): t is Track => Boolean(t));
+}
+
+const MOODS: { id: string; label: string; match: (t: Track) => boolean }[] = [
+  {
+    id: "chill",
+    label: "Chill",
+    match: (t) => /chill|lofi|lo-fi|ambient|jazz|soul|acoustic|soft/i.test(`${t.genre} ${t.tags?.join(" ")} ${t.name}`),
+  },
+  {
+    id: "energy",
+    label: "Energy",
+    match: (t) => /hip.?hop|rap|edm|techno|house|punk|metal|rock|drill|trap/i.test(`${t.genre} ${t.tags?.join(" ")}`),
+  },
+  {
+    id: "focus",
+    label: "Focus",
+    match: (t) => /classical|instrumental|piano|study|focus|ambient/i.test(`${t.genre} ${t.tags?.join(" ")} ${t.name}`),
+  },
+  {
+    id: "late",
+    label: "Late night",
+    match: (t) => /r&b|rnb|soul|neo.?soul|slow|ballad|night/i.test(`${t.genre} ${t.tags?.join(" ")} ${t.name}`),
+  },
+  {
+    id: "loved",
+    label: "Loved",
+    match: (t) => Boolean(t.liked || t.starred),
+  },
+];
+
+function shuffle<T>(arr: T[]) {
+  const next = [...arr];
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [next[i], next[j]] = [next[j]!, next[i]!];
+  }
+  return next;
 }
 
 export function ListenNow({
@@ -26,7 +63,10 @@ export function ListenNow({
   const recent = usePlayer((s) => s.recent);
   const playIds = usePlayer((s) => s.playIds);
   const addFiles = usePlayer((s) => s.addFiles);
+  const djMix = usePlayer((s) => s.djMix);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [blind, setBlind] = useState(false);
+  const [blindHint, setBlindHint] = useState("");
 
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
 
@@ -60,10 +100,9 @@ export function ListenNow({
   }, [tracks, plays, recent, albums]);
 
   const bestNew = useMemo(() => {
-    const byPlays = [...tracks].sort((a, b) => (plays[b.id] ?? 0) - (plays[a.id] ?? 0));
     const byAdded = [...tracks].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
-    const pool = byAdded.length ? byAdded : byPlays;
-    return pool.slice(0, 16);
+    const byPlays = [...tracks].sort((a, b) => (plays[b.id] ?? 0) - (plays[a.id] ?? 0));
+    return (byAdded.length ? byAdded : byPlays).slice(0, 16);
   }, [tracks, plays]);
 
   const newThisWeek = useMemo(() => {
@@ -75,6 +114,31 @@ export function ListenNow({
       })
       .slice(0, 12);
   }, [albums, tracks]);
+
+  const moodCounts = useMemo(() => {
+    return MOODS.map((m) => ({
+      ...m,
+      count: tracks.filter(m.match).length,
+      ids: tracks.filter(m.match).map((t) => t.id),
+    })).filter((m) => m.count > 0);
+  }, [tracks]);
+
+  const startBlindListen = () => {
+    if (!tracks.length) return;
+    const pool = shuffle(tracks).slice(0, Math.min(25, tracks.length));
+    setBlind(true);
+    setBlindHint("Playing a hidden mix — open Now Playing to listen without spoilers");
+    playIds(pool.map((t) => t.id));
+  };
+
+  const startSurprise = () => {
+    if (typeof djMix === "function") {
+      djMix();
+      return;
+    }
+    if (!tracks.length) return;
+    playIds(shuffle(tracks).slice(0, 40).map((t) => t.id));
+  };
 
   if (tracks.length === 0) {
     return (
@@ -112,7 +176,57 @@ export function ListenNow({
 
   return (
     <div className="px-4 pb-8 pt-2 sm:px-6">
-      {/* Hero feature cards */}
+      {/* New feature chips */}
+      <div className="mb-5 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={startBlindListen}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white hover:bg-white/16"
+        >
+          <EyeOff className="size-3.5" strokeWidth={2} />
+          Blind listen
+        </button>
+        <button
+          type="button"
+          onClick={startSurprise}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white hover:bg-white/16"
+        >
+          <Dices className="size-3.5" strokeWidth={2} />
+          Surprise mix
+        </button>
+        <button
+          type="button"
+          onClick={onOpenLibrary}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium text-white hover:bg-white/16"
+        >
+          <Sparkles className="size-3.5" strokeWidth={2} />
+          Browse library
+        </button>
+      </div>
+      {blind && blindHint ? (
+        <p className="mb-4 rounded-xl bg-white/8 px-3 py-2 text-xs text-white/70">{blindHint}</p>
+      ) : null}
+
+      {/* Mood mixer */}
+      {moodCounts.length > 0 ? (
+        <section className="mb-8">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/40">Mood mixer</p>
+          <div className="flex flex-wrap gap-2">
+            {moodCounts.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => playIds(shuffle(m.ids).slice(0, 40))}
+                className="h-9 rounded-full bg-[#2c2c2e] px-3 text-xs font-medium text-white hover:bg-white/16"
+              >
+                {m.label}
+                <span className="ml-1.5 text-white/40">{m.count}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {heroes.length > 0 ? (
         <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {heroes.map((card) => (
@@ -139,7 +253,6 @@ export function ListenNow({
         </div>
       ) : null}
 
-      {/* Best New Songs — 4-column song list */}
       <section className="mb-10">
         <button
           type="button"
@@ -176,7 +289,6 @@ export function ListenNow({
         </div>
       </section>
 
-      {/* New This Week — horizontal albums */}
       <section>
         <button
           type="button"
