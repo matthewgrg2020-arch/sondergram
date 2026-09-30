@@ -118,7 +118,10 @@ export function Sidebar({ view, onView }: Props) {
 
   return (
     <aside className="hidden w-[220px] shrink-0 flex-col bg-[#1c1c1e] text-white lg:flex">
-      <div className="px-3 pt-3 pb-2">
+      <div className="px-3 pt-4 pb-2">
+        <button type="button" onClick={() => onView("listen")} className="mb-3 px-1 text-left">
+          <h1 className="logo-stream logo-nav text-white">Sondergram</h1>
+        </button>
         <button
           type="button"
           onClick={() => onView("search")}
