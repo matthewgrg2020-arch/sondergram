@@ -13,10 +13,25 @@ export function BandcampPanel() {
   const [genre, setGenre] = useState<string | null>(null);
   const [hits, setHits] = useState<BcHit[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const inLib = tracks.filter((t) => t.bandcampId);
   const paste = parseBandcampUrl(query);
+
+  const mergeHits = (prev: BcHit[], next: BcHit[]) => {
+    const seen = new Set(prev.map((h) => h.url.replace(/\/$/, "").toLowerCase()));
+    const out = [...prev];
+    for (const hit of next) {
+      const key = hit.url.replace(/\/$/, "").toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(hit);
+    }
+    return out;
+  };
 
   const addUrl = async (url: string, play = true) => {
     setAdding(url);
@@ -37,6 +52,8 @@ export function BandcampPanel() {
     setBusy(true);
     setMessage(null);
     setGenre(null);
+    setHasMore(false);
+    setPage(1);
     void bcSearch({ data: { q: text } })
       .then((result) => {
         setHits(result.hits);
@@ -51,14 +68,37 @@ export function BandcampPanel() {
     setMessage(null);
     setGenre(g);
     setQuery(g);
-    void bcDiscover({ data: { genre: g } })
+    setPage(1);
+    setHasMore(false);
+    void bcDiscover({ data: { genre: g, page: 1, pageCount: 3 } })
       .then((result) => {
         setHits(result.hits);
+        setPage(result.page);
+        setHasMore(Boolean(result.hasMore));
         if (result.hits.length === 0) setMessage(`No Bandcamp finds for ${g} right now.`);
-        else setMessage(`${result.hits.length} ${g} releases`);
+        else setMessage(`${result.hits.length} ${g.replace(/-/g, " ")} releases`);
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : "Genre search failed."))
       .finally(() => setBusy(false));
+  };
+
+  const loadMore = () => {
+    if (!genre || loadingMore || busy) return;
+    setLoadingMore(true);
+    setMessage(null);
+    const nextStart = page + 1;
+    void bcDiscover({ data: { genre, page: nextStart, pageCount: 3 } })
+      .then((result) => {
+        setHits((prev) => {
+          const merged = mergeHits(prev, result.hits);
+          setMessage(`${merged.length} ${genre.replace(/-/g, " ")} releases`);
+          return merged;
+        });
+        setPage(result.page);
+        setHasMore(Boolean(result.hasMore) && result.hits.length > 0);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "Could not load more."))
+      .finally(() => setLoadingMore(false));
   };
 
   const crateDig = () => {
@@ -75,7 +115,7 @@ export function BandcampPanel() {
       </h2>
       <p className="max-w-xl text-sm leading-relaxed text-muted">
         Paste an album link, search by name, or dig by genre. Sondergram pulls artwork, year, tags, and streamable
-        tracks into your library.
+        tracks into your library. Genre digs load several Bandcamp pages at once.
       </p>
 
       <div>
@@ -85,7 +125,7 @@ export function BandcampPanel() {
             <button
               key={g}
               type="button"
-              disabled={busy}
+              disabled={busy || loadingMore}
               onClick={() => runGenre(g)}
               className={
                 genre === g
@@ -121,7 +161,7 @@ export function BandcampPanel() {
         />
         <button
           type="submit"
-          disabled={busy || adding !== null || !query.trim()}
+          disabled={busy || loadingMore || adding !== null || !query.trim()}
           className="h-11 shrink-0 rounded-full bg-hot px-4 text-sm font-semibold text-hot-fg disabled:opacity-40"
         >
           {busy ? "…" : paste ? "Add album" : "Search"}
@@ -142,43 +182,62 @@ export function BandcampPanel() {
       {message ? <p className="text-sm text-muted">{message}</p> : null}
 
       {hits.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {hits.map((hit) => (
-            <article key={hit.url} className="overflow-hidden rounded-xl bg-surface">
-              <div className="aspect-square bg-raised">
-                {hit.cover ? (
-                  <img src={hit.cover} alt="" className="size-full object-cover" referrerPolicy="no-referrer" />
-                ) : null}
-              </div>
-              <div className="p-3">
-                <p className="truncate text-sm font-medium">{hit.title}</p>
-                <p className="truncate text-xs text-muted">
-                  {hit.artist} · {hit.kind}
-                  {hit.genre ? ` · ${hit.genre}` : ""}
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    disabled={adding !== null}
-                    onClick={() => void addUrl(hit.url, true)}
-                    className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-accent text-xs font-medium text-accent-fg disabled:opacity-40"
-                  >
-                    {adding === hit.url ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                    Play
-                  </button>
-                  <button
-                    type="button"
-                    disabled={adding !== null}
-                    onClick={() => void addUrl(hit.url, false)}
-                    className="inline-flex h-9 items-center justify-center rounded-full bg-raised px-3 text-xs"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {hits.map((hit) => (
+              <article key={hit.url} className="overflow-hidden rounded-xl bg-surface">
+                <div className="aspect-square bg-raised">
+                  {hit.cover ? (
+                    <img src={hit.cover} alt="" className="size-full object-cover" referrerPolicy="no-referrer" />
+                  ) : null}
                 </div>
-              </div>
-            </article>
-          ))}
-        </div>
+                <div className="p-3">
+                  <p className="truncate text-sm font-medium">{hit.title}</p>
+                  <p className="truncate text-xs text-muted">
+                    {hit.artist} · {hit.kind}
+                    {hit.genre ? ` · ${hit.genre}` : ""}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={adding !== null}
+                      onClick={() => void addUrl(hit.url, true)}
+                      className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-accent text-xs font-medium text-accent-fg disabled:opacity-40"
+                    >
+                      {adding === hit.url ? (
+                        <LoaderCircle className="size-3.5 animate-spin" />
+                      ) : (
+                        <Play className="size-3.5" />
+                      )}
+                      Play
+                    </button>
+                    <button
+                      type="button"
+                      disabled={adding !== null}
+                      onClick={() => void addUrl(hit.url, false)}
+                      className="inline-flex h-9 items-center justify-center rounded-full bg-raised px-3 text-xs"
+                    >
+                      <Plus className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+          {genre && hasMore ? (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                disabled={loadingMore || busy}
+                onClick={loadMore}
+                className="inline-flex h-11 items-center gap-2 rounded-full bg-raised px-5 text-sm font-medium hover:bg-white/10 disabled:opacity-50"
+              >
+                {loadingMore ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                {loadingMore ? "Loading more…" : "Load more pages"}
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {inLib.length > 0 ? (
