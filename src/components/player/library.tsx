@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, Globe, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { albumKey, groupAlbums, groupArtists } from "@/lib/player/catalog";
+import { albumKey, groupAlbums, groupArtists, groupGenres } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT } from "@/lib/player/format";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { proxyCoverUrl } from "@/lib/player/covers";
@@ -15,7 +15,7 @@ import { FormatBadge } from "./format-badge";
 type Tab = LibTab;
 type Size = CoverSize;
 
-const TAB_IDS: Tab[] = ["albums", "artists", "years", "songs", "liked", "added"];
+const TAB_IDS: Tab[] = ["albums", "artists", "genres", "years", "songs", "liked", "added"];
 
 export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?: string | null } = {}) {
   const tracks = usePlayer((s) => s.tracks);
@@ -34,6 +34,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [openAlbum, setOpenAlbum] = useState<string | null>(startAlbum ?? null);
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openYear, setOpenYear] = useState<string | null>(null);
+  const [openGenre, setOpenGenre] = useState<string | null>(null);
   const [editTrackId, setEditTrackId] = useState<string | null>(null);
   const [looking, setLooking] = useState(false);
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
@@ -75,9 +76,24 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       });
   }, [albums]);
 
+  const genres = useMemo(() => {
+    const list = groupGenres(albums);
+    const covered = new Set(list.flatMap((g) => g.albums.map((a) => a.key)));
+    const unknownAlbums = albums.filter((a) => !covered.has(a.key) && !(a.genre || "").trim());
+    if (unknownAlbums.length) {
+      list.push({
+        name: "Unknown",
+        albums: unknownAlbums,
+        trackCount: unknownAlbums.reduce((n, a) => n + a.trackIds.length, 0),
+      });
+    }
+    return list;
+  }, [albums]);
+
   const album = albums.find((a) => a.key === openAlbum) ?? null;
   const artist = artists.find((a) => a.key === openArtist) ?? null;
   const yearGroup = years.find((y) => y.name === openYear) ?? null;
+  const genreGroup = genres.find((g) => g.name === openGenre) ?? null;
   const liked = useMemo(() => tracks.filter((t) => t.liked), [tracks]);
   const added = useMemo(
     () => [...tracks].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0)).slice(0, 120),
@@ -93,6 +109,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     setOpenAlbum(null);
     setOpenArtist(null);
     setOpenYear(null);
+    setOpenGenre(null);
     setEditTrackId(null);
   };
 
@@ -185,11 +202,11 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       <div className="mb-4">
         <h2 className="text-3xl font-semibold tracking-tight">Library</h2>
         <p className="mt-1 text-xs tracking-wide text-subtle">
-          {artists.length} artists · {albums.length} albums · {tracks.length} songs
+          {artists.length} artists · {albums.length} albums · {genres.length} genres · {tracks.length} songs
         </p>
       </div>
 
-      {!openAlbum && !openArtist && !openYear ? (
+      {!openAlbum && !openArtist && !openYear && !openGenre ? (
         <div className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-raised p-1">
           {TAB_IDS.map((id) => (
             <button
@@ -442,9 +459,9 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
 
           {albumHits !== null ? (
             <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3 pb-28 sm:items-center sm:pb-6">
-              <div className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface text-fg shadow-2xl">
-                <div className="flex items-center justify-between gap-3 px-4 py-3">
-                  <p className="text-sm font-semibold">Choose the album</p>
+              <div className="flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <h3 className="text-base font-semibold">Online matches</h3>
                   <button
                     type="button"
                     aria-label="Close"
@@ -529,7 +546,31 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
         </div>
       ) : null}
 
-      {!openAlbum && !openArtist && !openYear ? (
+      {openGenre && genreGroup && !openAlbum ? (
+        <div>
+          <button
+            type="button"
+            onClick={() => setOpenGenre(null)}
+            className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
+          >
+            <ChevronLeft className="size-4" strokeWidth={1.75} />
+            Genres
+          </button>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+            <h3 className="text-2xl font-semibold tracking-tight">{genreGroup.name}</h3>
+            <button
+              type="button"
+              onClick={() => playIds(genreGroup.albums.flatMap((a) => a.trackIds))}
+              className="h-9 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg"
+            >
+              Play all · {genreGroup.trackCount} songs
+            </button>
+          </div>
+          <AlbumGrid list={genreGroup.albums} />
+        </div>
+      ) : null}
+
+      {!openAlbum && !openArtist && !openYear && !openGenre ? (
         <>
           {tab === "albums" ? <AlbumGrid list={albums} /> : null}
           {tab === "artists" ? (
@@ -543,6 +584,23 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 >
                   <span className="truncate font-medium">{a.name}</span>
                   <span className="text-xs text-subtle">{a.albumCount} albums</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {tab === "genres" ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {genres.map((row) => (
+                <button
+                  key={row.name}
+                  type="button"
+                  onClick={() => setOpenGenre(row.name)}
+                  className="flex items-center justify-between rounded-xl bg-raised px-4 py-3 text-left hover:bg-accent hover:text-accent-fg"
+                >
+                  <span className="min-w-0 truncate text-lg font-semibold tracking-tight">{row.name}</span>
+                  <span className="ml-2 shrink-0 text-xs opacity-70">
+                    {row.albums.length} albums · {row.trackCount}
+                  </span>
                 </button>
               ))}
             </div>
