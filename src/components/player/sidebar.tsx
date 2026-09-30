@@ -15,7 +15,7 @@ import {
   Search,
   Settings,
   Share2,
-  SalidersHorizontal,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Youtube,
