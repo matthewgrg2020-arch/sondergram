@@ -15,7 +15,7 @@ import {
   Search,
   Settings,
   Share2,
-  SlidersHorizontal,
+  SalidersHorizontal,
   Sparkles,
   Star,
   Youtube,
@@ -116,7 +116,7 @@ export function Sidebar({ view, onView }: Props) {
   const playlists = usePlayer((s) => s.playlists);
   const playPlaylist = usePlayer((s) => s.playPlaylist);
   const [libOpen, setLibOpen] = useState(true);
-  const [srcOpen, setSrcOpen] = useState(false);
+  const [srcOpen, setSrcOpen] = useState(true);
   const [plOpen, setPlOpen] = useState(true);
 
   return (
