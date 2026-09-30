@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EqPanel } from "./eq-panel";
 import { ExtrasPanel } from "./extras-panel";
 import { ApkCard } from "./apk-card";
@@ -35,11 +35,14 @@ import {
   applyEq,
   applyPreamp,
   beginPlayback,
+  getEngine,
   outputAudio,
   pauseOutput,
   primePlayback,
   resumeEngine,
   seekOutput,
+  setAudioSessionPlayback,
+  setBackgroundOutput,
   setBalance,
   setBassLock,
   setIsolateMode,
@@ -102,10 +105,31 @@ export function PlayerApp() {
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [libraryAlbum, setLibraryAlbum] = useState<string | null>(null);
 
+  const boundRef = useRef(false);
+  const skipLockRef = useRef(false);
+  const startedAtRef = useRef(0);
+  const lastTrackIdRef = useRef<string | null>(null);
+
   const goView = (next: AppView) => {
     setView(next);
     if (next !== "library") setLibraryAlbum(null);
   };
+
+  const autoNext = useCallback(() => {
+    if (skipLockRef.current) return;
+    skipLockRef.current = true;
+    window.setTimeout(() => {
+      skipLockRef.current = false;
+    }, 900);
+    const state = usePlayer.getState();
+    if (!state.playing) return;
+    const next = state.nextIndex(false);
+    if (next === null) {
+      setPlaying(false);
+      return;
+    }
+    playIndex(next, false);
+  }, [playIndex, setPlaying]);
 
   useEffect(() => {
     void hydrate();
@@ -128,6 +152,73 @@ export function PlayerApp() {
       document.removeEventListener("touchstart", arm);
     };
   }, []);
+
+  // Keep audio + EQ alive in background; advance tracks on ended
+  useEffect(() => {
+    const { audio, bgAudio } = getEngine();
+    if (boundRef.current) return;
+    boundRef.current = true;
+
+    const onEnded = (event: Event) => {
+      if (event.target !== outputAudio()) return;
+      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      if (isYoutubePlayback(current)) return;
+      if (Date.now() - startedAtRef.current < 1200) return;
+      autoNext();
+    };
+
+    const onError = (event: Event) => {
+      if (event.target !== outputAudio()) return;
+      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      if (isYoutubePlayback(current)) return;
+      if (Date.now() - startedAtRef.current < 800) return;
+      autoNext();
+    };
+
+    for (const el of [audio, bgAudio]) {
+      if (!el) continue;
+      el.addEventListener("ended", onEnded);
+      el.addEventListener("error", onError);
+    }
+
+    const onVis = () => {
+      setAudioSessionPlayback();
+      const hidden = document.visibilityState === "hidden";
+      const state = usePlayer.getState();
+      if (!state.playing) return;
+      if (isYoutubePlayback(state.tracks[state.index])) return;
+      if (hidden) {
+        // Prefer keeping Web Audio graph (EQ) alive; engine falls back only if needed
+        setBackgroundOutput(true);
+        void getEngine().ctx.resume().catch(() => undefined);
+        return;
+      }
+      // Returning to app: restore EQ path without reloading the previous track
+      setBackgroundOutput(false);
+      void resumeEngine();
+    };
+
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", () => {
+      if (usePlayer.getState().playing) setBackgroundOutput(true);
+    });
+    window.addEventListener("pageshow", () => {
+      if (usePlayer.getState().playing) {
+        setBackgroundOutput(false);
+        void resumeEngine();
+      }
+    });
+
+    return () => {
+      for (const el of [audio, bgAudio]) {
+        if (!el) continue;
+        el.removeEventListener("ended", onEnded);
+        el.removeEventListener("error", onError);
+      }
+      document.removeEventListener("visibilitychange", onVis);
+      boundRef.current = false;
+    };
+  }, [autoNext]);
 
   useEffect(() => {
     applyEq(eq);
@@ -163,32 +254,37 @@ export function PlayerApp() {
     setBalance(balance);
   }, [balance]);
 
-  const autoNext = useCallback(() => {
-    const state = usePlayer.getState();
-    const next = state.nextIndex(false);
-    if (next === null) {
-      setPlaying(false);
-      return;
-    }
-    playIndex(next, false);
-  }, [playIndex, setPlaying]);
-
   useEffect(() => {
     setYoutubeHandlers({ onEnded: () => autoNext() });
   }, [autoNext]);
 
+  // Load a track only when the track id actually changes (not on every resume)
   useEffect(() => {
     if (!track) return;
+    if (lastTrackIdRef.current === track.id) return;
+    lastTrackIdRef.current = track.id;
+    startedAtRef.current = Date.now();
+
     void (async () => {
       unlockEngine();
+      setAudioSessionPlayback();
       if (isYoutubePlayback(track)) {
         pauseOutput();
-        if (track.youtubeId) void youtubeLoad(track.youtubeId, playing);
+        if (track.youtubeId) void youtubeLoad(track.youtubeId, usePlayer.getState().playing);
         return;
       }
       youtubePause();
       if (track.url) {
-        await beginPlayback(track.url, playing);
+        try {
+          await beginPlayback(track.url, 0);
+          if (usePlayer.getState().playing) {
+            void resumeEngine();
+          } else {
+            pauseOutput();
+          }
+        } catch {
+          /* stream fail — user can skip */
+        }
       }
     })();
   }, [track?.id]);
@@ -200,9 +296,13 @@ export function PlayerApp() {
       else youtubePause();
       return;
     }
-    if (playing) void resumeEngine();
-    else pauseOutput();
-  }, [playing, track?.id]);
+    if (playing) {
+      setAudioSessionPlayback();
+      void resumeEngine();
+    } else {
+      pauseOutput();
+    }
+  }, [playing]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -211,10 +311,20 @@ export function PlayerApp() {
         return;
       }
       const out = outputAudio();
-      setTimes(out.currentTime || 0, Number.isFinite(out.duration) ? out.duration : 0);
+      const duration = Number.isFinite(out.duration) ? out.duration : 0;
+      setTimes(out.currentTime || 0, duration);
+      // Near-end gapless advance while backgrounded (iOS sometimes skips ended)
+      if (
+        usePlayer.getState().playing &&
+        duration > 3 &&
+        out.currentTime > 2 &&
+        duration - out.currentTime <= 0.35
+      ) {
+        autoNext();
+      }
     }, 250);
     return () => window.clearInterval(id);
-  }, [track?.id, setTimes]);
+  }, [track?.id, setTimes, autoNext]);
 
   const togglePlay = () => {
     unlockEngine();
