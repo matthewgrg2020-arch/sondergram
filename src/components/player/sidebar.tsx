@@ -81,10 +81,7 @@ export function Sidebar({ view, onView }: Props) {
   return (
     <aside className="hidden w-52 shrink-0 flex-col border-r border-border bg-bg px-3 py-4 lg:flex">
       <button type="button" onClick={() => onView("listen")} className="mb-3 px-1 text-left">
-        <h1 className="logo-stream logo-nav">
-          <span>SOUND</span>
-          <span>STREAM</span>
-        </h1>
+        <h1 className="logo-stream logo-nav">Sondergram</h1>
       </button>
       <a
         href="/sondergram.apk"
