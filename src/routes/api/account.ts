@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { accountCookie, readAccountCookie, signInAccount, signUpAccount } from "@/lib/auth/app-login.server";
+import { readAccountCookie, signInAccount, signUpAccount } from "@/lib/auth/app-login.server";
+
+function cookieValue(request: Request) {
+  return request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith("sg_account="))?.slice("sg_account=".length) ?? null;
+}
 
 export const Route = createFileRoute("/api/account")({
   server: {
     handlers: {
       GET: ({ request }) => {
-        const account = readAccountCookie(request.headers.get("cookie")?.split(";").map((p) => p.trim()).find((p) => p.startsWith("sg_account="))?.slice("sg_account=".length));
-        return Response.json(account ?? { userId: null, email: null });
+        const account = readAccountCookie(cookieValue(request));
+        return Response.json(account ? { userId: account.userId, email: account.email } : { userId: null, email: null });
       },
       POST: async ({ request }) => {
         try {
@@ -16,10 +20,11 @@ export const Route = createFileRoute("/api/account")({
           if (!email.includes("@") || password.length < 8) {
             return Response.json({ message: "Use a real email and a password of at least 8 characters." }, { status: 400 });
           }
-          const account = body.mode === "in" ? await signInAccount(email, password) : await signUpAccount(email, password);
-          return new Response(JSON.stringify(account), {
+          const current = readAccountCookie(cookieValue(request));
+          const account = body.mode === "in" ? signInAccount(email, password, current) : signUpAccount(email, password);
+          return new Response(JSON.stringify({ email: account.email }), {
             status: 200,
-            headers: { "content-type": "application/json", "set-cookie": accountCookie(account.userId, account.email) },
+            headers: { "content-type": "application/json", "set-cookie": account.cookie },
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : "Could not sign in.";

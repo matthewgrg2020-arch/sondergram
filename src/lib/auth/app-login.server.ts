@@ -1,6 +1,5 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { getCookie } from "@tanstack/react-start/server";
-import { getSql } from "@/lib/db";
 
 const COOKIE = "sg_account";
 
@@ -12,12 +11,14 @@ function sign(value: string) {
   return createHmac("sha256", secret()).update(value).digest("hex");
 }
 
-export function accountCookie(userId: string, email: string) {
-  const payload = Buffer.from(JSON.stringify({ userId, email })).toString("base64url");
+type Account = { userId: string; email: string; passwordHash: string };
+
+function accountCookie(account: Account) {
+  const payload = Buffer.from(JSON.stringify(account)).toString("base64url");
   return `${COOKIE}=${payload}.${sign(payload)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`;
 }
 
-export function readAccountCookie(header?: string | null): { userId: string; email: string } | null {
+export function readAccountCookie(header?: string | null): Account | null {
   const raw = header ?? getCookie(COOKIE);
   if (!raw) return null;
   const [payload, mac] = raw.split(".");
@@ -27,9 +28,9 @@ export function readAccountCookie(header?: string | null): { userId: string; ema
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString()) as { userId?: string; email?: string };
-    if (!parsed.userId || !parsed.email) return null;
-    return { userId: parsed.userId, email: parsed.email };
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString()) as Partial<Account>;
+    if (!parsed.userId || !parsed.email || !parsed.passwordHash) return null;
+    return { userId: parsed.userId, email: parsed.email, passwordHash: parsed.passwordHash };
   } catch {
     return null;
   }
@@ -49,22 +50,16 @@ function checkPassword(password: string, stored: string) {
   return next.length === prev.length && timingSafeEqual(next, prev);
 }
 
-export async function signUpAccount(email: string, password: string) {
-  const sql = await getSql();
-  const existing = await sql.query<{ email: string }>("select email from app_login where email = $1", [email]);
-  if (existing.length) throw new Error("That email already has an account. Sign in instead.");
-  const userId = `mail_${randomBytes(12).toString("hex")}`;
-  await sql.query("insert into app_login (email, password_hash, user_id) values ($1, $2, $3)", [email, hashPassword(password), userId]);
-  return { userId, email };
+export function signUpAccount(email: string, password: string) {
+  return {
+    cookie: accountCookie({ userId: `mail_${randomBytes(12).toString("hex")}`, email, passwordHash: hashPassword(password) }),
+    email,
+  };
 }
 
-export async function signInAccount(email: string, password: string) {
-  const sql = await getSql();
-  const rows = await sql.query<{ email: string; password_hash: string; user_id: string }>(
-    "select email, password_hash, user_id from app_login where email = $1",
-    [email],
-  );
-  const row = rows[0];
-  if (!row || !checkPassword(password, row.password_hash)) throw new Error("Email or password is wrong.");
-  return { userId: row.user_id, email: row.email };
+export function signInAccount(email: string, password: string, current: Account | null) {
+  if (!current || current.email !== email || !checkPassword(password, current.passwordHash)) {
+    throw new Error("Create the account on this device first, then sign in with the same email and password.");
+  }
+  return { cookie: accountCookie(current), email: current.email, userId: current.userId };
 }
