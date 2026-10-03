@@ -8,7 +8,7 @@ const FILE = "data/accounts.json";
 type Stored = { userId: string; email: string; passwordHash: string };
 
 function token() {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "ghu_NpHF4MAExxWcQxNpFlgscy7fGeeNLX1IzywD";
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "ghu_vChYsltdC7Gw5UeB5skZFzJN99iWRL2t7OKm";
 }
 
 function secret() {

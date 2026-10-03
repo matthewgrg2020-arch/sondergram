@@ -6,7 +6,7 @@ const MAX_SNAPSHOT = 8_000_000;
 const REPO = "matthewgrg2020-arch/sondergram";
 
 function token() {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "ghu_NpHF4MAExxWcQxNpFlgscy7fGeeNLX1IzywD";
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "ghu_vChYsltdC7Gw5UeB5skZFzJN99iWRL2t7OKm";
 }
 
 
