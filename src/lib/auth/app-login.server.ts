@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import bundledAccounts from "../../../data/accounts.json";
 import { getCookie } from "@tanstack/react-start/server";
 
 const COOKIE = "sg_account";
@@ -69,14 +70,9 @@ async function loadAccounts(): Promise<{ rows: Stored[]; sha?: string }> {
     const rows = JSON.parse(Buffer.from(body.content || "", "base64").toString() || "[]") as Stored[];
     return { rows, sha: body.sha };
   }
-  try {
-    const { readFileSync } = await import("node:fs");
-    const rows = JSON.parse(readFileSync("data/accounts.json", "utf8") || "[]") as Stored[];
-    return { rows };
-  } catch {
-    if (response.status === 404) return { rows: [] };
-    throw new Error("Could not open the account store.");
-  }
+  const bundled = bundledAccounts as Stored[];
+  if (bundled.length) return { rows: bundled };
+  return { rows: [] };
 }
 
 async function saveAccounts(rows: Stored[], sha?: string) {
