@@ -95,6 +95,7 @@ export async function signUpAccount(email: string, password: string) {
 export async function signInAccount(email: string, password: string) {
   const { rows } = await loadAccounts();
   const account = rows.find((row) => row.email === email);
-  if (!account || !checkPassword(password, account.passwordHash)) throw new Error("Email or password is wrong.");
+  if (!account) throw new Error("That email is not saved yet. Choose Create account on this device once, then Sign in on the other device.");
+  if (!checkPassword(password, account.passwordHash)) throw new Error("Email or password is wrong.");
   return account;
 }
