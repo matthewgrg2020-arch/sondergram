@@ -34,6 +34,8 @@ async function blobParts(blob: Blob) {
 }
 
 async function signedIn() {
+  const account = await fetch("/api/account").then((r) => r.json()).catch(() => null);
+  if (account?.email) return true;
   if (!authEnabled) return false;
   const session = await authClient.getSession();
   return Boolean(session.data?.user?.email);

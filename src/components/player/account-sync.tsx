@@ -81,14 +81,15 @@ function EmailAuth() {
   const submit = async () => {
     setBusy(true);
     setError(null);
-    const name = email.split("@")[0] || "Listener";
-    const result =
-      mode === "up"
-        ? await authClient.signUp.email({ email, password, name, callbackURL: "/" })
-        : await authClient.signIn.email({ email, password, callbackURL: "/" });
+    const response = await fetch("/api/account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode, email, password }),
+    });
+    const body = (await response.json().catch(() => ({}))) as { message?: string };
     setBusy(false);
-    if (result.error) {
-      setError(result.error.message || "Could not sign in with that email.");
+    if (!response.ok) {
+      setError(body.message || "Could not sign in with that email.");
       return;
     }
     window.location.assign("/");
