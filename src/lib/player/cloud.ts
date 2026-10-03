@@ -45,6 +45,50 @@ function isRealAudio(blob: Blob | undefined | null) {
   return Boolean(blob && blob.size > 1024 && !/^text\//i.test(blob.type));
 }
 
+export async function restoreAccountLibrary(onStatus?: (message: string) => void): Promise<string> {
+  if (!(await signedIn())) return "Sign in to restore this library.";
+  onStatus?.("Restoring your account library…");
+  const remote = await cloudManifest();
+  if (!remote.payload) return "No saved library on this account yet.";
+  const local = await listStoredTracks();
+  const localIds = new Set(local.map((row) => row.id));
+  const snap = JSON.parse(remote.payload) as CloudSnapshot;
+  const partsById = new Map(remote.blobs.map((row) => [row.id, row.parts]));
+  let pulled = 0;
+  for (const track of snap.tracks || []) {
+    if (localIds.has(track.id)) continue;
+    const audioKey = `a:${track.id}`;
+    const coverKey = `c:${track.id}`;
+    let audio = new Blob();
+    let cover: Blob | null = null;
+    const audioParts = partsById.get(audioKey) || 0;
+    if (audioParts) {
+      const chunks: Blob[] = [];
+      for (let i = 0; i < audioParts; i++) {
+        const part = await cloudGetPart({ data: { trackId: audioKey, part: i } });
+        if (part.payload) chunks.push(b64ToBlob(part.payload, track.audioType || "audio/mpeg"));
+      }
+      if (chunks.length) audio = new Blob(chunks, { type: track.audioType || "audio/mpeg" });
+    }
+    const coverParts = partsById.get(coverKey) || 0;
+    if (coverParts) {
+      const part = await cloudGetPart({ data: { trackId: coverKey, part: 0 } });
+      if (part.payload) cover = b64ToBlob(part.payload, "image/jpeg");
+    }
+    await putStoredTrack({ ...track, tags: track.tags ?? [], audio, cover, addedAt: track.addedAt || Date.now() });
+    localIds.add(track.id);
+    pulled += 1;
+    onStatus?.(`Restored ${pulled} song${pulled === 1 ? "" : "s"}…`);
+  }
+  if (snap.playlists?.length) {
+    const have = loadPlaylists();
+    const ids = new Set(have.map((row) => row.id));
+    const extra = snap.playlists.filter((row) => row?.id && !ids.has(row.id));
+    if (extra.length) savePlaylists([...extra, ...have].slice(0, 40));
+  }
+  return pulled ? `Restored ${pulled} song${pulled === 1 ? "" : "s"} from your account.` : "This device already has the saved library.";
+}
+
 export async function syncAccountLibrary(onStatus?: (message: string) => void): Promise<string> {
   if (!(await signedIn())) return "Sign in to save this library to your email.";
   onStatus?.("Checking your account library…");

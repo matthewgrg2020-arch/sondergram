@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { authClient, authEnabled, signIn, signOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { syncAccountLibrary } from "@/lib/player/cloud";
+import { restoreAccountLibrary, syncAccountLibrary } from "@/lib/player/cloud";
 import { usePlayer } from "@/lib/player/store";
 
 export function AccountSync() {
@@ -14,6 +14,23 @@ export function AccountSync() {
   const auto = useRef(false);
   const email = accountEmail || (user && !user.isDevFallback ? user.primaryEmail : null);
   const signedIn = Boolean(email);
+
+  const restore = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const message = await restoreAccountLibrary(setNote);
+      setNote(message);
+      flash(message);
+      await hydrate();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not restore the library.";
+      setNote(message);
+      flash(message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const sync = async () => {
     setBusy(true);
@@ -56,8 +73,11 @@ export function AccountSync() {
             Songs and playlists on this device save to this email, so another phone or computer can pull the same library.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={busy} onClick={() => void sync()} className="h-10 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg disabled:opacity-50">
-              {busy ? "Syncing…" : "Sync library"}
+            <button type="button" disabled={busy} onClick={() => void restore()} className="h-10 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg disabled:opacity-50">
+              {busy ? "Working…" : "Restore library"}
+            </button>
+            <button type="button" disabled={busy} onClick={() => void sync()} className="h-10 rounded-full bg-raised px-4 text-sm disabled:opacity-50">
+              Sync library
             </button>
             <button
               type="button"
