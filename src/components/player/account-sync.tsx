@@ -11,14 +11,7 @@ export function AccountSync() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const auto = useRef(false);
-
-  useEffect(() => {
-    if (!user?.primaryEmail || auto.current) return;
-    auto.current = true;
-    void sync();
-  }, [user?.primaryEmail]);
-
-  if (!authEnabled) return null;
+  const signedIn = authEnabled && !isPending && Boolean(user && !user.isDevFallback && user.primaryEmail);
 
   const sync = async () => {
     setBusy(true);
@@ -36,6 +29,14 @@ export function AccountSync() {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!signedIn || auto.current) return;
+    auto.current = true;
+    void sync();
+  }, [signedIn]);
+
+  if (!authEnabled) return null;
 
   return (
     <section className="rounded-2xl bg-surface p-4 shadow-[var(--shadow-border)]">
