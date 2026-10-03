@@ -16,6 +16,7 @@ import { AddMusicCard } from "./add-music-card";
 import { LastFmCard } from "./lastfm-card";
 import { DuplicatesCard } from "./duplicates-card";
 import { Library } from "./library";
+import { AccountSync } from "./account-sync";
 import { LibraryBackup, LibraryClear } from "./library-backup";
 import { ListenCard, SpatialCard, TempoPitch } from "./mix-panel";
 import { RemasterPanel } from "./remaster-panel";
@@ -388,6 +389,7 @@ export function PlayerApp() {
           {view === "settings" ? (
             <div className="space-y-4 px-5 py-4">
               <AddMusicCard onView={goView} />
+              <AccountSync />
               <LibraryBackup />
               <LibraryClear />
               <LastFmCard />
