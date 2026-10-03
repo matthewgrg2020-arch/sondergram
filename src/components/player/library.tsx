@@ -53,6 +53,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [looking, setLooking] = useState(false);
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
   const [applying, setApplying] = useState(false);
+  const [albumSort, setAlbumSort] = useState<"title" | "artist" | "year" | "added">("title");
   const size = view.size;
   const titles = view.titles;
 
@@ -60,6 +61,18 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   useEffect(() => { if (startAlbum) { setTab("albums"); setOpenAlbum(startAlbum); } }, [startAlbum]);
 
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
+  const sortedAlbums = useMemo(() => {
+    const addedAt = new Map(tracks.map((track) => [track.id, track.addedAt ?? 0]));
+    const rows = [...albums];
+    const newest = (ids: string[]) => Math.max(0, ...ids.map((id) => addedAt.get(id) ?? 0));
+    rows.sort((a, b) => {
+      if (albumSort === "artist") return a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title);
+      if (albumSort === "year") return (b.year || "").localeCompare(a.year || "") || a.title.localeCompare(b.title);
+      if (albumSort === "added") return newest(b.trackIds) - newest(a.trackIds);
+      return a.title.localeCompare(b.title);
+    });
+    return rows;
+  }, [albums, albumSort, tracks]);
   const artists = useMemo(() => groupArtists(tracks), [tracks]);
   const years = useMemo(() => {
     const map = new Map<string, typeof albums>();
@@ -307,7 +320,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
 
       {!openAlbum && !openArtist && !openYear && !openGenre ? (
         <>
-          {tab === "albums" ? (<><div className="mb-3"><ShuffleBtn ids={albums.flatMap((a) => a.trackIds)} label="Shuffle all" /></div><AlbumGrid list={albums} /></>) : null}
+          {tab === "albums" ? (<><div className="mb-3 flex flex-wrap items-center gap-2"><ShuffleBtn ids={sortedAlbums.flatMap((a) => a.trackIds)} label="Shuffle all" /><label className="inline-flex items-center gap-2 text-sm text-muted">Sort<select value={albumSort} onChange={(e) => setAlbumSort(e.target.value as typeof albumSort)} className="h-10 rounded-full bg-raised px-3 text-sm text-fg"><option value="title">Title</option><option value="artist">Artist</option><option value="year">Year</option><option value="added">Recently added</option></select></label></div><AlbumGrid list={sortedAlbums} /></>) : null}
           {tab === "artists" ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {artists.map((row) => (
