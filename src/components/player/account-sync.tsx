@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { authClient, authEnabled, signOut } from "@/lib/auth/client";
+import { authClient, authEnabled, signIn, signOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { syncAccountLibrary } from "@/lib/player/cloud";
 import { usePlayer } from "@/lib/player/store";
@@ -36,8 +36,6 @@ export function AccountSync() {
     void sync();
   }, [signedIn]);
 
-  if (!authEnabled) return null;
-
   return (
     <section className="rounded-2xl bg-surface p-4 shadow-[var(--shadow-border)]">
       <p className="text-xs uppercase tracking-[0.18em] text-subtle">Account</p>
@@ -62,7 +60,7 @@ export function AccountSync() {
           </div>
         </>
       ) : null}
-      {!isPending && !user?.primaryEmail ? <EmailAuth /> : null}
+      {!isPending && !signedIn ? <EmailAuth /> : null}
       {note ? <p className="mt-3 text-xs text-muted">{note}</p> : null}
     </section>
   );
@@ -104,7 +102,10 @@ function EmailAuth() {
         void submit();
       }}
     >
-      <p className="text-sm leading-relaxed text-muted">Email and password. The library saves to this account.</p>
+      <button type="button" onClick={() => signIn("grok-google", { callbackURL: "/" })} className="h-11 w-full rounded-full bg-white text-sm font-medium text-black">
+        Continue with Google
+      </button>
+      <p className="text-sm leading-relaxed text-muted">Or use email and password. The library saves to this account.</p>
       <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="h-11 w-full rounded-xl bg-raised px-3 text-sm" />
       <input type="password" required minLength={8} autoComplete={mode === "up" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password, 8+ characters" className="h-11 w-full rounded-xl bg-raised px-3 text-sm" />
       {error ? <p className="text-sm text-red-400">{error}</p> : null}

@@ -388,8 +388,8 @@ export function PlayerApp() {
           ) : null}
           {view === "settings" ? (
             <div className="space-y-4 px-5 py-4">
-              <AddMusicCard onView={goView} />
               <AccountSync />
+              <AddMusicCard onView={goView} />
               <LibraryBackup />
               <LibraryClear />
               <LastFmCard />
