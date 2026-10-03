@@ -10,8 +10,10 @@ export function AccountSync() {
   const flash = usePlayer((s) => s.flash);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const auto = useRef(false);
-  const signedIn = authEnabled && !isPending && Boolean(user && !user.isDevFallback && user.primaryEmail);
+  const email = accountEmail || (user && !user.isDevFallback ? user.primaryEmail : null);
+  const signedIn = Boolean(email);
 
   const sync = async () => {
     setBusy(true);
@@ -31,6 +33,13 @@ export function AccountSync() {
   };
 
   useEffect(() => {
+    void fetch("/api/account")
+      .then((r) => r.json())
+      .then((body: { email?: string | null }) => setAccountEmail(body.email || null))
+      .catch(() => setAccountEmail(null));
+  }, []);
+
+  useEffect(() => {
     if (!signedIn || auto.current) return;
     auto.current = true;
     void sync();
@@ -39,10 +48,10 @@ export function AccountSync() {
   return (
     <section className="rounded-2xl bg-surface p-4 shadow-[var(--shadow-border)]">
       <p className="text-xs uppercase tracking-[0.18em] text-subtle">Account</p>
-      {isPending ? <p className="mt-2 text-sm text-muted">Checking sign-in…</p> : null}
-      {!isPending && user?.primaryEmail ? (
+      {isPending && !email ? <p className="mt-2 text-sm text-muted">Checking sign-in…</p> : null}
+      {email ? (
         <>
-          <p className="mt-2 text-sm text-fg">{user.primaryEmail}</p>
+          <p className="mt-2 text-sm text-fg">{email}</p>
           <p className="mt-1 text-xs leading-relaxed text-muted">
             Songs and playlists on this device save to this email, so another phone or computer can pull the same library.
           </p>
@@ -52,7 +61,10 @@ export function AccountSync() {
             </button>
             <button
               type="button"
-              onClick={() => void signOut("/login")}
+              onClick={() => {
+                document.cookie = "sg_account=; Path=/; Max-Age=0";
+                void signOut("/");
+              }}
               className="h-10 rounded-full bg-raised px-4 text-sm"
             >
               Sign out
@@ -60,7 +72,7 @@ export function AccountSync() {
           </div>
         </>
       ) : null}
-      {!isPending && !signedIn ? <EmailAuth /> : null}
+      {!email ? <EmailAuth /> : null}
       {note ? <p className="mt-3 text-xs text-muted">{note}</p> : null}
     </section>
   );
