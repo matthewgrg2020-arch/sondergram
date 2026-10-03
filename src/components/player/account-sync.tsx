@@ -62,8 +62,9 @@ export function AccountSync() {
             <button
               type="button"
               onClick={() => {
-                document.cookie = "sg_account=; Path=/; Max-Age=0";
-                void signOut("/");
+                void fetch("/api/account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "out" }) }).then(() => {
+                  window.location.assign("/");
+                });
               }}
               className="h-10 rounded-full bg-raised px-4 text-sm"
             >
