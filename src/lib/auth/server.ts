@@ -134,7 +134,8 @@ const staticOrigins = [
 // Trust the browser's own origin. Vercel preview URLs and the installed app
 // send an Origin that a fixed list misses, which Better Auth rejects as
 // "Invalid origin".
-const trustedOrigins = async (request: Request) => {
+const trustedOrigins = async (request?: Request) => {
+  if (!request?.headers) return staticOrigins;
   const origin = request.headers.get("origin");
   const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
   return [
