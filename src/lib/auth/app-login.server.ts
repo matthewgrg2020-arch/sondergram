@@ -61,14 +61,22 @@ function checkPassword(password: string, stored: string) {
 }
 
 async function loadAccounts(): Promise<{ rows: Stored[]; sha?: string }> {
-  const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${FILE}`, {
+  const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${FILE}?ref=library-data`, {
     headers: { Authorization: `Bearer ${token()}`, Accept: "application/vnd.github+json", "User-Agent": "sondergram" },
   });
-  if (response.status === 404) return { rows: [] };
-  if (!response.ok) throw new Error("Could not open the account store.");
-  const body = await response.json() as { content?: string; sha?: string };
-  const rows = JSON.parse(Buffer.from(body.content || "", "base64").toString() || "[]") as Stored[];
-  return { rows, sha: body.sha };
+  if (response.ok) {
+    const body = await response.json() as { content?: string; sha?: string };
+    const rows = JSON.parse(Buffer.from(body.content || "", "base64").toString() || "[]") as Stored[];
+    return { rows, sha: body.sha };
+  }
+  try {
+    const { readFileSync } = await import("node:fs");
+    const rows = JSON.parse(readFileSync("data/accounts.json", "utf8") || "[]") as Stored[];
+    return { rows };
+  } catch {
+    if (response.status === 404) return { rows: [] };
+    throw new Error("Could not open the account store.");
+  }
 }
 
 async function saveAccounts(rows: Stored[], sha?: string) {
@@ -79,6 +87,7 @@ async function saveAccounts(rows: Stored[], sha?: string) {
       message: "Update Sondergram accounts",
       content: Buffer.from(JSON.stringify(rows)).toString("base64"),
       sha,
+      branch: "library-data",
     }),
   });
   if (!response.ok) throw new Error("Could not save the account.");

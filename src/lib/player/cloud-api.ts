@@ -17,18 +17,25 @@ function headers() {
 }
 
 async function readFile(path: string): Promise<{ text: string; sha?: string } | null> {
-  const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: headers() });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error("Could not read the saved library.");
-  const body = await response.json() as { content?: string; sha?: string };
-  return { text: Buffer.from(body.content || "", "base64").toString(), sha: body.sha };
+  const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}?ref=library-data`, { headers: headers() });
+  if (response.ok) {
+    const body = await response.json() as { content?: string; sha?: string };
+    return { text: Buffer.from(body.content || "", "base64").toString(), sha: body.sha };
+  }
+  try {
+    const { readFileSync } = await import("node:fs");
+    return { text: readFileSync(path, "utf8") };
+  } catch {
+    if (response.status === 404) return null;
+    throw new Error("Could not open the account store.");
+  }
 }
 
 async function writeFile(path: string, text: string, sha?: string) {
   const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
     method: "PUT",
     headers: { ...headers(), "content-type": "application/json" },
-    body: JSON.stringify({ message: "Save Sondergram library", content: Buffer.from(text).toString("base64"), sha }),
+    body: JSON.stringify({ message: "Save Sondergram library", content: Buffer.from(text).toString("base64"), sha, branch: "library-data" }),
   });
   if (!response.ok) throw new Error("Could not save the library.");
 }
