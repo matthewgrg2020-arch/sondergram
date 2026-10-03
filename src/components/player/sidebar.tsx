@@ -70,7 +70,7 @@ const FOOT: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "liked", label: "Favorite Songs", icon: Heart },
   { id: "studio", label: "Sound", icon: SlidersHorizontal },
   { id: "stats", label: "Recap", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: Settings },
+  { id: "settings", label: "Sign in", icon: Settings },
 ];
 
 const MOBILE: { id: AppView; label: string; icon: typeof Library }[] = [
@@ -78,7 +78,7 @@ const MOBILE: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "library", label: "Library", icon: Library },
   { id: "studio", label: "Sound", icon: SlidersHorizontal },
   { id: "search", label: "Search", icon: Search },
-  { id: "settings", label: "Settings", icon: Settings },
+  { id: "settings", label: "Sign in", icon: Settings },
 ];
 
 type Props = {
@@ -233,7 +233,7 @@ export function Sidebar({ view, onView }: Props) {
           <span className="flex size-7 items-center justify-center rounded-full bg-white/12 text-[11px] font-semibold">
             SG
           </span>
-          <span className="truncate">Sondergram</span>
+          <span className="truncate">Sign in</span>
         </button>
       </div>
     </aside>

@@ -62,16 +62,7 @@ export function AccountSync() {
           </div>
         </>
       ) : null}
-      {!isPending && !user?.primaryEmail ? (
-        <>
-          <p className="mt-2 text-sm leading-relaxed text-muted">
-            Sign in with email and password so this library follows you. No zip transfer on the next device.
-          </p>
-          <a href="/login" className="mt-3 inline-flex h-10 items-center rounded-full bg-accent px-4 text-sm font-medium text-accent-fg">
-            Sign in
-          </a>
-        </>
-      ) : null}
+      {!isPending && !user?.primaryEmail ? <EmailAuth /> : null}
       {note ? <p className="mt-3 text-xs text-muted">{note}</p> : null}
     </section>
   );
@@ -80,4 +71,49 @@ export function AccountSync() {
 export async function signedInEmail() {
   const session = await authClient.getSession();
   return session.data?.user?.email ?? null;
+}
+
+function EmailAuth() {
+  const [mode, setMode] = useState<"in" | "up">("up");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const name = email.split("@")[0] || "Listener";
+    const result =
+      mode === "up"
+        ? await authClient.signUp.email({ email, password, name, callbackURL: "/" })
+        : await authClient.signIn.email({ email, password, callbackURL: "/" });
+    setBusy(false);
+    if (result.error) {
+      setError(result.error.message || "Could not sign in with that email.");
+      return;
+    }
+    window.location.assign("/");
+  };
+
+  return (
+    <form
+      className="mt-3 space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <p className="text-sm leading-relaxed text-muted">Email and password. The library saves to this account.</p>
+      <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="h-11 w-full rounded-xl bg-raised px-3 text-sm" />
+      <input type="password" required minLength={8} autoComplete={mode === "up" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password, 8+ characters" className="h-11 w-full rounded-xl bg-raised px-3 text-sm" />
+      {error ? <p className="text-sm text-red-400">{error}</p> : null}
+      <button type="submit" disabled={busy} className="h-11 w-full rounded-full bg-accent text-sm font-medium text-accent-fg disabled:opacity-50">
+        {busy ? "Working…" : mode === "up" ? "Create account" : "Sign in"}
+      </button>
+      <button type="button" onClick={() => setMode(mode === "up" ? "in" : "up")} className="w-full text-sm text-muted">
+        {mode === "up" ? "Already have an account? Sign in" : "New here? Create an account"}
+      </button>
+    </form>
+  );
 }
