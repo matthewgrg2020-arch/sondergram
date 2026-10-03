@@ -121,13 +121,28 @@ const APP_ORIGINS = [
   "https://sondergram-git-master-sondergram.vercel.app",
   "https://*.vercel.app",
 ];
-const trustedOrigins: string[] = [
+const staticOrigins = [
   ...(explicitBaseURL ? [explicitBaseURL] : []),
   ...APP_ORIGINS,
   ...previewAllowedHosts,
   ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
   ...LOCAL_DEV_ORIGINS,
+  "https://localhost",
+  "capacitor://localhost",
+  "ionic://localhost",
 ];
+// Trust the browser's own origin. Vercel preview URLs and the installed app
+// send an Origin that a fixed list misses, which Better Auth rejects as
+// "Invalid origin".
+const trustedOrigins = async (request: Request) => {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  return [
+    ...staticOrigins,
+    ...(origin ? [origin] : []),
+    ...(host ? [`https://${host}`, `http://${host}`] : []),
+  ];
+};
 
 const databaseUrl = env("DATABASE_URL");
 
