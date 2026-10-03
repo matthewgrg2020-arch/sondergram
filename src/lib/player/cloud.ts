@@ -1,7 +1,7 @@
 import { authClient, authEnabled } from "@/lib/auth/client";
 import { loadPlaylists, savePlaylists, type UserPlaylist } from "./playlists";
 import { getStoredTrack, listStoredTracks, putStoredTrack, type StoredTrack } from "./persist";
-import { cloudDropBlob, cloudGetPart, cloudManifest, cloudPutPart, cloudSaveSnapshot } from "./cloud.server";
+import { cloudDropBlob, cloudGetPart, cloudManifest, cloudPutPart, cloudSaveSnapshot } from "./cloud-api";
 
 const PART = 900_000;
 
