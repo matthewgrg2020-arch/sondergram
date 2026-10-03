@@ -849,6 +849,8 @@ type PlayerState = {
   toggleMono: () => void;
   toggleAutoEq: () => void;
   saveQueuePlaylist: (name?: string) => void;
+  createPlaylist: (name: string, trackIds: string[]) => void;
+  addTracksToPlaylist: (playlistId: string, trackIds: string[]) => void;
   playPlaylist: (id: string) => void;
   deletePlaylist: (id: string) => void;
   setRemaster: (preset: RemasterPreset) => void;
@@ -3019,6 +3021,36 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ playlists });
     savePlaylists(playlists);
     get().flash(`Saved “${row.name}”`);
+  },
+  createPlaylist: (name, trackIds) => {
+    const ids = [...new Set(trackIds)].filter((id) => get().tracks.some((t) => t.id === id));
+    if (!ids.length) {
+      get().flash("Nothing to add");
+      return;
+    }
+    const title = (name || "Playlist").trim().slice(0, 40) || "Playlist";
+    const row: UserPlaylist = {
+      id: crypto.randomUUID(),
+      name: title,
+      trackIds: ids,
+      createdAt: Date.now(),
+    };
+    const playlists = [row, ...get().playlists].slice(0, 40);
+    set({ playlists });
+    savePlaylists(playlists);
+    get().flash(`Added to “${row.name}”`);
+  },
+  addTracksToPlaylist: (playlistId, trackIds) => {
+    const row = get().playlists.find((p) => p.id === playlistId);
+    if (!row) return;
+    const ids = [...new Set([...row.trackIds, ...trackIds])].filter((id) =>
+      get().tracks.some((t) => t.id === id),
+    );
+    const added = ids.length - row.trackIds.length;
+    const playlists = get().playlists.map((p) => (p.id === playlistId ? { ...p, trackIds: ids } : p));
+    set({ playlists });
+    savePlaylists(playlists);
+    get().flash(added > 0 ? `Added to “${row.name}”` : `Already in “${row.name}”`);
   },
   playPlaylist: (id) => {
     const row = get().playlists.find((p) => p.id === id);

@@ -73,7 +73,7 @@ export function MoreMenu({
           <div
             ref={menuRef}
             role="menu"
-            className="fixed z-[70] min-w-48 rounded-xl bg-raised p-1 shadow-[var(--shadow-border)]"
+            className="fixed z-[80] max-h-[min(70vh,360px)] min-w-48 overflow-y-auto rounded-xl bg-raised p-1 shadow-[var(--shadow-border)]"
             style={{ top: pos.top, bottom: pos.bottom, right: pos.right }}
           >
             {items.map((item) => (

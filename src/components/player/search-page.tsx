@@ -4,6 +4,7 @@ import { parseArchiveId } from "@/lib/player/archive";
 import { parseBandcampUrl } from "@/lib/player/bandcamp";
 import { groupAlbums, groupArtists } from "@/lib/player/catalog";
 import { usePlayer } from "@/lib/player/store";
+import { AddToPlaylist } from "./add-to-playlist";
 import { MoreMenu } from "./more-menu";
 import { StreamCatalog } from "./stream-catalog";
 
@@ -15,6 +16,7 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
   const importArchive = usePlayer((s) => s.importArchive);
   const importBandcamp = usePlayer((s) => s.importBandcamp);
   const [adding, setAdding] = useState(false);
+  const [playlistIds, setPlaylistIds] = useState<string[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
   const archiveId = parseArchiveId(query);
@@ -149,6 +151,7 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
                       items={[
                         { label: "Play", onClick: () => playIds(album.trackIds) },
                         { label: "Play next", onClick: () => queueNextMany(album.trackIds) },
+                        { label: "Add to playlist", onClick: () => setPlaylistIds(album.trackIds) },
                       ]}
                     />
                   </div>
@@ -182,6 +185,8 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
                       label={`More for ${track.name}`}
                       items={[
                         { label: "Play next", onClick: () => queueNext(track.id) },
+                        { label: "Add to queue", onClick: () => usePlayer.getState().queueLast(track.id) },
+                        { label: "Add to playlist", onClick: () => setPlaylistIds([track.id]) },
                       ]}
                     />
                   </li>
@@ -192,6 +197,7 @@ export function SearchPage({ query, onQuery }: { query: string; onQuery: (q: str
         </div>
         </>
       )}
+      <AddToPlaylist trackIds={playlistIds ?? []} open={Boolean(playlistIds)} onClose={() => setPlaylistIds(null)} />
     </div>
   );
 }

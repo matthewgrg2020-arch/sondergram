@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { groupAlbums } from "@/lib/player/catalog";
 import { usePlayer, type Track } from "@/lib/player/store";
+import { AddToPlaylist } from "./add-to-playlist";
 import { MoreMenu } from "./more-menu";
 
 export function RecentPage() {
@@ -8,6 +10,7 @@ export function RecentPage() {
   const playIndex = usePlayer((s) => s.playIndex);
   const playIds = usePlayer((s) => s.playIds);
   const queueNext = usePlayer((s) => s.queueNext);
+  const [playlistIds, setPlaylistIds] = useState<string[] | null>(null);
   const items = recent
     .map((id) => tracks.find((t) => t.id === id))
     .filter((t): t is Track => Boolean(t));
@@ -50,7 +53,11 @@ export function RecentPage() {
               <MoreMenu
                 tone="plain"
                 label={`More for ${track.name}`}
-                items={[{ label: "Play next", onClick: () => queueNext(track.id) }]}
+                items={[
+                  { label: "Play next", onClick: () => queueNext(track.id) },
+                  { label: "Add to queue", onClick: () => usePlayer.getState().queueLast(track.id) },
+                  { label: "Add to playlist", onClick: () => setPlaylistIds([track.id]) },
+                ]}
               />
             </li>
           ))}
@@ -99,6 +106,7 @@ export function RecentPage() {
           ))}
         </ul>
       ) : null}
+      <AddToPlaylist trackIds={playlistIds ?? []} open={Boolean(playlistIds)} onClose={() => setPlaylistIds(null)} />
     </div>
   );
 }

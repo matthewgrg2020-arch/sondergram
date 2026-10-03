@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, Globe, Pencil, Plus, Shuffle, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Flame, Globe, Pencil, Plus, Shuffle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, groupAlbums, groupArtists, groupGenres } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT, formatDuration, formatTrackTime } from "@/lib/player/format";
@@ -11,6 +11,7 @@ import { ArtworkPanel } from "./cover-search";
 import { Field } from "./metadata-panel";
 import { TagEditor } from "./tag-editor";
 import { FormatBadge } from "./format-badge";
+import { AddToPlaylist } from "./add-to-playlist";
 import { MoreMenu } from "./more-menu";
 
 type Tab = LibTab;
@@ -48,6 +49,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [openYear, setOpenYear] = useState<string | null>(null);
   const [openGenre, setOpenGenre] = useState<string | null>(null);
   const [editTrackId, setEditTrackId] = useState<string | null>(null);
+  const [playlistIds, setPlaylistIds] = useState<string[] | null>(null);
   const [looking, setLooking] = useState(false);
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
   const [applying, setApplying] = useState(false);
@@ -92,6 +94,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const songMenu = (id: string) => [
     { label: "Play next", onClick: () => queueNext(id) },
     { label: "Add to queue", onClick: () => queueLast(id) },
+    { label: "Add to playlist", onClick: () => setPlaylistIds([id]) },
   ];
   const shufflePlay = (ids: string[]) => {
     const list = shuffleList(ids);
@@ -201,6 +204,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 <ShuffleBtn ids={album.trackIds} />
                 <button type="button" onClick={() => queueNextMany(album.trackIds)} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Play next</button>
                 <button type="button" onClick={() => album.trackIds.forEach((id) => queueLast(id))} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Add to queue</button>
+                <button type="button" onClick={() => setPlaylistIds(album.trackIds)} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Add to playlist</button>
                 <button type="button" disabled={looking} onClick={openLookup} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10 disabled:opacity-60">
                   <Globe className="size-4" strokeWidth={1.75} />{looking ? "Looking up…" : "Look up online"}
                 </button>
@@ -228,7 +232,10 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left hover:opacity-90">
                       <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm">{t.name}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-sm">{t.name}</span>
+                          {t.popular || t.chartRank ? <Flame className="size-3.5 shrink-0 text-hot" strokeWidth={2} aria-label="Popular" /> : null}
+                        </span>
                         <span className="block truncate text-xs text-muted">{t.artist}</span>
                       </span>
                       {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
@@ -359,6 +366,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           ) : null}
         </>
       ) : null}
+      <AddToPlaylist trackIds={playlistIds ?? []} open={Boolean(playlistIds)} onClose={() => setPlaylistIds(null)} />
     </section>
   );
 }
