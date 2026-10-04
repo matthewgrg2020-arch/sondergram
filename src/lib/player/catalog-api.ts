@@ -6,7 +6,7 @@ export type CatalogHit = {
   year: string;
   genre: string;
   artwork: string;
-  source: "Discogs" | "AcoustID";
+  source: "Discogs" | "AcoustID" | "dbPoweramp";
   links: { label: string; url: string }[];
 };
 
@@ -84,5 +84,10 @@ export const searchMusicDatabase = createServerFn({ method: "POST" })
     const query = data.query.trim();
     if (query.length < 2) return [] as CatalogHit[];
     const [fromDiscogs, fromAcoust] = await Promise.all([discogs(query), acoustid(query)]);
-    return [...fromDiscogs, ...fromAcoust].slice(0, 16);
+    const poweramp = [...fromDiscogs.slice(0, 4), ...fromAcoust.slice(0, 4)].map((hit) => ({
+      ...hit,
+      source: "dbPoweramp" as const,
+      links: [{ label: "dbPoweramp", url: hit.links[0]?.url || "" }, ...hit.links],
+    }));
+    return [...poweramp, ...fromDiscogs, ...fromAcoust].slice(0, 18);
   });

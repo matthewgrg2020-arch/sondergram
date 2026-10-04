@@ -123,7 +123,7 @@ export async function searchAlbums(artist: string, album: string, track?: string
       year: row.year,
       genre: row.genre,
       artwork: row.artwork,
-      description: row.source === "AcoustID" ? "AcoustID / MusicBrainz" : "Discogs",
+      description: row.source === "dbPoweramp" ? "dbPoweramp (MusicBrainz + Discogs)" : row.source === "AcoustID" ? "AcoustID / MusicBrainz" : "Discogs",
       explicit: false,
       trackCount: 0,
     });

@@ -16,7 +16,7 @@ export function DatabasePanel() {
     try {
       const rows = await searchMusicDatabase({ data: { query: q } });
       setHits(rows);
-      setNote(rows.length ? null : "No matches in Discogs or AcoustID.");
+      setNote(rows.length ? null : "No dbPoweramp, Discogs, or AcoustID matches.");
     } catch (err) {
       setNote(err instanceof Error ? err.message : "Could not search the music database.");
     } finally {
@@ -27,7 +27,7 @@ export function DatabasePanel() {
   return (
     <section className="panel flex min-h-0 flex-1 flex-col p-4 sm:p-5">
       <h2 className="text-3xl font-semibold tracking-tight">Music database</h2>
-      <p className="mt-1 text-sm text-muted">Discover a release, then open a link for where to find it.</p>
+      <p className="mt-1 text-sm text-muted">Discover a release with dbPoweramp's sources (MusicBrainz and Discogs), then open a link for where to find it.</p>
       <form
         className="mt-4 flex gap-2"
         onSubmit={(e) => {
