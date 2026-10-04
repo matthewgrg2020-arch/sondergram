@@ -108,6 +108,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     { label: "Play next", onClick: () => queueNext(id) },
     { label: "Add to queue", onClick: () => queueLast(id) },
     { label: "Add to playlist", onClick: () => setPlaylistIds([id]) },
+    { label: "Delete song", onClick: () => { if (confirm("Delete this song from the library?")) removeTracks([id]); } },
   ];
   const shufflePlay = (ids: string[]) => {
     const list = shuffleList(ids);
@@ -218,6 +219,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                 <button type="button" onClick={() => queueNextMany(album.trackIds)} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Play next</button>
                 <button type="button" onClick={() => album.trackIds.forEach((id) => queueLast(id))} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Add to queue</button>
                 <button type="button" onClick={() => setPlaylistIds(album.trackIds)} className="h-10 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10">Add to playlist</button>
+                <button type="button" onClick={() => { if (confirm("Delete this album and its songs?")) { removeTracks(album.trackIds); setOpenAlbum(null); } }} className="h-10 rounded-full bg-raised px-4 text-sm font-medium text-red-300 hover:bg-white/10">Delete album</button>
                 <button type="button" disabled={looking} onClick={openLookup} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10 disabled:opacity-60">
                   <Globe className="size-4" strokeWidth={1.75} />{looking ? "Looking up…" : "Look up online"}
                 </button>
