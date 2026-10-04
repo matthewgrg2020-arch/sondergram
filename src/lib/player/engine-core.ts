@@ -204,7 +204,7 @@ function applyOutputGain() {
 
 function proxyStreamUrl(url: string) {
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return url;
-  if (url.includes("/api/stream") || url.includes("proxy")) return url;
+  if (url.includes("/api/stream") || url.includes("/api/soulseek") || url.includes("proxy")) return url;
   try {
     const u = new URL(url, typeof location !== "undefined" ? location.href : "https://sondergram.vercel.app");
     if (u.protocol !== "http:" && u.protocol !== "https:") return url;
