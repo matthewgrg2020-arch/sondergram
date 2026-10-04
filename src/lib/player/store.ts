@@ -2401,6 +2401,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           }
           const { username, filename } = parseSlskTrackId(next.soulseekId!);
           get().flash("Fetching that file from Soulseek…");
+          const url = slskStreamUrl(session, username, filename, "", next.bytes);
+          if (!session.base) {
+            get().patchTrack(next.id, { previewUrl: url, url });
+            playNow(url);
+            return;
+          }
           await slskEnqueue({
             data: {
               base: session.base,
