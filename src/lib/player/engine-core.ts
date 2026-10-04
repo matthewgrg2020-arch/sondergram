@@ -205,6 +205,10 @@ function applyOutputGain() {
 function proxyStreamUrl(url: string) {
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return url;
   if (url.includes("/api/stream") || url.includes("/api/soulseek") || url.includes("proxy")) return url;
+}
+
+function graphOnly(url: string) {
+  return url.includes("/api/soulseek");
   try {
     const u = new URL(url, typeof location !== "undefined" ? location.href : "https://sondergram.vercel.app");
     if (u.protocol !== "http:" && u.protocol !== "https:") return url;
@@ -275,7 +279,7 @@ export async function beginPlayback(url: string, at = 0) {
   const blob = url.startsWith("blob:") || url.startsWith("data:");
   const hiddenApple = Boolean(eng.apple && typeof document !== "undefined" && document.visibilityState === "hidden");
   // Keep Web Audio (EQ) when DSP active — iOS drops EQ if switched to bgAudio on track change
-  const forceGraph = dspActive() || !hiddenApple;
+  const forceGraph = dspActive() || !hiddenApple || graphOnly(url);
   const graphSrc = blob ? url : proxyStreamUrl(url);
 
   if (forceGraph) {
@@ -328,6 +332,11 @@ export async function beginPlayback(url: string, at = 0) {
         throw new Error("stream");
       }
     }
+  }
+
+  if (graphOnly(url)) {
+    await playEl(eng.audio, url, at, true, gen);
+    return;
   }
 
   if (gen !== playGen) {
@@ -431,7 +440,7 @@ export function applyEq(gains: number[]) {
   for (let i = 0; i < n; i++) {
     filters[i].gain.value = finite(gains[i], 0);
   }
-  if (dspActive() && engine && !engine.graphActive) {
+  if ((dspActive() || (lastPlayUrl || "").includes("/api/soulseek")) && engine && !engine.graphActive) {
     setBackgroundOutput(false);
   }
 }
