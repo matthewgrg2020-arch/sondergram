@@ -2463,7 +2463,15 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     if (next?.bandcampId) {
       youtubePause();
       catalogUpgradeId = next.id;
-      get().flash("Loading Bandcamp…");
+      const saved = liveBandcampUrl(next.previewUrl) || liveBandcampUrl(next.url);
+      const page = next.bandcampUrl || "";
+      const playBandcamp = (src: string) => {
+        const proxied = `/api/stream?u=${encodeURIComponent(src)}${page ? `&ref=${encodeURIComponent(page)}` : ""}`;
+        if (!get().playing) set({ playing: true });
+        playNow(proxied);
+      };
+      if (saved) playBandcamp(saved);
+      else get().flash("Loading Bandcamp…");
       void (async () => {
         try {
           const fresh = await bcStream({
@@ -2475,9 +2483,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
               album: next.album,
             },
           });
-          if (get().index !== index) return;
-          if (!fresh.url) {
-            fail();
+          if (get().index !== index || !fresh.url) {
+            if (!saved) fail();
             return;
           }
           get().patchTrack(next.id, {
@@ -2485,12 +2492,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
             bandcampUrl: fresh.page || next.bandcampUrl,
             durationSec: fresh.duration || next.durationSec,
           });
-          if (!get().playing) set({ playing: true });
-          const page = fresh.page || next.bandcampUrl || "";
-          const proxied = `/api/stream?u=${encodeURIComponent(fresh.url)}${page ? `&ref=${encodeURIComponent(page)}` : ""}`;
-          playNow(proxied);
+          if (!saved || fresh.url !== saved) playBandcamp(fresh.url);
         } catch (err) {
-          if (get().index !== index) return;
+          if (get().index !== index || saved) return;
           get().flash(err instanceof Error ? err.message : "Bandcamp stream failed.");
           fail();
         } finally {
