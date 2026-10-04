@@ -104,7 +104,7 @@ export async function syncAccountLibrary(onStatus?: (message: string) => void): 
     const snap = JSON.parse(remote.payload) as CloudSnapshot;
     const partsById = new Map(remote.blobs.map((row) => [row.id, row.parts]));
     for (const track of snap.tracks || []) {
-      if (localIds.has(track.id) && !refresh) continue;
+      if (localIds.has(track.id)) continue;
       const audioKey = `a:${track.id}`;
       const coverKey = `c:${track.id}`;
       let audio = new Blob();
