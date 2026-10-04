@@ -2486,7 +2486,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
             durationSec: fresh.duration || next.durationSec,
           });
           if (!get().playing) set({ playing: true });
-          playNow(fresh.url);
+          const page = fresh.page || next.bandcampUrl || "";
+          const proxied = `/api/stream?u=${encodeURIComponent(fresh.url)}${page ? `&ref=${encodeURIComponent(page)}` : ""}`;
+          playNow(proxied);
         } catch (err) {
           if (get().index !== index) return;
           get().flash(err instanceof Error ? err.message : "Bandcamp stream failed.");

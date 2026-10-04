@@ -66,10 +66,11 @@ async function proxy(request: Request) {
     return new Response("Host not allowed", { status: 403, headers: corsHeaders() });
   }
 
+  const ref = params.get("ref") || "";
   const headers: Record<string, string> = {
     Accept: "audio/*,*/*;q=0.8",
     "User-Agent": UA,
-    Referer: refererFor(url),
+    Referer: ref.startsWith("https://") && /bandcamp\.com/i.test(ref) ? ref : refererFor(url),
   };
   if (url.hostname.toLowerCase().endsWith(".googlevideo.com") || url.hostname.toLowerCase().endsWith(".youtube.com")) {
     headers.Origin = "https://www.youtube.com";

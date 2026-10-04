@@ -173,6 +173,11 @@ export function PlayerApp() {
       if (event.target !== outputAudio()) return;
       const current = usePlayer.getState().tracks[usePlayer.getState().index];
       if (isYoutubePlayback(current)) return;
+      if (current?.bandcampId || current?.soulseekId) {
+        usePlayer.getState().flash("That stream did not start. Try the song again.");
+        usePlayer.getState().setPlaying(false);
+        return;
+      }
       if (Date.now() - startedAtRef.current < 800) return;
       autoNext();
     };
