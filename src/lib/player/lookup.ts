@@ -99,9 +99,10 @@ export async function searchAlbums(artist: string, album: string, track?: string
     /* fall through to the browser catalogs */
   }
 
-  const [albums, songs] = await Promise.all([
+  const [albums, songs, catalog] = await Promise.all([
     itunesSearch(cleanAlbum ? `${cleanArtist} ${cleanAlbum}`.trim() : term, "album"),
     itunesSearch([cleanArtist, track || cleanAlbum].filter(Boolean).join(" "), "song"),
+    import("./catalog-api").then((mod) => mod.searchMusicDatabase({ data: { query: term } })).catch(() => []),
   ]);
 
   const hits: AlbumHit[] = [];
@@ -115,6 +116,18 @@ export async function searchAlbums(artist: string, album: string, track?: string
   };
   for (const row of albums) push(fromItunes(row));
   for (const row of songs) push(fromItunes(row));
+  for (const row of catalog) {
+    push({
+      title: row.title,
+      artist: row.artist,
+      year: row.year,
+      genre: row.genre,
+      artwork: row.artwork,
+      description: row.source === "AcoustID" ? "AcoustID / MusicBrainz" : "Discogs",
+      explicit: false,
+      trackCount: 0,
+    });
+  }
   hits.sort((a, b) => score(b, cleanArtist, cleanAlbum) - score(a, cleanArtist, cleanAlbum));
   return hits.slice(0, 12);
 }

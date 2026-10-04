@@ -39,6 +39,7 @@ export type AppView =
   | "archive"
   | "bandcamp"
   | "rym"
+  | "database"
   | "arcod"
   | "soulseek"
   | "liked"
@@ -60,6 +61,7 @@ const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "amazon", label: "Amazon", icon: AudioLines },
   { id: "bandcamp", label: "Bandcamp", icon: Disc3 },
   { id: "rym", label: "RateYourMusic", icon: Star },
+  { id: "database", label: "Database", icon: Disc3 },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "soulseek", label: "Soulseek", icon: Share2 },
   { id: "find", label: "Find files", icon: FolderDown },

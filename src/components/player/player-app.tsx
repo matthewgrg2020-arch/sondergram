@@ -8,6 +8,7 @@ import { IbroadcastPanel } from "./ibroadcast-panel";
 import { ArchivePanel } from "./archive-panel";
 import { BandcampPanel } from "./bandcamp-panel";
 import { RymPanel } from "./rym-panel";
+import { DatabasePanel } from "./database-panel";
 import { ArcodPanel } from "./arcod-panel";
 import { SoulseekPanel } from "./soulseek-panel";
 import { AmazonPanel } from "./amazon-panel";
@@ -373,6 +374,7 @@ export function PlayerApp() {
           {view === "archive" ? <ArchivePanel /> : null}
           {view === "bandcamp" ? <BandcampPanel /> : null}
           {view === "rym" ? <RymPanel /> : null}
+          {view === "database" ? <DatabasePanel /> : null}
           {view === "arcod" ? <ArcodPanel /> : null}
           {view === "soulseek" ? <SoulseekPanel /> : null}
           {view === "stats" ? <StatsPage /> : null}

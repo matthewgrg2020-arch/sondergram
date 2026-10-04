@@ -45,7 +45,11 @@ function isRealAudio(blob: Blob | undefined | null) {
   return Boolean(blob && blob.size > 1024 && !/^text\//i.test(blob.type));
 }
 
-export async function restoreAccountLibrary(onStatus?: (message: string) => void): Promise<string> {
+export async function updateAccountLibrary(onStatus?: (message: string) => void): Promise<string> {
+  return restoreAccountLibrary(onStatus, true);
+}
+
+export async function restoreAccountLibrary(onStatus?: (message: string) => void, refresh = false): Promise<string> {
   if (!(await signedIn())) return "Sign in to restore this library.";
   onStatus?.("Restoring your account library…");
   const remote = await cloudManifest();
@@ -56,7 +60,7 @@ export async function restoreAccountLibrary(onStatus?: (message: string) => void
   const partsById = new Map(remote.blobs.map((row) => [row.id, row.parts]));
   let pulled = 0;
   for (const track of snap.tracks || []) {
-    if (localIds.has(track.id)) continue;
+    if (localIds.has(track.id) && !refresh) continue;
     const audioKey = `a:${track.id}`;
     const coverKey = `c:${track.id}`;
     let audio = new Blob();
@@ -100,7 +104,7 @@ export async function syncAccountLibrary(onStatus?: (message: string) => void): 
     const snap = JSON.parse(remote.payload) as CloudSnapshot;
     const partsById = new Map(remote.blobs.map((row) => [row.id, row.parts]));
     for (const track of snap.tracks || []) {
-      if (localIds.has(track.id)) continue;
+      if (localIds.has(track.id) && !refresh) continue;
       const audioKey = `a:${track.id}`;
       const coverKey = `c:${track.id}`;
       let audio = new Blob();
