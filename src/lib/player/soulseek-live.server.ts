@@ -301,7 +301,62 @@ export async function liveStream(opts: {
   range: string | null;
   signal?: AbortSignal;
 }) {
-  const buf = await fetchFile(opts.user, opts.pass, opts.peer, opts.file, opts.size, opts.signal);
+  const key = fileKey(opts.peer, opts.file);
+  const cached = cacheGet(key);
+  if (!cached) {
+    if (opts.size > MAX_BYTES) throw new Error("That Soulseek file is over 400 MB. Pick a smaller copy (MP3 or FLAC).");
+    const clientNow = await connect(opts.user, opts.pass);
+    const download = clientNow.download({
+      user: opts.peer,
+      file: opts.file,
+      size: opts.size || undefined,
+      timeout: 180000,
+      signal: opts.signal,
+    });
+    const mime = mimeOf(opts.file);
+    const chunks: Buffer[] = [];
+    let started = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const push = (chunk: Buffer) => {
+          chunks.push(chunk);
+          if (started) controller.enqueue(new Uint8Array(chunk));
+        };
+        download.on("data", push);
+        download.on("complete", () => {
+          cachePut(key, Buffer.concat(chunks), mime);
+          if (started) controller.close();
+        });
+        download.on("failed", (err: Error) => {
+          if (started) controller.error(err);
+        });
+        download.once("data", () => {
+          started = true;
+          for (const chunk of chunks) controller.enqueue(new Uint8Array(chunk));
+        });
+      },
+      cancel() {
+        download.cancel?.();
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      download.once("data", () => resolve());
+      download.once("failed", (err: Error) => reject(err));
+      opts.signal?.addEventListener("abort", () => reject(new Error("Cancelled")), { once: true });
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+        "Content-Type": mime,
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
+  const buf = cached.buf;
   const mime = mimeOf(opts.file);
   const total = buf.length;
   const headers: Record<string, string> = {
