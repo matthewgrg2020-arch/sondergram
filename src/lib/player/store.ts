@@ -2463,9 +2463,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     if (next?.bandcampId) {
       youtubePause();
       catalogUpgradeId = next.id;
-      const live = liveBandcampUrl(next.previewUrl) || liveBandcampUrl(next.url);
-      if (live) playNow(live);
-      else get().flash("Loading Bandcamp…");
+      get().flash("Loading Bandcamp…");
       void (async () => {
         try {
           const fresh = await bcStream({
@@ -2477,9 +2475,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
               album: next.album,
             },
           });
-          if (get().index !== index || !get().playing) return;
+          if (get().index !== index) return;
           if (!fresh.url) {
-            if (!live) fail();
+            fail();
             return;
           }
           get().patchTrack(next.id, {
@@ -2487,10 +2485,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
             bandcampUrl: fresh.page || next.bandcampUrl,
             durationSec: fresh.duration || next.durationSec,
           });
+          if (!get().playing) set({ playing: true });
           playNow(fresh.url);
         } catch (err) {
-          if (get().index !== index || !get().playing) return;
-          if (live) return;
+          if (get().index !== index) return;
           get().flash(err instanceof Error ? err.message : "Bandcamp stream failed.");
           fail();
         } finally {

@@ -435,9 +435,26 @@ export const bcStream = createServerFn({ method: "POST" })
       album.tracks.find((t) => t.name.toLowerCase() === name) ||
       album.tracks.find((t) => name && t.name.toLowerCase().includes(name)) ||
       album.tracks[0];
-    if (!match?.url) throw new Error("Bandcamp has no stream for that track.");
+    let url = match?.url || "";
+    if (!url) {
+      const bandId = str(asJson(attrJson(await fetchHtml(page).then((r) => r.html), "data-tralbum") || {}).band_id);
+      const itemId = str(match?.id || "");
+      if (bandId && itemId && /^\d+$/.test(itemId)) {
+        const kind = /\/track\//i.test(page) ? "t" : "a";
+        const res = await fetch(`https://bandcamp.com/api/mobile/24/tralbum_details?band_id=${bandId}&tralbum_id=${itemId}&tralbum_type=${kind}`, {
+          headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = asJson(await res.json());
+          const tracks = Array.isArray(data.tracks) ? data.tracks : Array.isArray(data.trackinfo) ? data.trackinfo : [];
+          const row = tracks.map(asJson).find((row) => str(row.title).toLowerCase() === name) || asJson(tracks[0]);
+          url = streamUrl(row.streaming_url) || streamUrl(row.file);
+        }
+      }
+    }
+    if (!url) throw new Error("Bandcamp has no stream for that track.");
     return {
-      url: match.url,
+      url,
       duration: match.duration,
       cover: match.cover || album.cover,
       page: match.page || album.url,
