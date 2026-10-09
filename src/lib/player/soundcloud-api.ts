@@ -4,7 +4,12 @@ import { parseSoundCloudUrl, type ScHit } from "./soundcloud";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
+/** Last known working public web client id — refreshed from the site when possible. */
+const FALLBACK_CLIENT_ID = "IysGhRTI7AdLDwRrKw5hy3UqwhvyW3Vw";
+
 let cachedClientId = "";
+let cacheAt = 0;
+const CACHE_MS = 1000 * 60 * 60 * 6;
 
 function str(value: unknown) {
   return value == null ? "" : String(value).trim();
@@ -14,28 +19,59 @@ function asJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-async function clientId() {
-  if (cachedClientId) return cachedClientId;
+function extractClientId(text: string): string {
+  const patterns = [
+    /client_id\s*[:=]\s*["']([a-zA-Z0-9]{32})["']/,
+    /["']client_id["']\s*[:=]\s*["']([a-zA-Z0-9]{32})["']/,
+    /client_id=([a-zA-Z0-9]{32})/,
+  ];
+  for (const re of patterns) {
+    const match = text.match(re);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+async function discoverClientId(): Promise<string> {
   const page = await fetch("https://soundcloud.com/", {
     headers: { "User-Agent": UA, Accept: "text/html" },
   });
+  if (!page.ok) throw new Error(`SoundCloud home ${page.status}`);
   const html = await page.text();
-  const scripts = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)].map((m) => m[1]);
-  for (const src of scripts.slice(0, 8)) {
+
+  const fromHtml = extractClientId(html);
+  if (fromHtml) return fromHtml;
+
+  const scripts = [...html.matchAll(/src=["'](https:\/\/a-v2\.sndcdn\.com\/assets\/[^"']+\.js)["']/g)].map((m) => m[1]!);
+  // Prefer larger app bundles first (client_id usually lives there).
+  const ordered = [...scripts].reverse();
+  for (const src of ordered) {
     try {
       const js = await fetch(src, { headers: { "User-Agent": UA } }).then((r) => r.text());
-      const match = js.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"/) || js.match(/"client_id":"([a-zA-Z0-9]{32})"/);
-      if (match?.[1]) {
-        cachedClientId = match[1];
-        return cachedClientId;
-      }
+      const id = extractClientId(js);
+      if (id) return id;
     } catch {
       /* try next */
     }
   }
-  const fallback = html.match(/client_id=([a-zA-Z0-9]{32})/);
-  if (fallback?.[1]) {
-    cachedClientId = fallback[1];
+  return "";
+}
+
+async function clientId() {
+  if (cachedClientId && Date.now() - cacheAt < CACHE_MS) return cachedClientId;
+  try {
+    const found = await discoverClientId();
+    if (found) {
+      cachedClientId = found;
+      cacheAt = Date.now();
+      return cachedClientId;
+    }
+  } catch {
+    /* use fallback */
+  }
+  if (FALLBACK_CLIENT_ID) {
+    cachedClientId = FALLBACK_CLIENT_ID;
+    cacheAt = Date.now();
     return cachedClientId;
   }
   throw new Error("Could not reach SoundCloud right now.");
@@ -71,7 +107,7 @@ function mapTrack(row: Record<string, unknown>): ScHit | null {
   };
 }
 
-async function resolveStream(apiUrl: string, id: string) {
+async function resolveStream(apiUrl: string) {
   if (!apiUrl) return "";
   const cid = await clientId();
   const joined = apiUrl.includes("?") ? `${apiUrl}&client_id=${cid}` : `${apiUrl}?client_id=${cid}`;
@@ -113,11 +149,11 @@ export const scResolve = createServerFn({ method: "POST" })
       const row = asJson(await res.json());
       const hit = mapTrack(row);
       if (!hit) throw new Error("That SoundCloud page is not a track.");
-      const stream = (await resolveStream(hit.streamUrl, hit.id)) || hit.streamUrl;
+      const stream = (await resolveStream(hit.streamUrl)) || hit.streamUrl;
       return { ...hit, streamUrl: stream };
     }
     if (data.streamUrl) {
-      const stream = await resolveStream(str(data.streamUrl), str(data.id));
+      const stream = await resolveStream(str(data.streamUrl));
       return { streamUrl: stream || str(data.streamUrl) };
     }
     throw new Error("Paste a SoundCloud track link or search first.");
