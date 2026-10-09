@@ -24,6 +24,10 @@ function allowedHost(host: string) {
     h.endsWith(".spotifycdn.com") ||
     h.endsWith(".audius.co") ||
     h === "audius.co" ||
+    h === "soundcloud.com" ||
+    h.endsWith(".soundcloud.com") ||
+    h.endsWith(".sndcdn.com") ||
+    h === "api-v2.soundcloud.com" ||
     h.endsWith(".googlevideo.com") ||
     h.endsWith(".youtube.com") ||
     h.includes("piped") ||
@@ -49,6 +53,7 @@ function refererFor(url: URL) {
   if (h.endsWith(".dzcdn.net") || h.endsWith(".deezer.com") || h.endsWith(".deezercdn.com")) return "https://www.deezer.com/";
   if (h.endsWith(".itunes.apple.com") || h === "itunes.apple.com" || h.endsWith(".mzstatic.com")) return "https://www.apple.com/";
   if (h.endsWith(".scdn.co") || h.endsWith(".spotifycdn.com")) return "https://open.spotify.com/";
+  if (h.endsWith(".soundcloud.com") || h.endsWith(".sndcdn.com") || h === "soundcloud.com" || h === "api-v2.soundcloud.com") return "https://soundcloud.com/";
   if (h.endsWith(".googlevideo.com") || h.endsWith(".youtube.com") || h.includes("piped")) return "https://www.youtube.com/";
   return url.origin + "/";
 }
@@ -70,7 +75,10 @@ async function proxy(request: Request) {
   const headers: Record<string, string> = {
     Accept: "audio/*,*/*;q=0.8",
     "User-Agent": UA,
-    Referer: ref.startsWith("https://") && /bandcamp\.com/i.test(ref) ? ref : refererFor(url),
+    Referer:
+      ref.startsWith("https://") && (/bandcamp\.com/i.test(ref) || /soundcloud\.com/i.test(ref))
+        ? ref
+        : refererFor(url),
   };
   if (url.hostname.toLowerCase().endsWith(".googlevideo.com") || url.hostname.toLowerCase().endsWith(".youtube.com")) {
     headers.Origin = "https://www.youtube.com";
