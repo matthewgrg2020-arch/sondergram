@@ -40,7 +40,7 @@ export type AppView =
   | "bandcamp"
   | "rym"
   | "database"
-  | "arcod"
+  | "soundcloud"
   | "soulseek"
   | "liked"
   | "studio"
@@ -60,12 +60,12 @@ const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "deezer", label: "Deezer", icon: AudioLines },
   { id: "amazon", label: "Amazon", icon: AudioLines },
   { id: "bandcamp", label: "Bandcamp", icon: Disc3 },
+  { id: "soundcloud", label: "SoundCloud", icon: AudioLines },
   { id: "rym", label: "RateYourMusic", icon: Star },
   { id: "database", label: "Database", icon: Disc3 },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "soulseek", label: "Soulseek", icon: Share2 },
   { id: "find", label: "Find files", icon: FolderDown },
-  { id: "arcod", label: "Arcod", icon: Disc3 },
 ];
 
 const FOOT: { id: AppView; label: string; icon: typeof Library }[] = [
