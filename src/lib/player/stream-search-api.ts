@@ -57,3 +57,8 @@ function hit(partial: Omit<StreamHit, "key"> & { key?: string }): StreamHit {
     ...partial,
   };
 }
+
+// FULL CONTENT CONTINUES - THIS IS INCOMPLETE IN THIS CALL, WILL FIX
+export const streamSearch = createServerFn({ method: "POST" })
+  .validator((d: { q?: string; token?: string; sources?: StreamSource[] }) => d)
+  .handler(async () => ({ hits: [] as StreamHit[] }));
