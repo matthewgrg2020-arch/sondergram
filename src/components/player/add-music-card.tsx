@@ -9,6 +9,7 @@ import type { AppView } from "./sidebar";
 const SOURCES: { id: AppView; label: string; hint: string; icon: typeof Youtube }[] = [
   { id: "archive", label: "Internet Archive", hint: "Paste a details link", icon: Archive },
   { id: "bandcamp", label: "Bandcamp", hint: "Album or artist link", icon: Disc3 },
+  { id: "soundcloud", label: "SoundCloud", hint: "Search or paste a track link", icon: AudioLines },
   { id: "rym", label: "RateYourMusic", hint: "Charts, genres, find on Bandcamp", icon: Star },
   { id: "youtube", label: "YouTube", hint: "Watch or queue a video", icon: Youtube },
   { id: "find", label: "Find files", hint: "FLAC, MP3, WAV", icon: FileAudio },
@@ -38,7 +39,8 @@ export function AddMusicCard({ onView }: { onView?: (view: AppView) => void }) {
         Add music
       </h3>
       <p className="mt-1 text-sm leading-relaxed text-muted">
-        Drop files, paste a link, or search Amazon, Apple Music, Deezer, Spotify, Bandcamp, RateYourMusic and more.
+        Drop files, paste a link, or search Amazon, Apple Music, Deezer, Spotify, Bandcamp, SoundCloud,
+        RateYourMusic and more.
       </p>
 
       <form
