@@ -6,8 +6,7 @@ export type StreamSource =
   | "Bandcamp"
   | "Archive"
   | "YouTube"
-  | "Audius"
-  | "Arcod";
+  | "Audius";
 
 export type StreamHit = {
   key: string;
@@ -58,7 +57,6 @@ export const STREAM_SOURCES: StreamSource[] = [
   "Archive",
   "YouTube",
   "Audius",
-  "Arcod",
 ];
 
 export function isPreviewClip(
@@ -68,7 +66,7 @@ export function isPreviewClip(
 ) {
   if (extra?.archiveId || extra?.bandcampId) return false;
   const src = url || "";
-  if (/audius\.co|bcbits\.com|archive\.org|bandcamp\.com|googlevideo\.com|piped/i.test(src)) return false;
+  if (/audius\.co|bcbits\.com|archive\.org|bandcamp\.com|googlevideo\.com|piped|soundcloud|sndcdn/i.test(src)) return false;
   if (/itunes\.apple\.com|mzstatic\.com|dzcdn\.net|scdn\.co|audio-ssl\.itunes|spotifycdn|\/preview/i.test(src)) return true;
   if (duration && duration > 0 && duration <= 35) return true;
   return false;
@@ -121,6 +119,7 @@ export function isYoutubePlayback(track?: {
 } | null) {
   if (track?.forceYoutube && track.youtubeId) return true;
   if (isEngineCatalog(track) || track?.bandcampId) return false;
+  if (track?.tags?.includes("SoundCloud")) return false;
   if (!track?.youtubeId) return false;
   if (track.format === "YT" || (track.url || "").startsWith("yt:")) return true;
   const src = track.previewUrl || track.url || "";
