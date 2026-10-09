@@ -9,7 +9,7 @@ import { ArchivePanel } from "./archive-panel";
 import { BandcampPanel } from "./bandcamp-panel";
 import { RymPanel } from "./rym-panel";
 import { DatabasePanel } from "./database-panel";
-import { ArcodPanel } from "./arcod-panel";
+import { SoundcloudPanel } from "./soundcloud-panel";
 import { SoulseekPanel } from "./soulseek-panel";
 import { AmazonPanel } from "./amazon-panel";
 import { FindAudioPanel } from "./find-audio-panel";
@@ -155,7 +155,6 @@ export function PlayerApp() {
     };
   }, []);
 
-  // Keep audio + EQ alive in background; advance tracks on ended
   useEffect(() => {
     const { audio, bgAudio } = getEngine();
     if (boundRef.current) return;
@@ -173,7 +172,7 @@ export function PlayerApp() {
       if (event.target !== outputAudio()) return;
       const current = usePlayer.getState().tracks[usePlayer.getState().index];
       if (isYoutubePlayback(current)) return;
-      if (current?.bandcampId || current?.soulseekId) {
+      if (current?.bandcampId || current?.soulseekId || (current?.tags || []).includes("SoundCloud")) {
         usePlayer.getState().flash("That stream did not start. Try the song again.");
         usePlayer.getState().setPlaying(false);
         return;
@@ -380,7 +379,7 @@ export function PlayerApp() {
           {view === "bandcamp" ? <BandcampPanel /> : null}
           {view === "rym" ? <RymPanel /> : null}
           {view === "database" ? <DatabasePanel /> : null}
-          {view === "arcod" ? <ArcodPanel /> : null}
+          {view === "soundcloud" ? <SoundcloudPanel /> : null}
           {view === "soulseek" ? <SoulseekPanel /> : null}
           {view === "stats" ? <StatsPage /> : null}
           {view === "studio" ? (
