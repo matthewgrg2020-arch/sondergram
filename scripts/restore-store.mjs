@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -8,6 +8,16 @@ const STORE_PATH = "src/lib/player/store.ts";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const playerDir = join(root, "src", "lib", "player");
 const out = join(root, STORE_PATH);
+
+function isFullStore(src) {
+  return (
+    typeof src === "string" &&
+    src.includes("export const usePlayer") &&
+    src.includes("importSoulseek") &&
+    !src.includes("const noop = () => {}") &&
+    src.length > 50000
+  );
+}
 
 function restoreFromParts() {
   let parts = [];
@@ -22,7 +32,7 @@ function restoreFromParts() {
   try {
     const b64 = parts.map((f) => readFileSync(join(playerDir, f), "utf8")).join("").replace(/\s+/g, "");
     const src = Buffer.from(b64, "base64").toString("utf8");
-    if (!src.includes("export const usePlayer") || src.length < 50000) {
+    if (!isFullStore(src)) {
       console.log("restore-store: b64 payload incomplete (" + src.length + " bytes)");
       return false;
     }
@@ -37,7 +47,7 @@ function restoreFromParts() {
 
 function restoreFromGit() {
   try {
-    // First try local object
+    // Try local object first
     try {
       const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
         cwd: root,
@@ -45,7 +55,7 @@ function restoreFromGit() {
         stdio: ["ignore", "pipe", "pipe"],
         maxBuffer: 5 * 1024 * 1024,
       });
-      if (src.includes("export const usePlayer") && src.length > 50000) {
+      if (isFullStore(src)) {
         writeFileSync(out, src);
         console.log("restore-store: restored store.ts from local git object (" + src.length + " bytes)");
         return true;
@@ -54,7 +64,7 @@ function restoreFromGit() {
       /* need fetch */
     }
 
-    // Unshallow / fetch the specific commit (works on Vercel shallow clones)
+    // Unshallow + fetch the specific commit (works on Vercel shallow clones)
     try {
       execSync("git fetch --unshallow origin 2>/dev/null || true", {
         cwd: root,
@@ -71,7 +81,7 @@ function restoreFromGit() {
         timeout: 90000,
       });
     } catch (e) {
-      console.log("restore-store: git fetch failed", e?.message?.slice(0, 120));
+      console.log("restore-store: git fetch failed", String(e?.message || e).slice(0, 150));
     }
 
     const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
@@ -80,7 +90,7 @@ function restoreFromGit() {
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 5 * 1024 * 1024,
     });
-    if (!src.includes("export const usePlayer") || src.length < 50000) {
+    if (!isFullStore(src)) {
       console.log("restore-store: git show returned incomplete content (" + (src?.length || 0) + ")");
       return false;
     }
@@ -88,19 +98,25 @@ function restoreFromGit() {
     console.log("restore-store: restored store.ts from origin (" + src.length + " bytes)");
     return true;
   } catch (err) {
-    console.log("restore-store: git restore failed", err?.message?.slice(0, 150));
+    console.log("restore-store: git restore failed", String(err?.message || err).slice(0, 200));
     return false;
   }
 }
 
-// Prefer full git restore; fall back to b64 parts
-if (!restoreFromGit() && !restoreFromParts()) {
-  console.log("restore-store: keeping existing store.ts (full restore unavailable)");
-  // If existing is the stub, log a clear warning
+const ok = restoreFromGit() || restoreFromParts();
+
+if (!ok) {
+  // Final check of whatever is on disk
+  let cur = "";
   try {
-    const cur = readFileSync(out, "utf8");
-    if (cur.includes("const noop = () => {}") || cur.length < 20000) {
-      console.warn("WARNING: store.ts appears to be the minimal stub. Library import and add will not work.");
-    }
+    cur = readFileSync(out, "utf8");
   } catch {}
+  if (!isFullStore(cur)) {
+    console.error("\nERROR: Full store.ts could not be restored.");
+    console.error("Library import, Soulseek, Bandcamp, etc. will not work with the stub.");
+    console.error("GOOD_SHA =", GOOD_SHA);
+    process.exit(1);
+  }
 }
+
+console.log("restore-store: store.ts is ready");
