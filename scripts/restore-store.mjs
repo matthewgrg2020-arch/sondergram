@@ -19,6 +19,34 @@ function isFullStore(src) {
   );
 }
 
+async function restoreFromRaw() {
+  const urls = [
+    `https://raw.githubusercontent.com/matthewgrg2020-arch/sondergram/${GOOD_SHA}/src/lib/player/store.ts`,
+    `https://cdn.jsdelivr.net/gh/matthewgrg2020-arch/sondergram@${GOOD_SHA}/src/lib/player/store.ts`,
+  ];
+  for (const url of urls) {
+    try {
+      console.log("restore-store: trying", url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
+      if (!res.ok) {
+        console.log("restore-store: HTTP", res.status, url);
+        continue;
+      }
+      const src = await res.text();
+      if (!isFullStore(src)) {
+        console.log("restore-store: incomplete from", url, "len=", src.length);
+        continue;
+      }
+      writeFileSync(out, src);
+      console.log("restore-store: restored store.ts from raw (" + src.length + " bytes)");
+      return true;
+    } catch (err) {
+      console.log("restore-store: fetch failed", String(err?.message || err).slice(0, 120));
+    }
+  }
+  return false;
+}
+
 function restoreFromParts() {
   let parts = [];
   try {
@@ -47,7 +75,6 @@ function restoreFromParts() {
 
 function restoreFromGit() {
   try {
-    // Try local object first
     try {
       const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
         cwd: root,
@@ -63,50 +90,41 @@ function restoreFromGit() {
     } catch {
       /* need fetch */
     }
-
-    // Unshallow + fetch the specific commit (works on Vercel shallow clones)
     try {
       execSync("git fetch --unshallow origin 2>/dev/null || true", {
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 120000,
+        timeout: 60000,
       });
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
       execSync(`git fetch --depth=1 origin ${GOOD_SHA}`, {
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 90000,
+        timeout: 60000,
       });
     } catch (e) {
-      console.log("restore-store: git fetch failed", String(e?.message || e).slice(0, 150));
+      console.log("restore-store: git fetch failed", String(e?.message || e).slice(0, 100));
     }
-
     const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 5 * 1024 * 1024,
     });
-    if (!isFullStore(src)) {
-      console.log("restore-store: git show returned incomplete content (" + (src?.length || 0) + ")");
-      return false;
-    }
+    if (!isFullStore(src)) return false;
     writeFileSync(out, src);
     console.log("restore-store: restored store.ts from origin (" + src.length + " bytes)");
     return true;
   } catch (err) {
-    console.log("restore-store: git restore failed", String(err?.message || err).slice(0, 200));
+    console.log("restore-store: git restore failed", String(err?.message || err).slice(0, 120));
     return false;
   }
 }
 
-const ok = restoreFromGit() || restoreFromParts();
+const ok = await restoreFromRaw() || restoreFromGit() || restoreFromParts();
 
 if (!ok) {
-  // Final check of whatever is on disk
   let cur = "";
   try {
     cur = readFileSync(out, "utf8");
