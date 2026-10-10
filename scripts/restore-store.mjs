@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -30,13 +30,14 @@ function restoreFromParts() {
     console.log("restore-store: restored store.ts from " + parts.length + " b64 parts (" + src.length + " bytes)");
     return true;
   } catch (err) {
-    console.log("restore-store: b64 decode failed");
+    console.log("restore-store: b64 decode failed", err?.message || err);
     return false;
   }
 }
 
 function restoreFromGit() {
   try {
+    // First try local object
     try {
       const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
         cwd: root,
@@ -46,32 +47,60 @@ function restoreFromGit() {
       });
       if (src.includes("export const usePlayer") && src.length > 50000) {
         writeFileSync(out, src);
-        console.log("restore-store: restored store.ts from git object (" + src.length + " bytes)");
+        console.log("restore-store: restored store.ts from local git object (" + src.length + " bytes)");
         return true;
       }
     } catch {
-      /* fetch */
+      /* need fetch */
     }
-    execSync(`git fetch --depth 1 origin ${GOOD_SHA}`, {
-      cwd: root,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 90000,
-    });
+
+    // Unshallow / fetch the specific commit (works on Vercel shallow clones)
+    try {
+      execSync("git fetch --unshallow origin 2>/dev/null || true", {
+        cwd: root,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 120000,
+      });
+    } catch {
+      /* ignore */
+    }
+    try {
+      execSync(`git fetch --depth=1 origin ${GOOD_SHA}`, {
+        cwd: root,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 90000,
+      });
+    } catch (e) {
+      console.log("restore-store: git fetch failed", e?.message?.slice(0, 120));
+    }
+
     const src = execSync(`git show ${GOOD_SHA}:${STORE_PATH}`, {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 5 * 1024 * 1024,
     });
-    if (!src.includes("export const usePlayer") || src.length < 50000) return false;
+    if (!src.includes("export const usePlayer") || src.length < 50000) {
+      console.log("restore-store: git show returned incomplete content (" + (src?.length || 0) + ")");
+      return false;
+    }
     writeFileSync(out, src);
     console.log("restore-store: restored store.ts from origin (" + src.length + " bytes)");
     return true;
-  } catch {
+  } catch (err) {
+    console.log("restore-store: git restore failed", err?.message?.slice(0, 150));
     return false;
   }
 }
 
-if (!restoreFromParts() && !restoreFromGit()) {
+// Prefer full git restore; fall back to b64 parts
+if (!restoreFromGit() && !restoreFromParts()) {
   console.log("restore-store: keeping existing store.ts (full restore unavailable)");
+  // If existing is the stub, log a clear warning
+  try {
+    const cur = readFileSync(out, "utf8");
+    if (cur.includes("const noop = () => {}") || cur.length < 20000) {
+      console.warn("WARNING: store.ts appears to be the minimal stub. Library import and add will not work.");
+    }
+  } catch {}
 }
