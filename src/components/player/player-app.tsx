@@ -55,7 +55,7 @@ import {
   setSpatialMode,
   unlockEngine,
 } from "@/lib/player/engine";
-import { usePlayer } from "@/lib/player/store";
+import { usePlayer, type Track } from "@/lib/player/store";
 import { isYoutubePlayback } from "@/lib/player/stream-search";
 import { applyTheme, loadTheme, type Theme } from "@/lib/player/theme";
 import {
@@ -70,6 +70,23 @@ import {
   youtubeTime,
   youtubeDuration,
 } from "@/lib/player/youtube";
+
+/** Soulseek (and similar) need playIndex to fetch a stream before audio can start. */
+function needsDeferredStream(track?: Track | null) {
+  if (!track) return false;
+  if (track.soulseekId) {
+    const src = track.url || track.previewUrl || "";
+    return !src.includes("/api/soulseek");
+  }
+  return false;
+}
+
+function mediaDuration(out: HTMLAudioElement, track?: Track | null) {
+  const fromEl = Number.isFinite(out.duration) && out.duration > 0 && out.duration !== Infinity ? out.duration : 0;
+  if (fromEl > 0) return fromEl;
+  const meta = Number(track?.durationSec) || 0;
+  return meta > 0 ? meta : 0;
+}
 
 export function PlayerApp() {
   const tracks = usePlayer((s) => s.tracks);
@@ -111,6 +128,7 @@ export function PlayerApp() {
   const skipLockRef = useRef(false);
   const startedAtRef = useRef(0);
   const lastTrackIdRef = useRef<string | null>(null);
+  const lastProgressRef = useRef({ t: 0, at: 0 });
 
   const goView = (next: AppView) => {
     setView(next);
@@ -170,9 +188,16 @@ export function PlayerApp() {
 
     const onError = (event: Event) => {
       if (event.target !== outputAudio()) return;
-      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      const state = usePlayer.getState();
+      const current = state.tracks[state.index];
       if (isYoutubePlayback(current)) return;
-      if (current?.bandcampId || current?.soulseekId || (current?.tags || []).includes("SoundCloud")) {
+      // Soulseek / Bandcamp often error while the real stream is still being fetched.
+      // Do not clear playing — playIndex owns that lifecycle and will start audio when ready.
+      if (needsDeferredStream(current)) return;
+      if (current?.bandcampId && !(current.url || "").includes("bcbits.com")) return;
+      if (current?.soulseekId || current?.bandcampId || (current?.tags || []).includes("SoundCloud")) {
+        // Only fail hard if we already had a real stream going for a bit
+        if (Date.now() - startedAtRef.current < 2500) return;
         usePlayer.getState().flash("That stream did not start. Try the song again.");
         usePlayer.getState().setPlaying(false);
         return;
@@ -267,6 +292,7 @@ export function PlayerApp() {
     if (lastTrackIdRef.current === track.id) return;
     lastTrackIdRef.current = track.id;
     startedAtRef.current = Date.now();
+    lastProgressRef.current = { t: 0, at: Date.now() };
 
     void (async () => {
       unlockEngine();
@@ -277,6 +303,9 @@ export function PlayerApp() {
         return;
       }
       youtubePause();
+      // Soulseek: playIndex fetches the peer file and calls beginPlayback itself.
+      // Starting here with a stale/empty URL races and aborts that fetch.
+      if (needsDeferredStream(track)) return;
       if (track.url) {
         try {
           await beginPlayback(track.url, 0);
@@ -286,11 +315,30 @@ export function PlayerApp() {
             pauseOutput();
           }
         } catch {
-          /* stream fail */
+          /* stream fail — playIndex / onError handle recovery */
         }
       }
     })();
   }, [track?.id]);
+
+  // When Soulseek finishes downloading and patches url, start playback if still on this track.
+  useEffect(() => {
+    if (!track?.soulseekId) return;
+    const src = track.url || "";
+    if (!src.includes("/api/soulseek")) return;
+    if (!usePlayer.getState().playing) return;
+    if (lastTrackIdRef.current !== track.id) return;
+    void (async () => {
+      try {
+        await beginPlayback(src, 0);
+        if (usePlayer.getState().playing && usePlayer.getState().tracks[usePlayer.getState().index]?.id === track.id) {
+          void resumeEngine();
+        }
+      } catch {
+        /* playIndex also calls beginPlayback */
+      }
+    })();
+  }, [track?.id, track?.url]);
 
   useEffect(() => {
     if (!track) return;
@@ -314,19 +362,43 @@ export function PlayerApp() {
         return;
       }
       const out = outputAudio();
-      const duration = Number.isFinite(out.duration) ? out.duration : 0;
-      setTimes(out.currentTime || 0, duration);
-      if (
-        usePlayer.getState().playing &&
-        duration > 3 &&
-        out.currentTime > 2 &&
-        duration - out.currentTime <= 0.35
-      ) {
+      const current = out.currentTime || 0;
+      const duration = mediaDuration(out, track);
+      setTimes(current, duration);
+
+      const state = usePlayer.getState();
+      if (!state.playing) return;
+      if (Date.now() - startedAtRef.current < 1500) return;
+
+      // Near end using element or metadata duration
+      if (duration > 3 && current > 2 && duration - current <= 0.45) {
+        autoNext();
+        return;
+      }
+
+      // Stalled stream (common when Soulseek/proxy ends without a clean "ended" event)
+      const prog = lastProgressRef.current;
+      if (current > prog.t + 0.15) {
+        lastProgressRef.current = { t: current, at: Date.now() };
+      } else if (current > 2 && Date.now() - prog.at > 4000) {
+        // No progress for 4s after having played — treat as finished / broken and advance
+        lastProgressRef.current = { t: current, at: Date.now() };
+        if (out.ended || out.paused || (duration > 0 && current >= duration - 1)) {
+          autoNext();
+        } else if (out.ended || (duration > 0 && Math.abs(duration - current) < 1.5)) {
+          autoNext();
+        } else if (out.readyState >= 2 && out.paused && !out.ended && current > 1) {
+          // Unexpected pause at end of buffer
+          if (duration > 0 && current >= duration * 0.92) autoNext();
+        }
+      }
+
+      if (out.ended && current > 1) {
         autoNext();
       }
     }, 250);
     return () => window.clearInterval(id);
-  }, [track?.id, setTimes, autoNext]);
+  }, [track?.id, track?.durationSec, setTimes, autoNext]);
 
   const togglePlay = () => {
     unlockEngine();
