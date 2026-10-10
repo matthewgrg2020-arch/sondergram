@@ -19,34 +19,6 @@ function isFullStore(src) {
   );
 }
 
-async function restoreFromRaw() {
-  const urls = [
-    `https://raw.githubusercontent.com/matthewgrg2020-arch/sondergram/${GOOD_SHA}/src/lib/player/store.ts`,
-    `https://cdn.jsdelivr.net/gh/matthewgrg2020-arch/sondergram@${GOOD_SHA}/src/lib/player/store.ts`,
-  ];
-  for (const url of urls) {
-    try {
-      console.log("restore-store: trying", url);
-      const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
-      if (!res.ok) {
-        console.log("restore-store: HTTP", res.status, url);
-        continue;
-      }
-      const src = await res.text();
-      if (!isFullStore(src)) {
-        console.log("restore-store: incomplete from", url, "len=", src.length);
-        continue;
-      }
-      writeFileSync(out, src);
-      console.log("restore-store: restored store.ts from raw (" + src.length + " bytes)");
-      return true;
-    } catch (err) {
-      console.log("restore-store: fetch failed", String(err?.message || err).slice(0, 120));
-    }
-  }
-  return false;
-}
-
 function restoreFromParts() {
   let parts = [];
   try {
@@ -56,12 +28,15 @@ function restoreFromParts() {
   } catch {
     return false;
   }
-  if (!parts.length) return false;
+  if (parts.length < 10) {
+    console.log("restore-store: only " + parts.length + " b64 parts found (need ~19)");
+    return false;
+  }
   try {
     const b64 = parts.map((f) => readFileSync(join(playerDir, f), "utf8")).join("").replace(/\s+/g, "");
     const src = Buffer.from(b64, "base64").toString("utf8");
     if (!isFullStore(src)) {
-      console.log("restore-store: b64 payload incomplete (" + src.length + " bytes)");
+      console.log("restore-store: b64 payload incomplete (" + src.length + " bytes from " + parts.length + " parts)");
       return false;
     }
     writeFileSync(out, src);
@@ -122,7 +97,7 @@ function restoreFromGit() {
   }
 }
 
-const ok = await restoreFromRaw() || restoreFromGit() || restoreFromParts();
+const ok = restoreFromParts() || restoreFromGit();
 
 if (!ok) {
   let cur = "";
@@ -131,8 +106,8 @@ if (!ok) {
   } catch {}
   if (!isFullStore(cur)) {
     console.error("\nERROR: Full store.ts could not be restored.");
-    console.error("Library import, Soulseek, Bandcamp, etc. will not work with the stub.");
-    console.error("GOOD_SHA =", GOOD_SHA);
+    console.error("Need complete store_b64_0.txt ... store_b64_18.txt in src/lib/player/");
+    console.error("or git access to commit", GOOD_SHA);
     process.exit(1);
   }
 }
