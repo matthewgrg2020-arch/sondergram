@@ -7,14 +7,14 @@
     "nf3": "0.3.17"
   },
   "scripts": {
-    "dev": "node scripts/with-app-env.mjs vite dev --host 0.0.0.0 --port 8080",
-    "build": "node scripts/with-app-env.mjs vite build && npm run db:migrate",
+    "dev": "node scripts/restore-store.mjs && node scripts/with-app-env.mjs vite dev --host 0.0.0.0 --port 8080",
+    "build": "node scripts/restore-store.mjs && node scripts/with-app-env.mjs vite build && npm run db:migrate",
     "db:migrate": "node scripts/migrate.mjs",
-    "build:apk": "vite build --config vite.apk.config.ts && node scripts/apk-index.mjs",
+    "build:apk": "node scripts/restore-store.mjs && vite build --config vite.apk.config.ts && node scripts/apk-index.mjs",
     "apk": "npm run build:apk && npx cap sync android && node scripts/build-apk.mjs",
     "ipa": "npm run build:apk && npx cap sync ios && node scripts/build-ios.mjs",
     "preview": "node scripts/with-app-env.mjs vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/restore-store.mjs && tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
     "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/auth/gate-identity.test.ts",
     "lint": "eslint .",
