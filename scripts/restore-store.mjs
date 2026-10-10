@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 
 const GOOD_SHA = "e53aa9387335a9f6f767f36776efe4eb66266cb1";
 const STORE_PATH = "src/lib/player/store.ts";
+const RAW_URL = `https://raw.githubusercontent.com/matthewgrg2020-arch/sondergram/${GOOD_SHA}/src/lib/player/store.ts`;
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const playerDir = join(root, "src", "lib", "player");
 const out = join(root, STORE_PATH);
@@ -17,6 +18,28 @@ function isFullStore(src) {
     !src.includes("const noop = () => {}") &&
     src.length > 50000
   );
+}
+
+function restoreFromRaw() {
+  try {
+    console.log("restore-store: fetching full store from public raw URL...");
+    const src = execSync(`curl -fsSL --max-time 30 "${RAW_URL}"`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 5 * 1024 * 1024,
+      timeout: 35000,
+    });
+    if (!isFullStore(src)) {
+      console.log("restore-store: raw payload incomplete (" + (src?.length || 0) + " bytes)");
+      return false;
+    }
+    writeFileSync(out, src);
+    console.log("restore-store: restored store.ts from raw.githubusercontent.com (" + src.length + " bytes)");
+    return true;
+  } catch (err) {
+    console.log("restore-store: raw fetch failed", String(err?.message || err).slice(0, 120));
+    return false;
+  }
 }
 
 function restoreFromParts() {
@@ -97,7 +120,7 @@ function restoreFromGit() {
   }
 }
 
-const ok = restoreFromParts() || restoreFromGit();
+const ok = restoreFromRaw() || restoreFromParts() || restoreFromGit();
 
 if (!ok) {
   let cur = "";
@@ -106,8 +129,7 @@ if (!ok) {
   } catch {}
   if (!isFullStore(cur)) {
     console.error("\nERROR: Full store.ts could not be restored.");
-    console.error("Need complete store_b64_0.txt ... store_b64_18.txt in src/lib/player/");
-    console.error("or git access to commit", GOOD_SHA);
+    console.error("Need public repo + network, or complete b64 parts, or git access to", GOOD_SHA);
     process.exit(1);
   }
 }
