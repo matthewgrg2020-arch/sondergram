@@ -114,6 +114,37 @@ export function dropLive(user?: string) {
   }
 }
 
+function loginErrorMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err || "");
+  const lower = text.toLowerCase();
+
+  // Very specific credential refusals from the server
+  const hardCredential =
+    /login\s*refus/i.test(text) ||
+    /invalid\s*(user|pass|credential)/i.test(text) ||
+    /wrong\s*(user|pass)/i.test(text) ||
+    /bad\s*password/i.test(text) ||
+    /unknown\s*user/i.test(text);
+
+  if (hardCredential) {
+    return "Soulseek did not accept that username or password. Confirm they work in SoulseekQt, then try again.";
+  }
+
+  // Network / environment style failures (common on Vercel serverless)
+  const networkish =
+    /timeout|timed\s*out|econn|enotfound|ehost|network|socket|reset|refused|unreachable|abort|epipe|etimedout/i.test(
+      lower,
+    ) ||
+    /could not connect|connection failed|server did not/i.test(lower);
+
+  if (networkish) {
+    return "Could not reach Soulseek from this server (common on Vercel). Try again, or use an slskd instance instead of native login.";
+  }
+
+  // Generic fallback — don't blame the password by default
+  return "Soulseek login failed from this server. If the same credentials work in SoulseekQt, use an slskd instance (more reliable on Vercel) or try again in a moment.";
+}
+
 async function connect(user: string, pass: string) {
   const key = `${user}\0${pass}`;
   if (client && loginKey === key && client.username === user) return client;
@@ -133,7 +164,7 @@ async function connect(user: string, pass: string) {
     }
     const incomingPort = 21000 + Math.floor(Math.random() * 20000);
     const next = new SlskClient({
-      timeout: 15000,
+      timeout: 20000,
       downloadRetries: 3,
       downloadTimeout: 180000,
       incomingPort,
@@ -148,11 +179,7 @@ async function connect(user: string, pass: string) {
       } catch {
         /* ignore */
       }
-      const text = err instanceof Error ? err.message : "";
-      if (/refus|invalid|password|username|credentials/i.test(text)) {
-        throw new Error("Soulseek did not accept that username or password.");
-      }
-      throw new Error("Could not reach Soulseek. Try again in a moment.");
+      throw new Error(loginErrorMessage(err));
     }
     client = next;
     loginKey = key;
