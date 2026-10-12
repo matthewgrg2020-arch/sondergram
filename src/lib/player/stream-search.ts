@@ -6,6 +6,7 @@ export type StreamSource =
   | "Bandcamp"
   | "Archive"
   | "YouTube"
+  | "YouTube Music"
   | "Audius";
 
 export type StreamHit = {
@@ -55,7 +56,7 @@ export const STREAM_SOURCES: StreamSource[] = [
   "Spotify",
   "Bandcamp",
   "Archive",
-  "YouTube",
+  "YouTube Music",
   "Audius",
 ];
 
@@ -100,7 +101,12 @@ export function isEngineCatalog(track?: {
   return /itunes\.apple\.com|mzstatic\.com|audio-ssl\.itunes/i.test(src);
 }
 
-export function isYoutubePlayback(track?: {
+/**
+ * YouTube iframe playback is disabled.
+ * YouTube Music tracks resolve to direct audio URLs (googlevideo) and play through
+ * the Web Audio engine so EQ / spatial / remaster work.
+ */
+export function isYoutubePlayback(_track?: {
   youtubeId?: string;
   format?: string;
   url?: string;
@@ -117,14 +123,5 @@ export function isYoutubePlayback(track?: {
   durationSec?: number;
   forceYoutube?: boolean;
 } | null) {
-  if (track?.forceYoutube && track.youtubeId) return true;
-  if (isEngineCatalog(track) || track?.bandcampId) return false;
-  if (track?.tags?.includes("SoundCloud")) return false;
-  if (!track?.youtubeId) return false;
-  if (track.format === "YT" || (track.url || "").startsWith("yt:")) return true;
-  const src = track.previewUrl || track.url || "";
-  if (src && /^https?:/i.test(src) && !isPreviewClip(src, track.durationSec, { archiveId: track.archiveId, bandcampId: track.bandcampId })) {
-    return false;
-  }
-  return true;
+  return false;
 }
