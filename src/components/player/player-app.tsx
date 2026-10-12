@@ -31,7 +31,7 @@ import { RecentPage } from "./recent-page";
 import { SearchPage } from "./search-page";
 import { Sidebar, MobileDock, type AppView } from "./sidebar";
 import { StatsPage } from "./stats-page";
-import { YoutubeForm } from "./youtube-form";
+import { YoutubeMusicPanel } from "./youtube-music-panel";
 import { YoutubeStage } from "./youtube-stage";
 import {
   applyEq,
@@ -437,11 +437,7 @@ export function PlayerApp() {
           {view === "liked" ? <Library startTab="liked" /> : null}
           {view === "radio" ? <RadioPage /> : null}
           {view === "search" ? <SearchPage query={query} onQuery={setQuery} /> : null}
-          {view === "youtube" ? (
-            <div className="space-y-4 px-5 py-4">
-              <YoutubeForm />
-            </div>
-          ) : null}
+          {view === "youtube" ? <YoutubeMusicPanel /> : null}
           {view === "ibroadcast" ? <IbroadcastPanel /> : null}
           {view === "deezer" ? <DeezerPanel /> : null}
           {view === "spotify" ? <SpotifyPanel /> : null}
@@ -483,8 +479,9 @@ export function PlayerApp() {
               {notice ? <p className="text-sm text-muted">{notice}</p> : null}
             </div>
           ) : null}
-          <div className={view === "youtube" ? "px-5 pb-28" : ""}>
-            <YoutubeStage active={(view === "youtube" || Boolean(track?.forceYoutube)) && Boolean(track?.youtubeId)} />
+          {/* YouTube iframe stage disabled — audio plays through the engine for EQ */}
+          <div className="hidden">
+            <YoutubeStage active={false} />
           </div>
         </main>
         <MiniPlayer
