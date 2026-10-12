@@ -39,11 +39,17 @@ export function IbroadcastPanel() {
   const [remote, setRemote] = useState<IbTrack[]>([]);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("albums");
+  const [loadingLib, setLoadingLib] = useState(false);
 
   useEffect(() => {
     const existing = loadIbSession();
     setSession(existing);
-    if (existing) void refreshLibrary(existing);
+    if (existing) {
+      setLoadingLib(true);
+      void refreshLibrary(existing)
+        .catch((err) => setMessage(err instanceof Error ? err.message : "Could not load library."))
+        .finally(() => setLoadingLib(false));
+    }
   }, []);
 
   const haveIds = useMemo(
@@ -100,9 +106,27 @@ export function IbroadcastPanel() {
 
   const refreshLibrary = async (sess: IbSession) => {
     const lib = await ibLibrary({ data: sess });
-    setPlaylists(lib.playlists);
-    setRemote(lib.tracks);
+    setPlaylists(lib.playlists || []);
+    setRemote(lib.tracks || []);
     return lib;
+  };
+
+  const loadLibrary = async () => {
+    const current = loadIbSession();
+    if (!current) {
+      setMessage("Sign in first.");
+      return;
+    }
+    setLoadingLib(true);
+    setMessage(null);
+    try {
+      const lib = await refreshLibrary(current);
+      setMessage(`Loaded ${lib.total || lib.tracks.length} tracks from iBroadcast.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not load library.");
+    } finally {
+      setLoadingLib(false);
+    }
   };
 
   const signIn = async () => {
@@ -113,8 +137,13 @@ export function IbroadcastPanel() {
       saveIbSession(next);
       setSession(next);
       setPassword("");
-      const lib = await refreshLibrary(next);
-      setMessage(`Signed in. ${lib.total} tracks in your iBroadcast library — search or add below.`);
+      setLoadingLib(true);
+      try {
+        const lib = await refreshLibrary(next);
+        setMessage(`Signed in. ${lib.total} tracks in your iBroadcast library — search or add below.`);
+      } finally {
+        setLoadingLib(false);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -151,7 +180,6 @@ export function IbroadcastPanel() {
     const toAdd = items.filter((t) => t?.id && !existing.has(t.id));
     const playList: string[] = [];
 
-    // Already in library — collect for play
     for (const item of items) {
       const found = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
       if (found) playList.push(found.id);
@@ -188,7 +216,6 @@ export function IbroadcastPanel() {
 
     if (toAdd.length) await hydrate();
 
-    // Ensure runtime fields are set after hydrate
     for (const item of toAdd) {
       const row = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
       if (row) {
@@ -220,11 +247,7 @@ export function IbroadcastPanel() {
     }
   };
 
-  const addAlbum = async (
-    albumTracks: IbTrack[],
-    label: string,
-    play: boolean,
-  ) => {
+  const addAlbum = async (albumTracks: IbTrack[], label: string, play: boolean) => {
     setAdding(label);
     setMessage(null);
     try {
@@ -296,6 +319,14 @@ export function IbroadcastPanel() {
             {remote.length} tracks in iBroadcast · {ibCount} already in Sondergram
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || loadingLib}
+              onClick={() => void loadLibrary()}
+              className="h-9 rounded-full bg-raised px-4 text-sm disabled:opacity-40"
+            >
+              {loadingLib ? "Loading…" : "Load / refresh library"}
+            </button>
             <button
               type="button"
               disabled={busy}
@@ -370,35 +401,49 @@ export function IbroadcastPanel() {
         </form>
       )}
 
-      {session && remote.length > 0 ? (
+      {session ? (
         <div className="space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
-              <input
-                className="h-11 w-full rounded-full bg-raised pl-10 pr-4 text-sm text-fg outline-none placeholder:text-subtle"
-                value={query}
-                placeholder="Search your iBroadcast library…"
-                onChange={(e) => setQuery(e.target.value)}
-              />
+          <div className="rounded-xl border border-white/10 bg-surface p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-subtle">Search your library</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+                <input
+                  className="h-11 w-full rounded-full bg-raised pl-10 pr-4 text-sm text-fg outline-none placeholder:text-subtle"
+                  value={query}
+                  placeholder="Search songs, artists, albums…"
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-1 rounded-full bg-raised p-1">
+                {(["albums", "tracks", "playlists"] as const).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setTab(id)}
+                    className={`h-8 rounded-full px-3 text-xs font-medium capitalize ${
+                      tab === id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg"
+                    }`}
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex gap-1 rounded-full bg-raised p-1">
-              {(["albums", "tracks", "playlists"] as const).map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setTab(id)}
-                  className={`h-8 rounded-full px-3 text-xs font-medium capitalize ${
-                    tab === id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg"
-                  }`}
-                >
-                  {id}
-                </button>
-              ))}
-            </div>
+            {loadingLib ? (
+              <p className="mt-2 text-xs text-muted">Loading your iBroadcast library…</p>
+            ) : remote.length === 0 ? (
+              <p className="mt-2 text-xs text-muted">
+                No tracks loaded yet. Click <span className="text-fg">Load / refresh library</span> above.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-subtle">
+                {remote.length} tracks ready · {albums.length} albums in view
+              </p>
+            )}
           </div>
 
-          {tab === "albums" ? (
+          {tab === "albums" && remote.length > 0 ? (
             <ul className="grid gap-3 sm:grid-cols-2">
               {albums.slice(0, 60).map((album) => {
                 const missing = album.tracks.filter((t) => !haveIds.has(t.id)).length;
@@ -446,7 +491,7 @@ export function IbroadcastPanel() {
             </ul>
           ) : null}
 
-          {tab === "tracks" ? (
+          {tab === "tracks" && remote.length > 0 ? (
             <ul className="divide-y divide-border rounded-xl bg-surface">
               {filteredTracks.slice(0, 80).map((track) => {
                 const inLib = haveIds.has(track.id);
@@ -492,7 +537,7 @@ export function IbroadcastPanel() {
             </ul>
           ) : null}
 
-          {tab === "playlists" ? (
+          {tab === "playlists" && remote.length > 0 ? (
             <ul className="grid gap-2 sm:grid-cols-2">
               {filteredPlaylists.map((pl) => {
                 const plTracks = pl.trackIds
@@ -531,13 +576,13 @@ export function IbroadcastPanel() {
             </ul>
           ) : null}
 
-          {tab === "albums" && albums.length === 0 ? (
+          {tab === "albums" && remote.length > 0 && albums.length === 0 ? (
             <p className="text-sm text-muted">No albums match that search.</p>
           ) : null}
-          {tab === "tracks" && filteredTracks.length === 0 ? (
+          {tab === "tracks" && remote.length > 0 && filteredTracks.length === 0 ? (
             <p className="text-sm text-muted">No tracks match that search.</p>
           ) : null}
-          {tab === "playlists" && filteredPlaylists.length === 0 ? (
+          {tab === "playlists" && remote.length > 0 && filteredPlaylists.length === 0 ? (
             <p className="text-sm text-muted">No playlists match that search.</p>
           ) : null}
         </div>
