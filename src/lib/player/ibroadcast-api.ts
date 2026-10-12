@@ -3,16 +3,18 @@ import type { IbPlaylist, IbSession, IbTrack } from "./ibroadcast";
 
 const CLIENT = "Sondergram";
 const VERSION = "1.0";
+const DEVICE = "Sondergram Web";
 
 type Json = Record<string, unknown>;
 
-async function postJson(url: string, body: Json): Promise<Json> {
+async function postJson(url: string, body: Json, headers: Record<string, string> = {}): Promise<Json> {
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
       "User-Agent": `${CLIENT}/${VERSION}`,
+      ...headers,
     },
     body: JSON.stringify(body),
   });
@@ -21,10 +23,13 @@ async function postJson(url: string, body: Json): Promise<Json> {
   try {
     parsed = JSON.parse(text) as Json;
   } catch {
-    throw new Error(text.slice(0, 180) || `iBroadcast ${url} did not return JSON.`);
+    throw new Error(text.slice(0, 220) || `iBroadcast ${url} did not return JSON (HTTP ${res.status}).`);
   }
   if (parsed.result === false || parsed.authenticated === false) {
-    throw new Error(str(parsed.message) || "iBroadcast rejected the request.");
+    throw new Error(str(parsed.message) || `iBroadcast rejected the request (HTTP ${res.status}).`);
+  }
+  if (!res.ok && parsed.result !== true) {
+    throw new Error(str(parsed.message) || `iBroadcast HTTP ${res.status}.`);
   }
   return parsed;
 }
@@ -101,21 +106,106 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
     name: str(row.name) || "Playlist",
     trackIds: Array.isArray(row.tracks) ? row.tracks.map((t) => str(t)) : [],
   }));
-  return { tracks: tracks.slice(0, 800), playlists, total: tracks.length };
+  return { tracks: tracks.slice(0, 2000), playlists, total: tracks.length };
 }
 
 function authBody(session: IbSession, mode: string, extra: Json = {}): Json {
+  const uid = Number(session.userId) || session.userId;
   return {
     _token: session.token,
-    _userid: Number(session.userId) || session.userId,
-    user_id: Number(session.userId) || session.userId,
+    _userid: uid,
+    user_id: uid,
     token: session.token,
     client: CLIENT,
     version: VERSION,
+    device_name: DEVICE,
+    user_agent: `${CLIENT}/${VERSION}`,
     mode,
     supported_types: false,
     ...extra,
   };
+}
+
+async function fetchLibraryOnce(session: IbSession): Promise<{ tracks: IbTrack[]; playlists: IbPlaylist[]; total: number }> {
+  const errors: string[] = [];
+
+  // Classic library server (email/password token style)
+  try {
+    const raw = await postJson("https://library.ibroadcast.com/", {
+      ...authBody(session, "library"),
+      url: "//library.ibroadcast.com",
+    });
+    const parsed = parseLibrary(raw);
+    if (parsed.total > 0) return parsed;
+    errors.push("library.ibroadcast.com returned 0 tracks");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "library.ibroadcast.com failed");
+  }
+
+  // Same host without trailing slash
+  try {
+    const raw = await postJson("https://library.ibroadcast.com", {
+      ...authBody(session, "library"),
+      url: "//library.ibroadcast.com",
+    });
+    const parsed = parseLibrary(raw);
+    if (parsed.total > 0) return parsed;
+    errors.push("library.ibroadcast.com (no slash) returned 0 tracks");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "library.ibroadcast.com (no slash) failed");
+  }
+
+  // API JSON library endpoint
+  try {
+    const raw = await postJson("https://api.ibroadcast.com/s/JSON/library", {
+      ...authBody(session, "library"),
+      url: "//api.ibroadcast.com/s/JSON/library",
+    });
+    const parsed = parseLibrary(raw);
+    if (parsed.total > 0) return parsed;
+    errors.push("api library returned 0 tracks");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "api library failed");
+  }
+
+  // Bearer-style (newer clients)
+  try {
+    const raw = await postJson(
+      "https://library.ibroadcast.com/",
+      {
+        mode: "library",
+        client: CLIENT,
+        version: VERSION,
+        device_name: DEVICE,
+        user_agent: `${CLIENT}/${VERSION}`,
+      },
+      { Authorization: `Bearer ${session.token}` },
+    );
+    const parsed = parseLibrary(raw);
+    if (parsed.total > 0) return parsed;
+    errors.push("Bearer library returned 0 tracks");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "Bearer library failed");
+  }
+
+  // Last attempt: status endpoint sometimes embeds library snapshot
+  try {
+    const status = await postJson("https://api.ibroadcast.com/s/JSON/status", {
+      mode: "status",
+      ...authBody(session, "status"),
+      url: "//api.ibroadcast.com/s/JSON/status",
+    });
+    if (status.library) {
+      const parsed = parseLibrary(status);
+      if (parsed.total > 0) return parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  throw new Error(
+    `Could not load iBroadcast library. ${errors.slice(0, 3).join(" · ") || "Unknown error."} Try signing out and back in.`,
+  );
 }
 
 export const ibLogin = createServerFn({ method: "POST" })
@@ -130,6 +220,8 @@ export const ibLogin = createServerFn({ method: "POST" })
       password,
       version: VERSION,
       client: CLIENT,
+      device_name: DEVICE,
+      user_agent: `${CLIENT}/${VERSION}`,
       supported_types: 1,
     });
     const user = status.user as Json | undefined;
@@ -152,28 +244,10 @@ export const ibLogin = createServerFn({ method: "POST" })
 export const ibLibrary = createServerFn({ method: "POST" })
   .validator((d: IbSession) => d)
   .handler(async ({ data }) => {
-    let parsed = parseLibrary(
-      await postJson("https://library.ibroadcast.com", {
-        ...authBody(data, "library"),
-        url: "//library.ibroadcast.com",
-      }),
-    );
-    if (parsed.total === 0) {
-      try {
-        parsed = parseLibrary(
-          await postJson("https://api.ibroadcast.com/s/JSON/library", {
-            ...authBody(data, "library"),
-            url: "//api.ibroadcast.com/s/JSON/library",
-          }),
-        );
-      } catch {
-        /* keep the first empty result */
-      }
+    if (!data?.token || !data?.userId) {
+      throw new Error("Missing iBroadcast session. Sign in again.");
     }
-    if (parsed.total === 0) {
-      throw new Error("Signed in, but iBroadcast returned no tracks. Try Sync library again.");
-    }
-    return parsed;
+    return fetchLibraryOnce(data);
   });
 
 export const ibSharePlaylist = createServerFn({ method: "POST" })
