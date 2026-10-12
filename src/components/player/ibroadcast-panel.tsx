@@ -16,6 +16,17 @@ function albumKey(t: IbTrack) {
   return `${(t.artist || "").toLowerCase()}|||${(t.album || "").toLowerCase()}`;
 }
 
+function errText(err: unknown, fallback: string) {
+  if (err instanceof Error) {
+    const debug = "debug" in err ? String((err as { debug?: string }).debug || "") : "";
+    return debug ? `${err.message} (${debug})` : err.message;
+  }
+  if (typeof err === "object" && err && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return fallback;
+}
+
 export function IbroadcastPanel() {
   const tracks = usePlayer((s) => s.tracks);
   const index = usePlayer((s) => s.index);
@@ -47,7 +58,7 @@ export function IbroadcastPanel() {
     if (existing) {
       setLoadingLib(true);
       void refreshLibrary(existing)
-        .catch((err) => setMessage(err instanceof Error ? err.message : "Could not load library."))
+        .catch((err) => setMessage(errText(err, "Could not load library.")))
         .finally(() => setLoadingLib(false));
     }
   }, []);
@@ -108,6 +119,11 @@ export function IbroadcastPanel() {
     const lib = await ibLibrary({ data: sess });
     setPlaylists(lib.playlists || []);
     setRemote(lib.tracks || []);
+    if ("ok" in lib && lib.ok === false) {
+      const err = new Error(lib.error || "Could not load library.");
+      (err as Error & { debug?: string }).debug = lib.debug;
+      throw err;
+    }
     return lib;
   };
 
@@ -121,9 +137,10 @@ export function IbroadcastPanel() {
     setMessage(null);
     try {
       const lib = await refreshLibrary(current);
-      setMessage(`Loaded ${lib.total || lib.tracks.length} tracks from iBroadcast.`);
+      const total = "total" in lib ? lib.total : lib.tracks?.length || 0;
+      setMessage(`Loaded ${total} tracks from iBroadcast.`);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not load library.");
+      setMessage(errText(err, "Could not load library."));
     } finally {
       setLoadingLib(false);
     }
@@ -140,12 +157,15 @@ export function IbroadcastPanel() {
       setLoadingLib(true);
       try {
         const lib = await refreshLibrary(next);
-        setMessage(`Signed in. ${lib.total} tracks in your iBroadcast library — search or add below.`);
+        const total = "total" in lib ? lib.total : 0;
+        setMessage(`Signed in. ${total} tracks in your iBroadcast library — search or add below.`);
+      } catch (err) {
+        setMessage(errText(err, "Signed in, but library failed to load.") + " Try Load / refresh library.");
       } finally {
         setLoadingLib(false);
       }
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Sign-in failed.");
+      setMessage(errText(err, "Sign-in failed."));
     } finally {
       setBusy(false);
     }
@@ -167,7 +187,7 @@ export function IbroadcastPanel() {
         setMessage(n ? `Added ${n} tracks.` : "Library is already up to date.");
       }
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Sync failed.");
+      setMessage(errText(err, "Sync failed."));
     } finally {
       setBusy(false);
     }
@@ -241,7 +261,7 @@ export function IbroadcastPanel() {
       setMessage(play ? "Playing from iBroadcast." : n ? "Added song to Sondergram." : "Already in your library.");
       flash(play ? "Playing from iBroadcast." : n ? "Added iBroadcast song." : "Already in library.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not add song.");
+      setMessage(errText(err, "Could not add song."));
     } finally {
       setAdding(null);
     }
@@ -261,7 +281,7 @@ export function IbroadcastPanel() {
       );
       flash(play ? "Playing album." : n ? `Added album “${label}”.` : "Album already in library.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not add album.");
+      setMessage(errText(err, "Could not add album."));
     } finally {
       setAdding(null);
     }
@@ -280,7 +300,7 @@ export function IbroadcastPanel() {
       await navigator.clipboard?.writeText(url);
       setMessage("Share link copied.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not share.");
+      setMessage(errText(err, "Could not share."));
     } finally {
       setBusy(false);
     }
@@ -296,7 +316,7 @@ export function IbroadcastPanel() {
       importIbPlaylist(id, playlists, remote);
       setMessage("Playlist queued.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not open that playlist.");
+      setMessage(errText(err, "Could not open that playlist."));
     }
   };
 
@@ -434,7 +454,8 @@ export function IbroadcastPanel() {
               <p className="mt-2 text-xs text-muted">Loading your iBroadcast library…</p>
             ) : remote.length === 0 ? (
               <p className="mt-2 text-xs text-muted">
-                No tracks loaded yet. Click <span className="text-fg">Load / refresh library</span> above.
+                No tracks loaded yet. Click <span className="text-fg">Load / refresh library</span> above, or sign out and
+                sign in again.
               </p>
             ) : (
               <p className="mt-2 text-xs text-subtle">
@@ -612,7 +633,7 @@ export function IbroadcastPanel() {
           </a>
         </p>
       ) : null}
-      {message ? <p className="text-sm text-muted">{message}</p> : null}
+      {message ? <p className="max-w-2xl break-words text-sm text-muted">{message}</p> : null}
 
       {ibTracks.length > 0 ? (
         <div>
