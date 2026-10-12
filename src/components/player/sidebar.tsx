@@ -55,7 +55,7 @@ const TOP: { id: AppView; label: string; icon: typeof Library }[] = [
 
 const SOURCES: { id: AppView; label: string; icon: typeof Library }[] = [
   { id: "ibroadcast", label: "iBroadcast", icon: Cloud },
-  { id: "youtube", label: "YouTube", icon: Youtube },
+  { id: "youtube", label: "YouTube Music", icon: Youtube },
   { id: "spotify", label: "Spotify", icon: AudioLines },
   { id: "deezer", label: "Deezer", icon: AudioLines },
   { id: "amazon", label: "Amazon", icon: AudioLines },
