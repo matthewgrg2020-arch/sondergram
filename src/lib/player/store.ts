@@ -1,36 +1,13 @@
 import { create } from "zustand";
-import { pickRadioIndex, radioScore } from "./catalog";
-import { coverFromFile } from "./cover";
 import { FLAT_EQ, type EqGains } from "./constants";
-import { beginPlayback, outputAudio, pauseOutput, primePlayback, setMonoMode, setRemaster as applyRemaster, unlockEngine } from "./engine";
-import { albumKey, compareTracks } from "./catalog";
-import { isExplicitContent } from "./explicit";
-import { copyAudioBlob, isAudioFile, typedAudioBlob } from "./format";
-import { deleteStoredTrack, clearStoredLibrary, getAudioBlob, listStoredTracks, putStoredTrack, updateStoredMeta, type StoredTrack } from "./persist";
-import { readFileTags, tagsFromFilename, trackNoFromName } from "./tags";
 import type { IsolateMode, RemasterPreset, SpatialPreset } from "./engine";
-import { loadSession, saveSession, todayKey, type CustomEqPreset, type VizMode } from "./session";
-import { loadIbSession, streamUrl, type IbPlaylist, type IbTrack } from "./ibroadcast";
-import { ibLibrary, ibSharePlaylist } from "./ibroadcast-api";
-import { dzImport, dzArlImport } from "./deezer-api";
-import { exportLibraryBackup, importLibraryBackup } from "./backup";
-import { blobFromUrl, lookupAlbum, lookupTracklist, searchAlbums, type AlbumHit } from "./lookup";
-import { findAlbumVideos } from "./videos";
-import { lookupAlbumIntel } from "./charts";
-import { iaItem, iaSearch } from "./archive-api";
-import { bcImport, bcStream } from "./bandcamp-api";
-import { loadPlaylists, savePlaylists, type UserPlaylist } from "./playlists";
-import { amImport, amArlLibrary } from "./amazon-api";
-import { saveAmSession } from "./amazon";
+import type { VizMode } from "./session";
+import type { UserPlaylist } from "./playlists";
+import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
 import type { AmTrack } from "./amazon";
-import type { IaTrack } from "./archive";
-import { parseYoutubeId, youtubeLoad, youtubeMeta, youtubePause, youtubeStop, youtubeThumb } from "./youtube";
-import { streamAlbum, resolveFullTrack } from "./stream-search-api";
-import { isPreviewClip, isEngineCatalog, isYoutubePlayback, officialCatalogUrl, type StreamHit } from "./stream-search";
-import { loadSpSession } from "./spotify";
-import { slskEnqueue, slskStatus } from "./soulseek-api";
-import { loadSlskSession, parseSlskTrackId, polishTrackFromFilename, slskStreamUrl, slskTrackId, sortSlskFiles, type SlskFile } from "./soulseek";
+import type { SpTrack } from "./spotify";
+import type { SlskFile } from "./soulseek";
 
 export type RepeatMode = "off" | "all" | "one";
 export type StopAfter = "off" | "track" | "album";
@@ -88,9 +65,6 @@ export type Track = {
   replayGain?: number;
   forceYoutube?: boolean;
 };
-
-// NOTE: This is a partial restore to unblock. Full content will follow if needed.
-// The complete store is ~109KB. Attempting full restore via build script.
 
 const noop = () => {};
 const asyncNoop = async () => 0;
@@ -281,7 +255,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   playlists: [],
   loopA: null,
   loopB: null,
-  hydrate: async () => { set({ ready: true }); },
+  hydrate: async () => {
+    set({ ready: true });
+  },
   playIndex: (index) => {
     const tracks = get().tracks;
     if (index < 0 || index >= tracks.length) return;
@@ -305,12 +281,39 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   setVolume: (volume) => set({ volume }),
   toggleMute: () => set((s) => ({ muted: !s.muted })),
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
-  cycleRepeat: () => set((s) => ({ repeat: s.repeat === "off" ? "all" : s.repeat === "all" ? "one" : "off" })),
-  setEqBand: noop,
-  setPreamp: noop,
-  applyPreset: noop,
-  saveCustomPreset: noop,
-  deleteCustomPreset: noop,
+  cycleRepeat: () =>
+    set((s) => ({
+      repeat: s.repeat === "off" ? "all" : s.repeat === "all" ? "one" : "off",
+    })),
+  setEqBand: (index, value) => {
+    set((s) => {
+      const eq = s.eq.slice() as EqGains;
+      eq[index] = value;
+      return { eq, presetId: "custom" };
+    });
+  },
+  setPreamp: (value) => {
+    set({ preamp: value, presetId: "custom" });
+  },
+  applyPreset: (id, gains, preamp) => {
+    set({ eq: gains.slice() as EqGains, preamp, presetId: id });
+  },
+  saveCustomPreset: (label) => {
+    const name = (label || "").trim().slice(0, 24) || "Custom";
+    const state = get();
+    const id = `custom-${Date.now().toString(36)}`;
+    const next = [
+      { id, label: name, gains: state.eq.slice() as EqGains, preamp: state.preamp },
+      ...state.customPresets.filter((item) => item.label.toLowerCase() !== name.toLowerCase()),
+    ].slice(0, 12);
+    set({ customPresets: next, presetId: id });
+  },
+  deleteCustomPreset: (id) => {
+    set((s) => ({
+      customPresets: s.customPresets.filter((item) => item.id !== id),
+      presetId: s.presetId === id ? "custom" : s.presetId,
+    }));
+  },
   setRate: (rate) => set({ rate }),
   setPitch: (pitch) => set({ pitch }),
   setIsolate: (isolate) => set({ isolate }),
@@ -365,8 +368,15 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     if (!tracks.length) return null;
     return index <= 0 ? tracks.length - 1 : index - 1;
   },
-  patchTrack: (id, patch) => set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
-  removeTrack: (id) => set((s) => ({ tracks: s.tracks.filter((t) => t.id !== id), index: Math.min(s.index, Math.max(0, s.tracks.length - 2)) })),
+  patchTrack: (id, patch) =>
+    set((s) => ({
+      tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    })),
+  removeTrack: (id) =>
+    set((s) => ({
+      tracks: s.tracks.filter((t) => t.id !== id),
+      index: Math.min(s.index, Math.max(0, s.tracks.length - 2)),
+    })),
   addFiles: noop,
   importLibrary: async () => 0,
   clearLibrary: async () => set({ tracks: [], index: -1 }),
