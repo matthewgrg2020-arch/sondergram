@@ -204,19 +204,37 @@ function applyOutputGain() {
 
 function proxyStreamUrl(url: string) {
   if (!url || url.startsWith("blob:") || url.startsWith("data:")) return url;
-  if (url.includes("/api/stream") || url.includes("/api/soulseek") || url.includes("proxy")) return url;
-}
-
-function graphOnly(url: string) {
-  return url.includes("/api/soulseek");
+  if (url.startsWith("/api/stream") || url.startsWith("/api/soulseek")) return url;
+  if (url.includes("/api/stream?") || url.includes("/api/soulseek?")) return url;
+  // Same-origin app paths do not need proxying
+  if (url.startsWith("/") && !url.startsWith("//")) return url;
   try {
     const u = new URL(url, typeof location !== "undefined" ? location.href : "https://sondergram.vercel.app");
     if (u.protocol !== "http:" && u.protocol !== "https:") return url;
-    // Must use ?u= — /api/stream reads searchParams.get("u")
-    return `/api/stream?u=${encodeURIComponent(url)}`;
+    // Same origin already fine for MediaElementSource
+    if (typeof location !== "undefined" && u.origin === location.origin) return url;
+    // Route remote streams through our proxy so CORS + EQ (Web Audio) work
+    return `/api/stream?u=${encodeURIComponent(u.toString())}`;
   } catch {
     return url;
   }
+}
+
+/** Force Web Audio graph for sources that must not fall back to plain HTML audio */
+function graphOnly(url: string) {
+  return (
+    url.includes("/api/soulseek") ||
+    url.includes("/api/stream") ||
+    url.includes("bcbits.com") ||
+    url.includes("bandcamp.com") ||
+    url.includes("amazon") ||
+    url.includes("cloudfront.net") ||
+    url.includes("mzstatic.com") ||
+    url.includes("deezer") ||
+    url.includes("dzcdn") ||
+    url.includes("sndcdn.com") ||
+    url.includes("soundcloud")
+  );
 }
 
 function isRemoteUrl(url: string) {
@@ -440,7 +458,7 @@ export function applyEq(gains: number[]) {
   for (let i = 0; i < n; i++) {
     filters[i].gain.value = finite(gains[i], 0);
   }
-  if ((dspActive() || (lastPlayUrl || "").includes("/api/soulseek")) && engine && !engine.graphActive) {
+  if ((dspActive() || (lastPlayUrl || "").includes("/api/soulseek") || (lastPlayUrl || "").includes("/api/stream")) && engine && !engine.graphActive) {
     setBackgroundOutput(false);
   }
 }
