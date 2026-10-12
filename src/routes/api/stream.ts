@@ -32,7 +32,19 @@ function allowedHost(host: string) {
     h.endsWith(".youtube.com") ||
     h.includes("piped") ||
     h.includes("invidious") ||
-    h.includes("nadeko")
+    h.includes("nadeko") ||
+    // Amazon Music / Amazon CDN
+    h === "amazon.com" ||
+    h.endsWith(".amazon.com") ||
+    h === "music.amazon.com" ||
+    h.endsWith(".music.amazon.com") ||
+    h.endsWith(".media-amazon.com") ||
+    h === "media-amazon.com" ||
+    h.endsWith(".ssl-images-amazon.com") ||
+    h.endsWith(".images-amazon.com") ||
+    h.endsWith(".cloudfront.net") ||
+    h.endsWith(".amazonaws.com") ||
+    h.includes("amazon")
   );
 }
 
@@ -55,6 +67,7 @@ function refererFor(url: URL) {
   if (h.endsWith(".scdn.co") || h.endsWith(".spotifycdn.com")) return "https://open.spotify.com/";
   if (h.endsWith(".soundcloud.com") || h.endsWith(".sndcdn.com") || h === "soundcloud.com" || h === "api-v2.soundcloud.com") return "https://soundcloud.com/";
   if (h.endsWith(".googlevideo.com") || h.endsWith(".youtube.com") || h.includes("piped")) return "https://www.youtube.com/";
+  if (h.includes("amazon") || h.endsWith(".cloudfront.net") || h.endsWith(".amazonaws.com")) return "https://music.amazon.com/";
   return url.origin + "/";
 }
 
@@ -76,12 +89,15 @@ async function proxy(request: Request) {
     Accept: "audio/*,*/*;q=0.8",
     "User-Agent": UA,
     Referer:
-      ref.startsWith("https://") && (/bandcamp\.com/i.test(ref) || /soundcloud\.com/i.test(ref))
+      ref.startsWith("https://") && (/bandcamp\.com/i.test(ref) || /soundcloud\.com/i.test(ref) || /amazon/i.test(ref))
         ? ref
         : refererFor(url),
   };
   if (url.hostname.toLowerCase().endsWith(".googlevideo.com") || url.hostname.toLowerCase().endsWith(".youtube.com")) {
     headers.Origin = "https://www.youtube.com";
+  }
+  if (url.hostname.toLowerCase().includes("amazon") || url.hostname.toLowerCase().endsWith(".cloudfront.net")) {
+    headers.Origin = "https://music.amazon.com";
   }
   const range = request.headers.get("Range");
   if (range) headers.Range = range;
