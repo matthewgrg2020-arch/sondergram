@@ -1,32 +1,109 @@
-import { Cloud, Link2, LogOut } from "lucide-react";
-import { useEffect, useState } from "react";
-import { loadIbSession, parseSharePlaylist, saveIbSession, type IbPlaylist, type IbSession, type IbTrack } from "@/lib/player/ibroadcast";
+import { Cloud, Link2, LoaderCircle, LogOut, Play, Plus, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  loadIbSession,
+  parseSharePlaylist,
+  saveIbSession,
+  type IbPlaylist,
+  type IbSession,
+  type IbTrack,
+} from "@/lib/player/ibroadcast";
 import { ibLibrary, ibLogin } from "@/lib/player/ibroadcast-api";
+import { putStoredTrack } from "@/lib/player/persist";
 import { usePlayer } from "@/lib/player/store";
+
+function albumKey(t: IbTrack) {
+  return `${(t.artist || "").toLowerCase()}|||${(t.album || "").toLowerCase()}`;
+}
 
 export function IbroadcastPanel() {
   const tracks = usePlayer((s) => s.tracks);
   const index = usePlayer((s) => s.index);
   const upNext = usePlayer((s) => s.upNext);
+  const hydrate = usePlayer((s) => s.hydrate);
+  const playIds = usePlayer((s) => s.playIds);
+  const flash = usePlayer((s) => s.flash);
   const syncIbroadcast = usePlayer((s) => s.syncIbroadcast);
   const shareIbroadcast = usePlayer((s) => s.shareIbroadcast);
   const importIbPlaylist = usePlayer((s) => s.importIbPlaylist);
+
   const [session, setSession] = useState<IbSession | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [paste, setPaste] = useState("");
   const [playlists, setPlaylists] = useState<IbPlaylist[]>([]);
   const [remote, setRemote] = useState<IbTrack[]>([]);
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("albums");
 
   useEffect(() => {
-    setSession(loadIbSession());
+    const existing = loadIbSession();
+    setSession(existing);
+    if (existing) void refreshLibrary(existing);
   }, []);
+
+  const haveIds = useMemo(
+    () => new Set(tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]),
+    [tracks],
+  );
 
   const ibTracks = tracks.filter((t) => t.ibroadcastId);
   const ibCount = ibTracks.length;
+
+  const filteredTracks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return remote;
+    return remote.filter(
+      (t) =>
+        t.name.toLowerCase().includes(q) ||
+        t.artist.toLowerCase().includes(q) ||
+        t.album.toLowerCase().includes(q) ||
+        (t.genre || "").toLowerCase().includes(q),
+    );
+  }, [remote, query]);
+
+  const albums = useMemo(() => {
+    const map = new Map<
+      string,
+      { key: string; artist: string; album: string; year: string; artwork: string; tracks: IbTrack[] }
+    >();
+    for (const t of filteredTracks) {
+      const key = albumKey(t);
+      const row = map.get(key);
+      if (row) {
+        row.tracks.push(t);
+        if (!row.artwork && t.artwork) row.artwork = t.artwork;
+        if (!row.year && t.year) row.year = t.year;
+      } else {
+        map.set(key, {
+          key,
+          artist: t.artist || "Unknown artist",
+          album: t.album || "Unknown album",
+          year: t.year || "",
+          artwork: t.artwork || "",
+          tracks: [t],
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
+  }, [filteredTracks]);
+
+  const filteredPlaylists = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return playlists;
+    return playlists.filter((p) => p.name.toLowerCase().includes(q));
+  }, [playlists, query]);
+
+  const refreshLibrary = async (sess: IbSession) => {
+    const lib = await ibLibrary({ data: sess });
+    setPlaylists(lib.playlists);
+    setRemote(lib.tracks);
+    return lib;
+  };
 
   const signIn = async () => {
     setBusy(true);
@@ -36,15 +113,8 @@ export function IbroadcastPanel() {
       saveIbSession(next);
       setSession(next);
       setPassword("");
-      const lib = await ibLibrary({ data: next });
-      setPlaylists(lib.playlists);
-      setRemote(lib.tracks);
-      const added = await syncIbroadcast();
-      setMessage(
-        added
-          ? `Synced ${added} tracks. They’re on Home and in Library.`
-          : `Signed in. ${lib.total} tracks were already in Sondergram.`,
-      );
+      const lib = await refreshLibrary(next);
+      setMessage(`Signed in. ${lib.total} tracks in your iBroadcast library — search or add below.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -52,21 +122,125 @@ export function IbroadcastPanel() {
     }
   };
 
-  const sync = async () => {
+  const syncAll = async () => {
     setBusy(true);
     setMessage(null);
     try {
       const current = loadIbSession();
       if (!current) throw new Error("Sign in first.");
-      const lib = await ibLibrary({ data: current });
-      setPlaylists(lib.playlists);
-      setRemote(lib.tracks);
-      const added = await syncIbroadcast();
-      setMessage(added ? `Added ${added} tracks.` : "Library is already up to date.");
+      await refreshLibrary(current);
+      if (syncIbroadcast) {
+        const added = await syncIbroadcast();
+        setMessage(added ? `Added ${added} tracks to Sondergram.` : "Library is already up to date.");
+      } else {
+        const missing = remote.filter((t) => !haveIds.has(t.id));
+        const n = await addIbTracks(missing, false);
+        setMessage(n ? `Added ${n} tracks.` : "Library is already up to date.");
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Sync failed.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const addIbTracks = async (items: IbTrack[], play: boolean) => {
+    const sessionNow = loadIbSession();
+    if (!sessionNow) throw new Error("Sign in first.");
+    const existing = new Set(usePlayer.getState().tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]);
+    const toAdd = items.filter((t) => t?.id && !existing.has(t.id));
+    const playList: string[] = [];
+
+    // Already in library — collect for play
+    for (const item of items) {
+      const found = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
+      if (found) playList.push(found.id);
+    }
+
+    for (let i = 0; i < toAdd.length; i++) {
+      const item = toAdd[i]!;
+      const id = crypto.randomUUID();
+      playList.push(id);
+      await putStoredTrack({
+        id,
+        name: item.name,
+        artist: item.artist,
+        album: item.album,
+        genre: item.genre || "iBroadcast",
+        tags: item.genre ? [item.genre, "iBroadcast"] : ["iBroadcast"],
+        year: item.year || "",
+        format: "IB",
+        sampleRate: null,
+        bitDepth: null,
+        bitrate: null,
+        channels: null,
+        lossless: false,
+        liked: false,
+        starred: false,
+        coverRemote: item.artwork || undefined,
+        ibroadcastId: item.id,
+        ibFile: item.file,
+        audio: new Blob([item.id], { type: "text/plain" }),
+        cover: null,
+        addedAt: Date.now() + i,
+      });
+    }
+
+    if (toAdd.length) await hydrate();
+
+    // Ensure runtime fields are set after hydrate
+    for (const item of toAdd) {
+      const row = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
+      if (row) {
+        usePlayer.getState().patchTrack?.(row.id, {
+          url: `ib:${item.id}`,
+          ibFile: item.file,
+          coverUrl: item.artwork || row.coverUrl,
+          tags: item.genre ? [item.genre, "iBroadcast"] : ["iBroadcast"],
+          format: "IB",
+        });
+      }
+    }
+
+    if (play && playList.length) playIds(playList);
+    return toAdd.length;
+  };
+
+  const addSong = async (item: IbTrack, play: boolean) => {
+    setAdding(item.id);
+    setMessage(null);
+    try {
+      const n = await addIbTracks([item], play);
+      setMessage(play ? "Playing from iBroadcast." : n ? "Added song to Sondergram." : "Already in your library.");
+      flash(play ? "Playing from iBroadcast." : n ? "Added iBroadcast song." : "Already in library.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not add song.");
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  const addAlbum = async (
+    albumTracks: IbTrack[],
+    label: string,
+    play: boolean,
+  ) => {
+    setAdding(label);
+    setMessage(null);
+    try {
+      const n = await addIbTracks(albumTracks, play);
+      setMessage(
+        play
+          ? `Playing ${albumTracks.length} tracks.`
+          : n
+            ? `Added ${n} tracks from “${label}”.`
+            : `“${label}” is already in your library.`,
+      );
+      flash(play ? "Playing album." : n ? `Added album “${label}”.` : "Album already in library.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not add album.");
+    } finally {
+      setAdding(null);
     }
   };
 
@@ -75,7 +249,9 @@ export function IbroadcastPanel() {
     setMessage(null);
     try {
       const current = index >= 0 ? tracks[index] : undefined;
-      const ids = current ? [current.id, ...upNext] : tracks.filter((t) => t.ibroadcastId).slice(0, 40).map((t) => t.id);
+      const ids = current
+        ? [current.id, ...upNext]
+        : tracks.filter((t) => t.ibroadcastId).slice(0, 40).map((t) => t.id);
       const url = await shareIbroadcast("Sondergram mix", ids);
       setShareUrl(url);
       await navigator.clipboard?.writeText(url);
@@ -108,7 +284,7 @@ export function IbroadcastPanel() {
         iBroadcast
       </h2>
       <p className="max-w-xl text-sm leading-relaxed text-muted">
-        Sign in to stream your iBroadcast locker here, then share a public playlist of what’s playing.
+        Sign in to browse and search your iBroadcast library, then add any song or album into Sondergram.
       </p>
 
       {session ? (
@@ -116,15 +292,17 @@ export function IbroadcastPanel() {
           <p className="text-sm">
             Signed in as <span className="font-medium">{session.email}</span>
           </p>
-          <p className="mt-1 text-xs text-muted">{ibCount} iBroadcast tracks in Sondergram</p>
+          <p className="mt-1 text-xs text-muted">
+            {remote.length} tracks in iBroadcast · {ibCount} already in Sondergram
+          </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               disabled={busy}
-              onClick={() => void sync()}
+              onClick={() => void syncAll()}
               className="h-9 rounded-full bg-accent px-4 text-sm text-accent-fg disabled:opacity-40"
             >
-              {busy ? "Working…" : "Sync library"}
+              {busy ? "Working…" : "Sync entire library"}
             </button>
             <button
               type="button"
@@ -141,6 +319,8 @@ export function IbroadcastPanel() {
                 saveIbSession(null);
                 setSession(null);
                 setShareUrl(null);
+                setRemote([]);
+                setPlaylists([]);
               }}
               className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm text-muted hover:text-fg"
             >
@@ -189,6 +369,179 @@ export function IbroadcastPanel() {
           </p>
         </form>
       )}
+
+      {session && remote.length > 0 ? (
+        <div className="space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+              <input
+                className="h-11 w-full rounded-full bg-raised pl-10 pr-4 text-sm text-fg outline-none placeholder:text-subtle"
+                value={query}
+                placeholder="Search your iBroadcast library…"
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-1 rounded-full bg-raised p-1">
+              {(["albums", "tracks", "playlists"] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className={`h-8 rounded-full px-3 text-xs font-medium capitalize ${
+                    tab === id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg"
+                  }`}
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {tab === "albums" ? (
+            <ul className="grid gap-3 sm:grid-cols-2">
+              {albums.slice(0, 60).map((album) => {
+                const missing = album.tracks.filter((t) => !haveIds.has(t.id)).length;
+                return (
+                  <li key={album.key} className="flex gap-3 rounded-xl bg-surface p-3">
+                    <div className="size-16 shrink-0 overflow-hidden rounded-lg bg-raised">
+                      {album.artwork ? <img src={album.artwork} alt="" className="size-full object-cover" /> : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{album.album}</p>
+                      <p className="truncate text-xs text-muted">{album.artist}</p>
+                      <p className="text-[11px] text-subtle">
+                        {album.tracks.length} tracks
+                        {album.year ? ` · ${album.year}` : ""}
+                        {missing === 0 ? " · in library" : missing < album.tracks.length ? ` · ${missing} new` : ""}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          disabled={adding === album.key}
+                          onClick={() => void addAlbum(album.tracks, album.album, true)}
+                          className="inline-flex h-7 items-center gap-1 rounded-full bg-accent px-2.5 text-[11px] text-accent-fg disabled:opacity-40"
+                        >
+                          {adding === album.key ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : (
+                            <Play className="size-3" strokeWidth={2} />
+                          )}
+                          Play
+                        </button>
+                        <button
+                          type="button"
+                          disabled={adding === album.key || missing === 0}
+                          onClick={() => void addAlbum(album.tracks, album.album, false)}
+                          className="inline-flex h-7 items-center gap-1 rounded-full bg-raised px-2.5 text-[11px] disabled:opacity-40"
+                        >
+                          <Plus className="size-3" strokeWidth={2} />
+                          {missing === 0 ? "Added" : "Add album"}
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          {tab === "tracks" ? (
+            <ul className="divide-y divide-border rounded-xl bg-surface">
+              {filteredTracks.slice(0, 80).map((track) => {
+                const inLib = haveIds.has(track.id);
+                return (
+                  <li key={track.id} className="flex items-center gap-3 px-3 py-2">
+                    <div className="size-10 shrink-0 overflow-hidden rounded-md bg-raised">
+                      {track.artwork ? <img src={track.artwork} alt="" className="size-full object-cover" /> : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm">{track.name}</p>
+                      <p className="truncate text-xs text-muted">
+                        {track.artist}
+                        {track.album ? ` · ${track.album}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      <button
+                        type="button"
+                        disabled={adding === track.id}
+                        onClick={() => void addSong(track, true)}
+                        className="inline-flex h-7 items-center gap-1 rounded-full bg-accent px-2.5 text-[11px] text-accent-fg disabled:opacity-40"
+                      >
+                        {adding === track.id ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : (
+                          <Play className="size-3" strokeWidth={2} />
+                        )}
+                        Play
+                      </button>
+                      <button
+                        type="button"
+                        disabled={adding === track.id || inLib}
+                        onClick={() => void addSong(track, false)}
+                        className="inline-flex h-7 items-center gap-1 rounded-full bg-raised px-2.5 text-[11px] disabled:opacity-40"
+                      >
+                        <Plus className="size-3" strokeWidth={2} />
+                        {inLib ? "Added" : "Add"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          {tab === "playlists" ? (
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {filteredPlaylists.map((pl) => {
+                const plTracks = pl.trackIds
+                  .map((id) => remote.find((t) => t.id === id))
+                  .filter((t): t is IbTrack => Boolean(t));
+                const missing = plTracks.filter((t) => !haveIds.has(t.id)).length;
+                return (
+                  <li key={pl.id} className="rounded-xl bg-surface p-3">
+                    <p className="truncate text-sm font-medium">{pl.name}</p>
+                    <p className="text-xs text-muted">
+                      {plTracks.length} tracks{missing ? ` · ${missing} new` : ""}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        disabled={adding === pl.id || !plTracks.length}
+                        onClick={() => void addAlbum(plTracks, pl.name, true)}
+                        className="inline-flex h-7 items-center gap-1 rounded-full bg-accent px-2.5 text-[11px] text-accent-fg disabled:opacity-40"
+                      >
+                        <Play className="size-3" strokeWidth={2} />
+                        Play
+                      </button>
+                      <button
+                        type="button"
+                        disabled={adding === pl.id || missing === 0}
+                        onClick={() => void addAlbum(plTracks, pl.name, false)}
+                        className="inline-flex h-7 items-center gap-1 rounded-full bg-raised px-2.5 text-[11px] disabled:opacity-40"
+                      >
+                        <Plus className="size-3" strokeWidth={2} />
+                        {missing === 0 ? "Added" : "Add playlist"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          {tab === "albums" && albums.length === 0 ? (
+            <p className="text-sm text-muted">No albums match that search.</p>
+          ) : null}
+          {tab === "tracks" && filteredTracks.length === 0 ? (
+            <p className="text-sm text-muted">No tracks match that search.</p>
+          ) : null}
+          {tab === "playlists" && filteredPlaylists.length === 0 ? (
+            <p className="text-sm text-muted">No playlists match that search.</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="max-w-md rounded-xl bg-surface p-4">
         <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Open a share link</p>
