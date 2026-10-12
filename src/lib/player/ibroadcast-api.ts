@@ -7,6 +7,10 @@ const DEVICE = "Sondergram Web";
 
 type Json = Record<string, unknown>;
 
+export type IbLibraryResult =
+  | { ok: true; tracks: IbTrack[]; playlists: IbPlaylist[]; total: number }
+  | { ok: false; tracks: []; playlists: []; total: 0; error: string; debug?: string };
+
 async function postJson(url: string, body: Json, headers: Record<string, string> = {}): Promise<Json> {
   const res = await fetch(url, {
     method: "POST",
@@ -76,6 +80,17 @@ function pickLibrary(raw: Json): Json {
   return raw;
 }
 
+function describeRaw(raw: Json): string {
+  const lib = pickLibrary(raw);
+  const trackKeys =
+    lib.tracks && typeof lib.tracks === "object"
+      ? Object.keys(lib.tracks as object).filter((k) => k !== "map" && k !== "keys" && k !== "length").length
+      : 0;
+  const top = Object.keys(raw).slice(0, 12).join(",");
+  const libKeys = Object.keys(lib).slice(0, 12).join(",");
+  return `top=[${top}] lib=[${libKeys}] trackEntries=${trackKeys}`;
+}
+
 function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; total: number } {
   const library = pickLibrary(raw);
   const tracksMap = decodeMap(library.tracks);
@@ -110,7 +125,8 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
 }
 
 function authBody(session: IbSession, mode: string, extra: Json = {}): Json {
-  const uid = Number(session.userId) || session.userId;
+  const uidNum = Number(session.userId);
+  const uid = Number.isFinite(uidNum) && uidNum > 0 ? uidNum : session.userId;
   return {
     _token: session.token,
     _userid: uid,
@@ -126,86 +142,77 @@ function authBody(session: IbSession, mode: string, extra: Json = {}): Json {
   };
 }
 
-async function fetchLibraryOnce(session: IbSession): Promise<{ tracks: IbTrack[]; playlists: IbPlaylist[]; total: number }> {
+async function fetchLibraryOnce(session: IbSession): Promise<IbLibraryResult> {
   const errors: string[] = [];
+  const debugs: string[] = [];
 
-  // Classic library server (email/password token style)
-  try {
-    const raw = await postJson("https://library.ibroadcast.com/", {
-      ...authBody(session, "library"),
-      url: "//library.ibroadcast.com",
-    });
-    const parsed = parseLibrary(raw);
-    if (parsed.total > 0) return parsed;
-    errors.push("library.ibroadcast.com returned 0 tracks");
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : "library.ibroadcast.com failed");
-  }
+  const attempts: Array<{ label: string; run: () => Promise<Json> }> = [
+    {
+      label: "library.ibroadcast.com/",
+      run: () =>
+        postJson("https://library.ibroadcast.com/", {
+          ...authBody(session, "library"),
+          url: "//library.ibroadcast.com",
+        }),
+    },
+    {
+      label: "library.ibroadcast.com",
+      run: () =>
+        postJson("https://library.ibroadcast.com", {
+          ...authBody(session, "library"),
+          url: "//library.ibroadcast.com",
+        }),
+    },
+    {
+      label: "api/s/JSON/library",
+      run: () =>
+        postJson("https://api.ibroadcast.com/s/JSON/library", {
+          ...authBody(session, "library"),
+          url: "//api.ibroadcast.com/s/JSON/library",
+        }),
+    },
+    {
+      label: "Bearer library",
+      run: () =>
+        postJson(
+          "https://library.ibroadcast.com/",
+          {
+            mode: "library",
+            client: CLIENT,
+            version: VERSION,
+            device_name: DEVICE,
+            user_agent: `${CLIENT}/${VERSION}`,
+          },
+          { Authorization: `Bearer ${session.token}` },
+        ),
+    },
+  ];
 
-  // Same host without trailing slash
-  try {
-    const raw = await postJson("https://library.ibroadcast.com", {
-      ...authBody(session, "library"),
-      url: "//library.ibroadcast.com",
-    });
-    const parsed = parseLibrary(raw);
-    if (parsed.total > 0) return parsed;
-    errors.push("library.ibroadcast.com (no slash) returned 0 tracks");
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : "library.ibroadcast.com (no slash) failed");
-  }
-
-  // API JSON library endpoint
-  try {
-    const raw = await postJson("https://api.ibroadcast.com/s/JSON/library", {
-      ...authBody(session, "library"),
-      url: "//api.ibroadcast.com/s/JSON/library",
-    });
-    const parsed = parseLibrary(raw);
-    if (parsed.total > 0) return parsed;
-    errors.push("api library returned 0 tracks");
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : "api library failed");
-  }
-
-  // Bearer-style (newer clients)
-  try {
-    const raw = await postJson(
-      "https://library.ibroadcast.com/",
-      {
-        mode: "library",
-        client: CLIENT,
-        version: VERSION,
-        device_name: DEVICE,
-        user_agent: `${CLIENT}/${VERSION}`,
-      },
-      { Authorization: `Bearer ${session.token}` },
-    );
-    const parsed = parseLibrary(raw);
-    if (parsed.total > 0) return parsed;
-    errors.push("Bearer library returned 0 tracks");
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : "Bearer library failed");
-  }
-
-  // Last attempt: status endpoint sometimes embeds library snapshot
-  try {
-    const status = await postJson("https://api.ibroadcast.com/s/JSON/status", {
-      mode: "status",
-      ...authBody(session, "status"),
-      url: "//api.ibroadcast.com/s/JSON/status",
-    });
-    if (status.library) {
-      const parsed = parseLibrary(status);
-      if (parsed.total > 0) return parsed;
+  for (const attempt of attempts) {
+    try {
+      const raw = await attempt.run();
+      const info = describeRaw(raw);
+      debugs.push(`${attempt.label}: ${info}`);
+      const parsed = parseLibrary(raw);
+      if (parsed.total > 0) {
+        return { ok: true, tracks: parsed.tracks, playlists: parsed.playlists, total: parsed.total };
+      }
+      errors.push(`${attempt.label}: 0 tracks (${info})`);
+    } catch (err) {
+      errors.push(`${attempt.label}: ${err instanceof Error ? err.message : "failed"}`);
     }
-  } catch {
-    /* ignore */
   }
 
-  throw new Error(
-    `Could not load iBroadcast library. ${errors.slice(0, 3).join(" · ") || "Unknown error."} Try signing out and back in.`,
-  );
+  return {
+    ok: false,
+    tracks: [],
+    playlists: [],
+    total: 0,
+    error:
+      "Could not load iBroadcast library. Sign out, sign back in, then try Load again. " +
+      errors.slice(0, 2).join(" · "),
+    debug: debugs.slice(0, 3).join(" | "),
+  };
 }
 
 export const ibLogin = createServerFn({ method: "POST" })
@@ -243,9 +250,15 @@ export const ibLogin = createServerFn({ method: "POST" })
 
 export const ibLibrary = createServerFn({ method: "POST" })
   .validator((d: IbSession) => d)
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<IbLibraryResult> => {
     if (!data?.token || !data?.userId) {
-      throw new Error("Missing iBroadcast session. Sign in again.");
+      return {
+        ok: false,
+        tracks: [],
+        playlists: [],
+        total: 0,
+        error: "Missing iBroadcast session. Sign out and sign in again.",
+      };
     }
     return fetchLibraryOnce(data);
   });
