@@ -117,31 +117,21 @@ export function dropLive(user?: string) {
 function loginErrorMessage(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err || "");
   const lower = text.toLowerCase();
-
-  // Very specific credential refusals from the server
   const hardCredential =
     /login\s*refus/i.test(text) ||
     /invalid\s*(user|pass|credential)/i.test(text) ||
     /wrong\s*(user|pass)/i.test(text) ||
     /bad\s*password/i.test(text) ||
     /unknown\s*user/i.test(text);
-
   if (hardCredential) {
     return "Soulseek did not accept that username or password. Confirm they work in SoulseekQt, then try again.";
   }
-
-  // Network / environment style failures (common on Vercel serverless)
   const networkish =
-    /timeout|timed\s*out|econn|enotfound|ehost|network|socket|reset|refused|unreachable|abort|epipe|etimedout/i.test(
-      lower,
-    ) ||
+    /timeout|timed\s*out|econn|enotfound|ehost|network|socket|reset|refused|unreachable|abort|epipe|etimedout/i.test(lower) ||
     /could not connect|connection failed|server did not/i.test(lower);
-
   if (networkish) {
     return "Could not reach Soulseek from this server (common on Vercel). Try again, or use an slskd instance instead of native login.";
   }
-
-  // Generic fallback — don't blame the password by default
   return "Soulseek login failed from this server. If the same credentials work in SoulseekQt, use an slskd instance (more reliable on Vercel) or try again in a moment.";
 }
 
@@ -265,7 +255,6 @@ export async function liveFolder(user: string, pass: string, peer: string, folde
   });
 }
 
-/** Start (or join) a progressive peer download. Shared by liveStart + liveStream. */
 function ensureDownload(
   user: string,
   pass: string,
@@ -532,6 +521,53 @@ export async function liveStream(opts: {
     return new Response(new Uint8Array(buf), { status: 200, headers });
   }
 
+  // Serve range from already-buffered bytes so the player can seek mid-download.
+  const buffered = Buffer.concat(dl.chunks);
+  const knownTotal = dl.done ? buffered.length : opts.size || dl.size || 0;
+  const rangeMatch = opts.range?.match(/bytes=(\d+)-(\d*)/);
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const endReq = rangeMatch[2] ? Number(rangeMatch[2]) : 0;
+    if (Number.isFinite(start) && start >= 0) {
+      if (!dl.done && buffered.length <= start) {
+        await new Promise<void>((resolve) => {
+          const deadline = Date.now() + 12_000;
+          const onChunk = () => {
+            const have = dl.chunks.reduce((n, c) => n + c.length, 0);
+            if (have > start || dl.done || dl.failed || Date.now() > deadline) {
+              dl.listeners.delete(onChunk);
+              resolve();
+            }
+          };
+          dl.listeners.add(onChunk);
+          setTimeout(onChunk, 50);
+        });
+      }
+      const buf = Buffer.concat(dl.chunks);
+      const total = dl.done ? buf.length : knownTotal || buf.length;
+      if (buf.length > start) {
+        const to = Math.min(
+          endReq && Number.isFinite(endReq) ? endReq : buf.length - 1,
+          buf.length - 1,
+          total > 0 ? total - 1 : buf.length - 1,
+        );
+        const slice = buf.subarray(start, to + 1);
+        const headers: Record<string, string> = {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+          "Access-Control-Allow-Headers": "Range, Content-Type",
+          "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+          "Accept-Ranges": "bytes",
+          "Content-Type": dl.mime,
+          "Content-Range": `bytes ${start}-${to}/${total || "*"}`,
+          "Content-Length": String(slice.length),
+          "Cache-Control": "private, no-store",
+        };
+        return new Response(new Uint8Array(slice), { status: 206, headers });
+      }
+    }
+  }
+
   let sent = 0;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -554,16 +590,11 @@ export async function liveStream(opts: {
           } catch {
             /* ignore */
           }
-          dl.listeners.delete(onChunk);
           return;
         }
         if (chunk) {
-          const totalBuf = Buffer.concat(dl.chunks);
-          if (totalBuf.length > sent) {
-            const next = totalBuf.subarray(sent);
-            controller.enqueue(new Uint8Array(next));
-            sent = totalBuf.length;
-          }
+          controller.enqueue(new Uint8Array(chunk));
+          sent += chunk.length;
           return;
         }
         try {
@@ -571,26 +602,27 @@ export async function liveStream(opts: {
         } catch {
           /* ignore */
         }
-        dl.listeners.delete(onChunk);
       };
       dl.listeners.add(onChunk);
-      opts.signal?.addEventListener(
-        "abort",
-        () => {
-          dl.listeners.delete(onChunk);
-          try {
-            dl.cancel?.();
-          } catch {
-            /* ignore */
-          }
-          try {
-            controller.close();
-          } catch {
-            /* ignore */
-          }
-        },
-        { once: true },
-      );
+      if (opts.signal) {
+        opts.signal.addEventListener(
+          "abort",
+          () => {
+            dl.listeners.delete(onChunk);
+            try {
+              controller.close();
+            } catch {
+              /* ignore */
+            }
+            try {
+              dl.cancel?.();
+            } catch {
+              /* ignore */
+            }
+          },
+          { once: true },
+        );
+      }
     },
     cancel() {
       try {
@@ -601,15 +633,15 @@ export async function liveStream(opts: {
     },
   });
 
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-      "Access-Control-Allow-Headers": "Range, Content-Type",
-      "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
-      "Content-Type": dl.mime,
-      "Cache-Control": "private, no-store",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers": "Range, Content-Type",
+    "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+    "Accept-Ranges": "bytes",
+    "Content-Type": dl.mime,
+    "Cache-Control": "private, no-store",
+  };
+  if (knownTotal > 0) headers["Content-Length"] = String(knownTotal);
+  return new Response(stream, { status: 200, headers });
 }
