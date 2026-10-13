@@ -279,7 +279,7 @@ export function sortSlskFiles(files: SlskFile[]) {
 }
 
 export function groupSlskAlbums(hits: SlskFile[]): SlskAlbum[] {
-  const map = new Map<string, SlskFile[]>();
+  const map = new Map<string, SlsKFile[]>();
   for (const hit of hits) {
     const folder = hit.folder || slskFolder(hit.filename);
     const key = `${hit.username}|${folder}`;
