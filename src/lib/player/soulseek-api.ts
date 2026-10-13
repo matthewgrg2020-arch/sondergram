@@ -141,7 +141,7 @@ export const slskSearch = createServerFn({ method: "POST" })
   .validator((d: { base?: string; key?: string; token?: string; name?: string; q: string }) => d)
   .handler(async ({ data }) => {
     const q = str(data.q);
-    if (!q) return { hits: [] as SlsKFile[], id: "" };
+    if (!q) return { hits: [] as SlskFile[], id: "" };
     const session = { base: str(data.base), key: str(data.key), token: str(data.token), name: str(data.name) };
     if (isNativeSlsk(session) && session.name && session.key) {
       const liveApi = await live();
@@ -190,6 +190,7 @@ export const slskSearch = createServerFn({ method: "POST" })
       }
     }
     hits.sort((a, b) => {
+      // Prefer lossy/MP3 (faster start) over large lossless by default
       const aMp3 = /mp3/i.test(a.ext) ? 0 : a.lossless ? 2 : 1;
       const bMp3 = /mp3/i.test(b.ext) ? 0 : b.lossless ? 2 : 1;
       if (aMp3 !== bMp3) return aMp3 - bMp3;
