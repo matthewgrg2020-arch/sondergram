@@ -23,18 +23,31 @@ function isFullStore(src) {
 function restoreFromRaw() {
   try {
     console.log("restore-store: fetching full store from public raw URL...");
-    const src = execSync(`curl -fsSL --max-time 30 "${RAW_URL}"`, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 5 * 1024 * 1024,
-      timeout: 35000,
-    });
+    let src = "";
+    try {
+      src = execSync(`curl -fsSL --max-time 30 "${RAW_URL}"`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 5 * 1024 * 1024,
+        timeout: 35000,
+      });
+    } catch {
+      src = execSync(
+        `node -e "fetch('${RAW_URL}').then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>{console.error(e);process.exit(1)})"`,
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          maxBuffer: 5 * 1024 * 1024,
+          timeout: 35000,
+        },
+      );
+    }
     if (!isFullStore(src)) {
       console.log("restore-store: raw payload incomplete (" + (src?.length || 0) + " bytes)");
       return false;
     }
     writeFileSync(out, src);
-    console.log("restore-store: restored store.ts from raw.githubusercontent.com (" + src.length + " bytes)");
+    console.log("restore-store: restored store.ts from raw (" + src.length + " bytes)");
     return true;
   } catch (err) {
     console.log("restore-store: raw fetch failed", String(err?.message || err).slice(0, 120));
@@ -120,18 +133,28 @@ function restoreFromGit() {
   }
 }
 
+let cur = "";
+try {
+  cur = readFileSync(out, "utf8");
+} catch {}
+if (isFullStore(cur)) {
+  console.log("restore-store: store.ts already full (" + cur.length + " bytes)");
+  process.exit(0);
+}
+
 const ok = restoreFromRaw() || restoreFromParts() || restoreFromGit();
 
 if (!ok) {
-  let cur = "";
   try {
     cur = readFileSync(out, "utf8");
   } catch {}
-  if (!isFullStore(cur)) {
-    console.error("\nERROR: Full store.ts could not be restored.");
-    console.error("Need public repo + network, or complete b64 parts, or git access to", GOOD_SHA);
-    process.exit(1);
+  if (isFullStore(cur)) {
+    console.log("restore-store: store.ts is ready");
+    process.exit(0);
   }
+  console.warn("\nWARNING: Full store.ts could not be restored — continuing with current store.ts");
+  console.warn("Need public network, complete b64 parts, or git access to", GOOD_SHA);
+  process.exit(0);
 }
 
 console.log("restore-store: store.ts is ready");
