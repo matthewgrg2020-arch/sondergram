@@ -17,7 +17,7 @@ import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
 import type { AmTrack } from "./amazon";
 import type { SpTrack } from "./spotify";
-import type { SlsKFile as SlskFile } from "./soulseek";
+import type { SlskFile } from "./soulseek";
 
 export type RepeatMode = "off" | "all" | "one";
 export type StopAfter = "off" | "track" | "album";
