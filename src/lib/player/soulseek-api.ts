@@ -141,7 +141,7 @@ export const slskSearch = createServerFn({ method: "POST" })
   .validator((d: { base?: string; key?: string; token?: string; name?: string; q: string }) => d)
   .handler(async ({ data }) => {
     const q = str(data.q);
-    if (!q) return { hits: [] as SlskFile[], id: "" };
+    if (!q) return { hits: [] as SlsKFile[], id: "" };
     const session = { base: str(data.base), key: str(data.key), token: str(data.token), name: str(data.name) };
     if (isNativeSlsk(session) && session.name && session.key) {
       const liveApi = await live();
@@ -228,7 +228,7 @@ async function slskdDirectory(
       const row = asJson(body);
       const files = Array.isArray(row.files) ? row.files : Array.isArray(row.Files) ? row.Files : [];
       const name = str(row.name || row.Name || dir);
-      const out: SlsKFile[] = [];
+      const out: SlskFile[] = [];
       for (const file of files) {
         const mapped = mapFile(username, asJson(file), speed, queue, free, name);
         if (mapped) out.push(mapped);
