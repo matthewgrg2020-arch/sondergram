@@ -1,9 +1,6 @@
 // @ts-nocheck
-import { FileAttribute, SlsKClient, type SearchResult } from "slsk-client";
+import { FileAttribute, SlskClient } from "slsk-client";
 import { fileExt, isAudioFile, parseSlskFilename, type SlskFile } from "./soulseek";
-
-// NOTE: SlskClient import alias fixed below
-import { SlskClient } from "slsk-client";
 
 const MAX_BYTES = 420_000_000;
 const CACHE_LIMIT = 4;
@@ -19,7 +16,6 @@ type LiveDl = {
   done: boolean;
   failed: Error | null;
   listeners: Set<(chunk: Buffer | null, err?: Error) => void>;
-  cancel?: () => void;
   startedAt: number;
 };
 
@@ -144,7 +140,7 @@ export async function liveConnect(user: string, pass: string) {
   return { name: c.username || user, ticket };
 }
 
-function mapResult(peer: string, file: any, speed: number, queue: number, free: boolean): SlskFile | null {
+function mapResult(peer: string, file: any, speed: number, queue: number, free: boolean): SlsKFile | null {
   const filename = String(file.filename || file.Filename || "");
   if (!filename || !isAudioFile(filename)) return null;
   if (file.locked || file.isLocked) return null;
@@ -176,15 +172,13 @@ function mapResult(peer: string, file: any, speed: number, queue: number, free: 
   };
 }
 
-export async function liveSearch(user: string, pass: string, q: string): Promise<SlskFile[]> {
+export async function liveSearch(user: string, pass: string, q: string) {
   const c = await ensureClient(user, pass);
   const results: any[] = await new Promise((resolve, reject) => {
     const hits: any[] = [];
     const timer = setTimeout(() => resolve(hits), 12000);
     try {
-      c.search(q, (res: any) => {
-        hits.push(res);
-      });
+      c.search(q, (res: any) => hits.push(res));
       setTimeout(() => {
         clearTimeout(timer);
         resolve(hits);
@@ -194,14 +188,13 @@ export async function liveSearch(user: string, pass: string, q: string): Promise
       reject(err);
     }
   });
-  const out: SlskFile[] = [];
+  const out: any[] = [];
   for (const res of results) {
     const peer = String(res.username || res.user || "");
     const speed = Number(res.speed || res.avgSpeed || 0);
     const queue = Number(res.queueSize || res.queue || 0);
     const free = Boolean(res.freeUploadSlots ?? res.slotsFree ?? true);
-    const files = res.files || res.fileList || [];
-    for (const f of files) {
+    for (const f of res.files || res.fileList || []) {
       const mapped = mapResult(peer, f, speed, queue, free);
       if (mapped) out.push(mapped);
     }
@@ -271,12 +264,8 @@ export function liveStatus(peer: string, filename: string) {
   const k = fileKey(peer, filename);
   const dl = liveDls.get(k);
   const cached = cacheGet(k);
-  if (cached) {
-    return { state: "Completed", percent: 100, done: true, local: "", size: cached.buf.length, error: "" };
-  }
-  if (!dl) {
-    return { state: "Queued", percent: 0, done: false, local: "", size: 0, error: lastError.get(k) || "" };
-  }
+  if (cached) return { state: "Completed", percent: 100, done: true, local: "", size: cached.buf.length, error: "" };
+  if (!dl) return { state: "Queued", percent: 0, done: false, local: "", size: 0, error: lastError.get(k) || "" };
   const got = dl.chunks.reduce((s, c) => s + c.length, 0);
   const total = dl.size || got;
   const percent = total > 0 ? Math.min(99.9, (got / total) * 100) : 0;
@@ -285,7 +274,6 @@ export function liveStatus(peer: string, filename: string) {
   return { state: "Transferring", percent, done: false, local: "", size: total, error: "" };
 }
 
-/** Matches /api/soulseek streamNative call shape */
 export async function liveStream(opts: {
   user?: string;
   pass?: string;
@@ -307,9 +295,7 @@ export async function liveStream(opts: {
   const mime = mimeOf(filename);
 
   let rangeObj: { start: number; end?: number } | null = null;
-  if (opts.range && typeof opts.range === "object" && "start" in opts.range) {
-    rangeObj = opts.range;
-  }
+  if (opts.range && typeof opts.range === "object" && "start" in opts.range) rangeObj = opts.range;
 
   const cached = cacheGet(k);
   if (cached) {
@@ -342,9 +328,7 @@ export async function liveStream(opts: {
     });
   }
 
-  if (!liveDls.has(k)) {
-    liveStart(account, key, peer, filename, opts.size || 0);
-  }
+  if (!liveDls.has(k)) liveStart(account, key, peer, filename, opts.size || 0);
   const dl = liveDls.get(k)!;
 
   const startWait = Date.now();
@@ -365,10 +349,7 @@ export async function liveStream(opts: {
       let offset = 0;
       for (const chunk of dl.chunks) {
         const end = offset + chunk.length;
-        if (end > start) {
-          const sliceFrom = Math.max(0, start - offset);
-          controller.enqueue(chunk.subarray(sliceFrom));
-        }
+        if (end > start) controller.enqueue(chunk.subarray(Math.max(0, start - offset)));
         offset = end;
       }
       if (dl.done) {
@@ -382,11 +363,8 @@ export async function liveStream(opts: {
           return;
         }
         if (chunk) {
-          if (offset >= start) {
-            controller.enqueue(chunk);
-          } else if (offset + chunk.length > start) {
-            controller.enqueue(chunk.subarray(start - offset));
-          }
+          if (offset >= start) controller.enqueue(chunk);
+          else if (offset + chunk.length > start) controller.enqueue(chunk.subarray(start - offset));
           offset += chunk.length;
         } else {
           try { controller.close(); } catch {}
@@ -408,8 +386,7 @@ export async function liveStream(opts: {
   };
   if (knownTotal > 0) {
     if (start > 0) {
-      const end = knownTotal - 1;
-      headers["Content-Range"] = `bytes ${start}-${end}/${knownTotal}`;
+      headers["Content-Range"] = `bytes ${start}-${knownTotal - 1}/${knownTotal}`;
       headers["Content-Length"] = String(Math.max(0, knownTotal - start));
       return new Response(stream, { status: 206, headers });
     }
