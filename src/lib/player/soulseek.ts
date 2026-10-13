@@ -251,6 +251,7 @@ export function formatSpeed(bps: number) {
 }
 
 function albumScore(a: SlskAlbum) {
+  // Prefer lossy/MP3 (faster start) over large lossless by default
   let score = 0;
   if (/mp3/i.test(a.ext)) score += 100;
   else if (a.lossless) score -= 40;
@@ -278,9 +279,9 @@ export function sortSlskFiles(files: SlskFile[]) {
   });
 }
 
-export function groupSlskAlbums(hits: SlskFile[]): SlskAlbum[] {
-  const map = new Map<string, SlsKFile[]>();
-  for (const hit of hits) {
+export function groupSlskAlbums(files: SlskFile[]): SlskAlbum[] {
+  const map = new Map<string, SlskFile[]>();
+  for (const hit of files) {
     const folder = hit.folder || slskFolder(hit.filename);
     const key = `${hit.username}|${folder}`;
     const list = map.get(key);
@@ -288,8 +289,8 @@ export function groupSlskAlbums(hits: SlskFile[]): SlskAlbum[] {
     else map.set(key, [hit]);
   }
   const albums: SlskAlbum[] = [];
-  for (const [key, files] of map) {
-    const sorted = sortSlskFiles(files);
+  for (const [key, hits] of map) {
+    const sorted = sortSlskFiles(hits);
     const first = sorted[0]!;
     const folder = first.folder || slskFolder(first.filename);
     const size = sorted.reduce((s, f) => s + f.size, 0);
@@ -322,7 +323,7 @@ export function groupSlskAlbums(hits: SlskFile[]): SlskAlbum[] {
 }
 
 export function packSlskAlbums(albums: SlskAlbum[]): SlskAlbumPack[] {
-  const buckets = new Map<string, SlsKAlbum[]>();
+  const buckets = new Map<string, SlskAlbum[]>();
   for (const album of albums) {
     const key = `${(album.artist || "").toLowerCase()}|${(album.album || "").toLowerCase()}`;
     const list = buckets.get(key);
