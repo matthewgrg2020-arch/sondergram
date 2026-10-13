@@ -55,23 +55,23 @@ function dspActive() {
   return engine.spatial?.preset !== "off" || engine.isolateMode !== "mix";
 }
 
-// Remaster curves applied as additive EQ offsets (dB) across bands + makeup
+// 31-band remaster shapes (ISO 1/3-octave) + makeup preamp
 const REMASTER: Record<RemasterPreset, { gains: number[]; preamp: number }> = {
   off: { gains: EQ_BANDS.map(() => 0), preamp: 0 },
   clean: {
-    gains: [-1.2, -0.6, 0.4, 0.8, 1.0, 0.6, 0.2, -0.2, -0.6, -1.0],
+    gains: [-1.5,-1.5,-1.5,-1.0,-1.0,-1.0,-1.0,-0.5,-0.5,0.0,0.0,0.5,0.5,0.5,0.5,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.5,0.5,0.0,0.0,-0.5,-0.5,-1.0,-1.0],
     preamp: 0.8,
   },
   full: {
-    gains: [2.5, 1.8, 0.6, -0.4, 0.2, 0.8, 1.4, 1.8, 1.2, 0.6],
+    gains: [2.5,2.5,2.5,2.0,2.0,2.0,1.5,1.5,1.0,0.5,0.5,0.0,0.0,-0.5,-0.5,0.0,0.0,0.0,0.5,0.5,1.0,1.0,1.5,1.5,1.5,2.0,1.5,1.5,1.0,1.0,0.5],
     preamp: 1.2,
   },
   vinyl: {
-    gains: [1.5, 1.0, 0.4, -0.8, -1.2, -0.6, 0.4, 1.0, 0.6, -1.5],
+    gains: [1.5,1.5,1.5,1.0,1.0,1.0,1.0,1.0,0.5,0.5,0.5,0.0,-0.5,-0.5,-1.0,-1.0,-1.0,-1.0,-1.0,-0.5,-0.5,0.0,0.5,0.5,0.5,0.5,1.0,0.0,-0.5,-1.0,-2.0],
     preamp: 0.6,
   },
   loud: {
-    gains: [3.0, 2.2, 1.0, 0.2, 0.0, 0.4, 1.0, 1.6, 2.0, 1.4],
+    gains: [3.0,3.0,3.0,2.5,2.5,2.5,2.0,1.5,1.0,1.0,1.0,0.5,0.5,0.0,0.0,0.0,0.0,0.0,0.0,0.5,0.5,1.0,1.0,1.5,1.5,1.5,2.0,2.0,1.5,1.5,1.2],
     preamp: 2.0,
   },
 };
@@ -126,7 +126,6 @@ function rebuildGraph(eng: any) {
     prev.connect(f);
     prev = f;
   }
-  // Spatial after EQ, before master gain
   wireSpatial(eng.spatial, prev, eng.gain);
   eng.gain.connect(eng.panner);
   eng.panner.connect(eng.analyser);
