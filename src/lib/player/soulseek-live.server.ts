@@ -140,7 +140,7 @@ export async function liveConnect(user: string, pass: string) {
   return { name: c.username || user, ticket };
 }
 
-function mapResult(peer: string, file: any, speed: number, queue: number, free: boolean): SlsKFile | null {
+function mapResult(peer: string, file: any, speed: number, queue: number, free: boolean): SlskFile | null {
   const filename = String(file.filename || file.Filename || "");
   if (!filename || !isAudioFile(filename)) return null;
   if (file.locked || file.isLocked) return null;
