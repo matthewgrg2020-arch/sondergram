@@ -1,13 +1,23 @@
 import { create } from "zustand";
 import { FLAT_EQ, type EqGains } from "./constants";
 import type { IsolateMode, RemasterPreset, SpatialPreset } from "./engine";
+import {
+  applyEq,
+  applyPreamp,
+  setBassLock,
+  setRemaster as engSetRemaster,
+  setSpatialMode,
+  setBalance as engSetBalance,
+  setMasterGain,
+  setPlaybackRate,
+} from "./engine";
 import type { VizMode } from "./session";
 import type { UserPlaylist } from "./playlists";
 import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
 import type { AmTrack } from "./amazon";
 import type { SpTrack } from "./spotify";
-import type { SlskFile } from "./soulseek";
+import type { SlsKFile as SlskFile } from "./soulseek";
 
 export type RepeatMode = "off" | "all" | "one";
 export type StopAfter = "off" | "track" | "album";
@@ -222,9 +232,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   customPresets: [],
   rate: 1,
   pitch: 0,
-  isolate: "off",
+  isolate: "mix",
   spatial: "off",
-  spatialAmount: 0.5,
+  spatialAmount: 0.7,
   radio: false,
   radioRecent: [],
   upNext: [],
@@ -250,7 +260,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   gapless: true,
   mono: false,
   remaster: "off",
-  remasterAmt: 0.5,
+  remasterAmt: 0.7,
   autoEq: false,
   playlists: [],
   loopA: null,
@@ -278,7 +288,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   flash: (message) => set({ notice: message }),
   setPlaying: (playing) => set({ playing }),
   setTimes: (currentTime, duration) => set({ currentTime, duration }),
-  setVolume: (volume) => set({ volume }),
+  setVolume: (volume) => {
+    set({ volume });
+    try { setMasterGain(volume); } catch {}
+  },
   toggleMute: () => set((s) => ({ muted: !s.muted })),
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
   cycleRepeat: () =>
@@ -289,14 +302,17 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set((s) => {
       const eq = s.eq.slice() as EqGains;
       eq[index] = value;
+      try { applyEq(eq); } catch {}
       return { eq, presetId: "custom" };
     });
   },
   setPreamp: (value) => {
     set({ preamp: value, presetId: "custom" });
+    try { applyPreamp(value); } catch {}
   },
   applyPreset: (id, gains, preamp) => {
     set({ eq: gains.slice() as EqGains, preamp, presetId: id });
+    try { applyEq(gains); applyPreamp(preamp); } catch {}
   },
   saveCustomPreset: (label) => {
     const name = (label || "").trim().slice(0, 24) || "Custom";
@@ -314,11 +330,20 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       presetId: s.presetId === id ? "custom" : s.presetId,
     }));
   },
-  setRate: (rate) => set({ rate }),
+  setRate: (rate) => {
+    set({ rate });
+    try { setPlaybackRate(rate); } catch {}
+  },
   setPitch: (pitch) => set({ pitch }),
   setIsolate: (isolate) => set({ isolate }),
-  setSpatial: (spatial) => set({ spatial }),
-  setSpatialAmount: (spatialAmount) => set({ spatialAmount }),
+  setSpatial: (spatial) => {
+    set({ spatial });
+    try { setSpatialMode(spatial, get().spatialAmount); } catch {}
+  },
+  setSpatialAmount: (spatialAmount) => {
+    set({ spatialAmount });
+    try { setSpatialMode(get().spatial, spatialAmount); } catch {}
+  },
   toggleRadio: () => set((s) => ({ radio: !s.radio })),
   playRadioFrom: noop,
   toggleLike: noop,
@@ -332,11 +357,19 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   addListenMs: noop,
   toggleFocus: () => set((s) => ({ focus: !s.focus })),
   toggleQuiet: () => set((s) => ({ quiet: !s.quiet })),
-  setBalance: (balance) => set({ balance }),
+  setBalance: (balance) => {
+    set({ balance });
+    try { engSetBalance(balance); } catch {}
+  },
   setViz: (viz) => set({ viz }),
   toggleNormalize: () => set((s) => ({ normalize: !s.normalize })),
   toggleSkipSilence: () => set((s) => ({ skipSilence: !s.skipSilence })),
-  toggleBassLock: () => set((s) => ({ bassLock: !s.bassLock })),
+  toggleBassLock: () =>
+    set((s) => {
+      const next = !s.bassLock;
+      try { setBassLock(next ? 3 : 0); } catch {}
+      return { bassLock: next };
+    }),
   toggleHaptic: () => set((s) => ({ haptic: !s.haptic })),
   toggleShakeSkip: () => set((s) => ({ shakeSkip: !s.shakeSkip })),
   toggleGapless: () => set((s) => ({ gapless: !s.gapless })),
@@ -347,8 +380,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   addTracksToPlaylist: noop,
   playPlaylist: noop,
   deletePlaylist: noop,
-  setRemaster: (remaster) => set({ remaster }),
-  setRemasterAmt: (remasterAmt) => set({ remasterAmt }),
+  setRemaster: (remaster) => {
+    set({ remaster });
+    try { engSetRemaster(remaster, get().remasterAmt); } catch {}
+  },
+  setRemasterAmt: (remasterAmt) => {
+    set({ remasterAmt });
+    try { engSetRemaster(get().remaster, remasterAmt); } catch {}
+  },
   djMix: noop,
   playMoreLikeThis: asyncNoop,
   markLoop: noop,
