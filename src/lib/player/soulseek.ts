@@ -51,7 +51,7 @@ export type SlskAlbumPack = {
   key: string;
   artist: string;
   album: string;
-  copies: SlsKAlbum[];
+  copies: SlskAlbum[];
 };
 
 const KEY = "sondergram:soulseek";
@@ -250,7 +250,7 @@ export function formatSpeed(bps: number) {
   return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
 }
 
-function albumScore(a: SlsKAlbum) {
+function albumScore(a: SlskAlbum) {
   let score = 0;
   if (/mp3/i.test(a.ext)) score += 100;
   else if (a.lossless) score -= 40;
@@ -322,7 +322,7 @@ export function groupSlskAlbums(hits: SlskFile[]): SlskAlbum[] {
 }
 
 export function packSlskAlbums(albums: SlskAlbum[]): SlskAlbumPack[] {
-  const buckets = new Map<string, SlskAlbum[]>();
+  const buckets = new Map<string, SlsKAlbum[]>();
   for (const album of albums) {
     const key = `${(album.artist || "").toLowerCase()}|${(album.album || "").toLowerCase()}`;
     const list = buckets.get(key);
