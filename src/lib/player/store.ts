@@ -15,8 +15,6 @@ import type { VizMode } from "./session";
 import type { UserPlaylist } from "./playlists";
 import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
-import type { AmTrack } from "./amazon";
-import type { SpTrack } from "./spotify";
 import type { SlskFile } from "./soulseek";
 
 export type RepeatMode = "off" | "all" | "one";
@@ -74,10 +72,48 @@ export type Track = {
   soulseekId?: string;
   replayGain?: number;
   forceYoutube?: boolean;
+  rating?: number;
 };
 
 const noop = () => {};
 const asyncNoop = async () => 0;
+const SETTINGS_KEY = "sondergram:playback-settings";
+
+type PlaybackSettings = {
+  bookmarks: boolean;
+  bookmarkPrompt: boolean;
+  skipLowRated: boolean;
+  skipSeconds: number;
+  playRecordPercent: number;
+  restrictData: boolean;
+  autoFullScreen: boolean;
+};
+
+function loadPlaybackSettings(): PlaybackSettings {
+  const defaults: PlaybackSettings = {
+    bookmarks: true,
+    bookmarkPrompt: true,
+    skipLowRated: false,
+    skipSeconds: 30,
+    playRecordPercent: 50,
+    restrictData: false,
+    autoFullScreen: false,
+  };
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return defaults;
+    return { ...defaults, ...(JSON.parse(raw) as Partial<PlaybackSettings>) };
+  } catch {
+    return defaults;
+  }
+}
+
+function savePlaybackSettings(partial: Partial<PlaybackSettings>) {
+  try {
+    const cur = loadPlaybackSettings();
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cur, ...partial }));
+  } catch {}
+}
 
 export function catalogHold(_track?: { id?: string } | null) {
   return false;
@@ -109,6 +145,7 @@ type PlayerState = {
   notice: string | null;
   crossfade: number;
   sleep: number | null;
+  sleepUntil: number | null;
   stopAfter: StopAfter;
   recent: string[];
   plays: Record<string, number>;
@@ -133,6 +170,13 @@ type PlayerState = {
   playlists: UserPlaylist[];
   loopA: number | null;
   loopB: number | null;
+  bookmarks: boolean;
+  bookmarkPrompt: boolean;
+  skipLowRated: boolean;
+  skipSeconds: number;
+  playRecordPercent: number;
+  restrictData: boolean;
+  autoFullScreen: boolean;
   hydrate: () => Promise<void>;
   playIndex: (index: number, fromUser?: boolean) => void;
   playIds: (ids: string[]) => void;
@@ -183,6 +227,13 @@ type PlayerState = {
   toggleGapless: () => void;
   toggleMono: () => void;
   toggleAutoEq: () => void;
+  toggleBookmarks: () => void;
+  toggleBookmarkPrompt: () => void;
+  toggleSkipLowRated: () => void;
+  setSkipSeconds: (n: number) => void;
+  setPlayRecordPercent: (n: number) => void;
+  toggleRestrictData: () => void;
+  toggleAutoFullScreen: () => void;
   saveQueuePlaylist: (name?: string) => void;
   createPlaylist: (name: string, trackIds: string[]) => void;
   addTracksToPlaylist: (playlistId: string, trackIds: string[]) => void;
@@ -215,6 +266,19 @@ type PlayerState = {
   importYoutube: (idOrUrl: string) => Promise<number>;
 };
 
+const initialSettings =
+  typeof localStorage !== "undefined"
+    ? loadPlaybackSettings()
+    : {
+        bookmarks: true,
+        bookmarkPrompt: true,
+        skipLowRated: false,
+        skipSeconds: 30,
+        playRecordPercent: 50,
+        restrictData: false,
+        autoFullScreen: false,
+      };
+
 export const usePlayer = create<PlayerState>((set, get) => ({
   tracks: [],
   index: -1,
@@ -241,6 +305,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   notice: null,
   crossfade: 4,
   sleep: null,
+  sleepUntil: null,
   stopAfter: "off",
   recent: [],
   plays: {},
@@ -265,8 +330,15 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   playlists: [],
   loopA: null,
   loopB: null,
+  bookmarks: initialSettings.bookmarks,
+  bookmarkPrompt: initialSettings.bookmarkPrompt,
+  skipLowRated: initialSettings.skipLowRated,
+  skipSeconds: initialSettings.skipSeconds,
+  playRecordPercent: initialSettings.playRecordPercent,
+  restrictData: initialSettings.restrictData,
+  autoFullScreen: initialSettings.autoFullScreen,
   hydrate: async () => {
-    set({ ready: true });
+    set({ ready: true, ...loadPlaybackSettings() });
   },
   playIndex: (index) => {
     const tracks = get().tracks;
@@ -290,7 +362,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   setTimes: (currentTime, duration) => set({ currentTime, duration }),
   setVolume: (volume) => {
     set({ volume });
-    try { setMasterGain(volume); } catch {}
+    try {
+      setMasterGain(volume);
+    } catch {}
   },
   toggleMute: () => set((s) => ({ muted: !s.muted })),
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
@@ -302,17 +376,24 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set((s) => {
       const eq = s.eq.slice() as EqGains;
       eq[index] = value;
-      try { applyEq(eq); } catch {}
+      try {
+        applyEq(eq);
+      } catch {}
       return { eq, presetId: "custom" };
     });
   },
   setPreamp: (value) => {
     set({ preamp: value, presetId: "custom" });
-    try { applyPreamp(value); } catch {}
+    try {
+      applyPreamp(value);
+    } catch {}
   },
   applyPreset: (id, gains, preamp) => {
     set({ eq: gains.slice() as EqGains, preamp, presetId: id });
-    try { applyEq(gains); applyPreamp(preamp); } catch {}
+    try {
+      applyEq(gains);
+      applyPreamp(preamp);
+    } catch {}
   },
   saveCustomPreset: (label) => {
     const name = (label || "").trim().slice(0, 24) || "Custom";
@@ -332,17 +413,23 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   },
   setRate: (rate) => {
     set({ rate });
-    try { setPlaybackRate(rate); } catch {}
+    try {
+      setPlaybackRate(rate);
+    } catch {}
   },
   setPitch: (pitch) => set({ pitch }),
   setIsolate: (isolate) => set({ isolate }),
   setSpatial: (spatial) => {
     set({ spatial });
-    try { setSpatialMode(spatial, get().spatialAmount); } catch {}
+    try {
+      setSpatialMode(spatial, get().spatialAmount);
+    } catch {}
   },
   setSpatialAmount: (spatialAmount) => {
     set({ spatialAmount });
-    try { setSpatialMode(get().spatial, spatialAmount); } catch {}
+    try {
+      setSpatialMode(get().spatial, spatialAmount);
+    } catch {}
   },
   toggleRadio: () => set((s) => ({ radio: !s.radio })),
   playRadioFrom: noop,
@@ -350,16 +437,24 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   toggleStar: noop,
   setReplayGain: noop,
   setCrossfade: (crossfade) => set({ crossfade }),
-  setSleep: (sleep) => set({ sleep }),
+  setSleep: (minutes) => {
+    if (minutes == null) set({ sleep: null, sleepUntil: null });
+    else set({ sleep: minutes, sleepUntil: Date.now() + minutes * 60_000 });
+  },
   setStopAfter: (stopAfter) => set({ stopAfter }),
   surprise: noop,
-  rememberPosition: noop,
+  rememberPosition: (id, time) => {
+    if (!get().bookmarks) return;
+    set((s) => ({ positions: { ...s.positions, [id]: time } }));
+  },
   addListenMs: noop,
   toggleFocus: () => set((s) => ({ focus: !s.focus })),
   toggleQuiet: () => set((s) => ({ quiet: !s.quiet })),
   setBalance: (balance) => {
     set({ balance });
-    try { engSetBalance(balance); } catch {}
+    try {
+      engSetBalance(balance);
+    } catch {}
   },
   setViz: (viz) => set({ viz }),
   toggleNormalize: () => set((s) => ({ normalize: !s.normalize })),
@@ -367,7 +462,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   toggleBassLock: () =>
     set((s) => {
       const next = !s.bassLock;
-      try { setBassLock(next ? 3 : 0); } catch {}
+      try {
+        setBassLock(next ? 3 : 0);
+      } catch {}
       return { bassLock: next };
     }),
   toggleHaptic: () => set((s) => ({ haptic: !s.haptic })),
@@ -375,6 +472,46 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   toggleGapless: () => set((s) => ({ gapless: !s.gapless })),
   toggleMono: () => set((s) => ({ mono: !s.mono })),
   toggleAutoEq: () => set((s) => ({ autoEq: !s.autoEq })),
+  toggleBookmarks: () =>
+    set((s) => {
+      const bookmarks = !s.bookmarks;
+      savePlaybackSettings({ bookmarks });
+      return { bookmarks };
+    }),
+  toggleBookmarkPrompt: () =>
+    set((s) => {
+      const bookmarkPrompt = !s.bookmarkPrompt;
+      savePlaybackSettings({ bookmarkPrompt });
+      return { bookmarkPrompt };
+    }),
+  toggleSkipLowRated: () =>
+    set((s) => {
+      const skipLowRated = !s.skipLowRated;
+      savePlaybackSettings({ skipLowRated });
+      return { skipLowRated };
+    }),
+  setSkipSeconds: (n) => {
+    const skipSeconds = Math.max(10, Math.min(90, Math.round(n)));
+    savePlaybackSettings({ skipSeconds });
+    set({ skipSeconds });
+  },
+  setPlayRecordPercent: (n) => {
+    const playRecordPercent = Math.max(25, Math.min(100, Math.round(n)));
+    savePlaybackSettings({ playRecordPercent });
+    set({ playRecordPercent });
+  },
+  toggleRestrictData: () =>
+    set((s) => {
+      const restrictData = !s.restrictData;
+      savePlaybackSettings({ restrictData });
+      return { restrictData };
+    }),
+  toggleAutoFullScreen: () =>
+    set((s) => {
+      const autoFullScreen = !s.autoFullScreen;
+      savePlaybackSettings({ autoFullScreen });
+      return { autoFullScreen };
+    }),
   saveQueuePlaylist: noop,
   createPlaylist: noop,
   addTracksToPlaylist: noop,
@@ -382,25 +519,43 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   deletePlaylist: noop,
   setRemaster: (remaster) => {
     set({ remaster });
-    try { engSetRemaster(remaster, get().remasterAmt); } catch {}
+    try {
+      engSetRemaster(remaster, get().remasterAmt);
+    } catch {}
   },
   setRemasterAmt: (remasterAmt) => {
     set({ remasterAmt });
-    try { engSetRemaster(get().remaster, remasterAmt); } catch {}
+    try {
+      engSetRemaster(get().remaster, remasterAmt);
+    } catch {}
   },
   djMix: noop,
   playMoreLikeThis: asyncNoop,
   markLoop: noop,
   clearLoop: () => set({ loopA: null, loopB: null }),
   nextIndex: () => {
-    const { tracks, index, shuffle } = get();
+    const { tracks, index, shuffle, skipLowRated } = get();
     if (!tracks.length) return null;
+    const isLow = (t: Track) => typeof t.rating === "number" && t.rating > 0 && t.rating <= 2;
     if (shuffle) {
-      let n = index;
-      while (tracks.length > 1 && n === index) n = Math.floor(Math.random() * tracks.length);
-      return n;
+      const pool = skipLowRated
+        ? tracks.map((t, i) => ({ t, i })).filter(({ t, i }) => i !== index && !isLow(t))
+        : tracks.map((t, i) => ({ t, i })).filter(({ i }) => i !== index);
+      if (!pool.length) {
+        let n = index;
+        while (tracks.length > 1 && n === index) n = Math.floor(Math.random() * tracks.length);
+        return n;
+      }
+      return pool[Math.floor(Math.random() * pool.length)]!.i;
     }
-    return index >= tracks.length - 1 ? 0 : index + 1;
+    let n = index >= tracks.length - 1 ? 0 : index + 1;
+    if (skipLowRated) {
+      for (let k = 0; k < tracks.length; k++) {
+        if (!isLow(tracks[n]!)) break;
+        n = n >= tracks.length - 1 ? 0 : n + 1;
+      }
+    }
+    return n;
   },
   prevIndex: () => {
     const { tracks, index } = get();
