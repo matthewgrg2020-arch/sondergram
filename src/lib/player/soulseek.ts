@@ -9,7 +9,7 @@ export type SlskSession = {
   ticket?: string;
 };
 
-export type SlsKFile = {
+export type SlskFile = {
   username: string;
   filename: string;
   size: number;
@@ -29,9 +29,6 @@ export type SlsKFile = {
   year?: string;
 };
 
-// Keep both spellings — older store used SlskFile
-export type SlskFile = SlsKFile;
-
 export type SlskAlbum = {
   key: string;
   username: string;
@@ -39,7 +36,7 @@ export type SlskAlbum = {
   artist: string;
   album: string;
   year: string;
-  files: SlsKFile[];
+  files: SlskFile[];
   size: number;
   duration: number;
   bitRate: number;
@@ -290,7 +287,7 @@ export function sortSlskFiles(files: SlskFile[]) {
 }
 
 export function groupSlskAlbums(files: SlskFile[]): SlskAlbum[] {
-  const map = new Map<string, SlskFile[]>();
+  const map = new Map<string, SlsKFile[]>();
   for (const hit of files) {
     const folder = hit.folder || slskFolder(hit.filename);
     const key = `${hit.username}|${folder}`;
@@ -298,7 +295,7 @@ export function groupSlskAlbums(files: SlskFile[]): SlskAlbum[] {
     if (list) list.push(hit);
     else map.set(key, [hit]);
   }
-  const albums: SlsKAlbum[] = [];
+  const albums: SlskAlbum[] = [];
   for (const [key, hits] of map) {
     const sorted = sortSlskFiles(hits);
     const first = sorted[0]!;
