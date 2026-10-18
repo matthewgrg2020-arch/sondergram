@@ -9,7 +9,7 @@ export type SlskSession = {
   ticket?: string;
 };
 
-export type SlskFile = {
+export type SlsKFile = {
   username: string;
   filename: string;
   size: number;
@@ -29,6 +29,9 @@ export type SlskFile = {
   year?: string;
 };
 
+// Keep both spellings — older store used SlskFile
+export type SlskFile = SlsKFile;
+
 export type SlskAlbum = {
   key: string;
   username: string;
@@ -36,7 +39,7 @@ export type SlskAlbum = {
   artist: string;
   album: string;
   year: string;
-  files: SlskFile[];
+  files: SlsKFile[];
   size: number;
   duration: number;
   bitRate: number;
@@ -223,6 +226,13 @@ export function slskTrackId(file: Pick<SlskFile, "username" | "filename">) {
   return `${file.username}|${file.filename}`;
 }
 
+/** Inverse of slskTrackId — used by full store when polishing / streaming Soulseek tracks. */
+export function parseSlskTrackId(id: string) {
+  const i = id.indexOf("|");
+  if (i < 0) return { username: "", filename: id };
+  return { username: id.slice(0, i), filename: id.slice(i + 1) };
+}
+
 export function slskStreamUrl(file: Pick<SlskFile, "username" | "filename">, session?: SlskSession | null) {
   const params = new URLSearchParams({
     u: file.username,
@@ -288,7 +298,7 @@ export function groupSlskAlbums(files: SlskFile[]): SlskAlbum[] {
     if (list) list.push(hit);
     else map.set(key, [hit]);
   }
-  const albums: SlskAlbum[] = [];
+  const albums: SlsKAlbum[] = [];
   for (const [key, hits] of map) {
     const sorted = sortSlskFiles(hits);
     const first = sorted[0]!;
