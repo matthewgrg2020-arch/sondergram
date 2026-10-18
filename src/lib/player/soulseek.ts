@@ -1,6 +1,6 @@
 export type SlskKind = "native" | "slskd";
 
-export type SlsKSession = {
+export type SlskSession = {
   kind?: SlskKind;
   base: string;
   key: string;
@@ -8,8 +8,6 @@ export type SlsKSession = {
   name?: string;
   ticket?: string;
 };
-
-export type SlskSession = SlsKSession;
 
 export type SlskFile = {
   username: string;
@@ -232,7 +230,7 @@ export function parseSlskTrackId(id: string) {
   return { username: id.slice(0, i), filename: id.slice(i + 1) };
 }
 
-export function slskStreamUrl(file: Pick<SlskFile, "username" | "filename">, session?: SlsKSession | null) {
+export function slskStreamUrl(file: Pick<SlskFile, "username" | "filename">, session?: SlskSession | null) {
   const params = new URLSearchParams({
     u: file.username,
     f: file.filename,
@@ -332,7 +330,7 @@ export function groupSlskAlbums(files: SlskFile[]): SlskAlbum[] {
 }
 
 export function packSlskAlbums(albums: SlskAlbum[]): SlskAlbumPack[] {
-  const buckets = new Map<string, SlsKAlbum[]>();
+  const buckets = new Map<string, SlskAlbum[]>();
   for (const album of albums) {
     const key = `${(album.artist || "").toLowerCase()}|${(album.album || "").toLowerCase()}`;
     const list = buckets.get(key);
