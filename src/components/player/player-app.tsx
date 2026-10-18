@@ -191,12 +191,9 @@ export function PlayerApp() {
       const state = usePlayer.getState();
       const current = state.tracks[state.index];
       if (isYoutubePlayback(current)) return;
-      // Soulseek / Bandcamp often error while the real stream is still being fetched.
-      // Do not clear playing — playIndex owns that lifecycle and will start audio when ready.
       if (needsDeferredStream(current)) return;
       if (current?.bandcampId && !(current.url || "").includes("bcbits.com")) return;
       if (current?.soulseekId || current?.bandcampId || (current?.tags || []).includes("SoundCloud")) {
-        // Only fail hard if we already had a real stream going for a bit
         if (Date.now() - startedAtRef.current < 2500) return;
         usePlayer.getState().flash("That stream did not start. Try the song again.");
         usePlayer.getState().setPlaying(false);
@@ -303,8 +300,6 @@ export function PlayerApp() {
         return;
       }
       youtubePause();
-      // Soulseek: playIndex fetches the peer file and calls beginPlayback itself.
-      // Starting here with a stale/empty URL races and aborts that fetch.
       if (needsDeferredStream(track)) return;
       if (track.url) {
         try {
@@ -314,14 +309,11 @@ export function PlayerApp() {
           } else {
             pauseOutput();
           }
-        } catch {
-          /* stream fail — playIndex / onError handle recovery */
-        }
+        } catch {}
       }
     })();
   }, [track?.id]);
 
-  // When Soulseek finishes downloading and patches url, start playback if still on this track.
   useEffect(() => {
     if (!track?.soulseekId) return;
     const src = track.url || "";
@@ -334,9 +326,7 @@ export function PlayerApp() {
         if (usePlayer.getState().playing && usePlayer.getState().tracks[usePlayer.getState().index]?.id === track.id) {
           void resumeEngine();
         }
-      } catch {
-        /* playIndex also calls beginPlayback */
-      }
+      } catch {}
     })();
   }, [track?.id, track?.url]);
 
@@ -370,25 +360,21 @@ export function PlayerApp() {
       if (!state.playing) return;
       if (Date.now() - startedAtRef.current < 1500) return;
 
-      // Near end using element or metadata duration
       if (duration > 3 && current > 2 && duration - current <= 0.45) {
         autoNext();
         return;
       }
 
-      // Stalled stream (common when Soulseek/proxy ends without a clean "ended" event)
       const prog = lastProgressRef.current;
       if (current > prog.t + 0.15) {
         lastProgressRef.current = { t: current, at: Date.now() };
       } else if (current > 2 && Date.now() - prog.at > 4000) {
-        // No progress for 4s after having played — treat as finished / broken and advance
         lastProgressRef.current = { t: current, at: Date.now() };
         if (out.ended || out.paused || (duration > 0 && current >= duration - 1)) {
           autoNext();
         } else if (out.ended || (duration > 0 && Math.abs(duration - current) < 1.5)) {
           autoNext();
         } else if (out.readyState >= 2 && out.paused && !out.ended && current > 1) {
-          // Unexpected pause at end of buffer
           if (duration > 0 && current >= duration * 0.92) autoNext();
         }
       }
@@ -457,11 +443,12 @@ export function PlayerApp() {
               <ListenCard />
               <SpatialCard />
               <TempoPitch />
-              <ExtrasPanel />
+              <ExtrasPanel onCarMode={() => setCar(true)} />
             </div>
           ) : null}
           {view === "settings" ? (
             <div className="space-y-4 px-5 py-4">
+              <ExtrasPanel onCarMode={() => setCar(true)} />
               <AccountSync />
               <AddMusicCard onView={goView} />
               <LibraryBackup />
@@ -479,7 +466,6 @@ export function PlayerApp() {
               {notice ? <p className="text-sm text-muted">{notice}</p> : null}
             </div>
           ) : null}
-          {/* YouTube iframe stage disabled — audio plays through the engine for EQ */}
           <div className="hidden">
             <YoutubeStage active={false} />
           </div>
