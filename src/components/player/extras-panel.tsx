@@ -14,13 +14,6 @@ function remainingLabel(until: number | null) {
   return `${m} min`;
 }
 
-function formatLoop(t: number | null) {
-  if (t == null) return "—";
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
   const crossfade = usePlayer((s) => s.crossfade);
   const sleepUntil = usePlayer((s) => s.sleepUntil);
@@ -51,18 +44,6 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
   const isolate = usePlayer((s) => s.isolate);
   const setIsolate = usePlayer((s) => s.setIsolate);
   const flash = usePlayer((s) => s.flash);
-  const bookmarks = usePlayer((s) => s.bookmarks);
-  const toggleBookmarks = usePlayer((s) => s.toggleBookmarks);
-  const skipLowRated = usePlayer((s) => s.skipLowRated);
-  const toggleSkipLowRated = usePlayer((s) => s.toggleSkipLowRated);
-  const skipSeconds = usePlayer((s) => s.skipSeconds);
-  const setSkipSeconds = usePlayer((s) => s.setSkipSeconds);
-  const playRecordPercent = usePlayer((s) => s.playRecordPercent);
-  const setPlayRecordPercent = usePlayer((s) => s.setPlayRecordPercent);
-  const restrictData = usePlayer((s) => s.restrictData);
-  const toggleRestrictData = usePlayer((s) => s.toggleRestrictData);
-  const autoFullScreen = usePlayer((s) => s.autoFullScreen);
-  const toggleAutoFullScreen = usePlayer((s) => s.toggleAutoFullScreen);
 
   const [left, setLeft] = useState<string | null>(() => remainingLabel(sleepUntil));
   useEffect(() => {
@@ -109,10 +90,6 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
         <Toggle on={autoEq} label="Auto EQ" icon={Wand2} onClick={toggleAutoEq} />
         <Toggle on={haptic} label="Haptic" icon={Vibrate} onClick={toggleHaptic} />
         <Toggle on={shakeSkip} label="Shake skip" icon={Smartphone} onClick={toggleShakeSkip} />
-        <Toggle on={bookmarks} label="Bookmarks" icon={Square} onClick={toggleBookmarks} />
-        <Toggle on={skipLowRated} label="Skip low-rated" icon={Square} onClick={toggleSkipLowRated} />
-        <Toggle on={restrictData} label="Data saver" icon={Smartphone} onClick={toggleRestrictData} />
-        <Toggle on={autoFullScreen} label="Auto full-screen" icon={Smartphone} onClick={toggleAutoFullScreen} />
         {onCarMode ? (
           <button
             type="button"
@@ -203,35 +180,6 @@ export function ExtrasPanel({ onCarMode }: { onCarMode?: () => void }) {
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-4">
-        <label className="flex items-center gap-2 text-sm text-muted">
-          Skip seconds
-          <input
-            type="range"
-            min={10}
-            max={90}
-            step={5}
-            value={skipSeconds}
-            onChange={(e) => setSkipSeconds(Number(e.target.value))}
-            className="w-28"
-          />
-          <span className="font-mono text-fg">{skipSeconds}s</span>
-        </label>
-        <label className="flex items-center gap-2 text-sm text-muted">
-          Play-record %
-          <input
-            type="range"
-            min={25}
-            max={100}
-            step={5}
-            value={playRecordPercent}
-            onChange={(e) => setPlayRecordPercent(Number(e.target.value))}
-            className="w-28"
-          />
-          <span className="font-mono text-fg">{playRecordPercent}%</span>
-        </label>
       </div>
 
       <div className="mb-2 flex flex-wrap gap-1.5">
