@@ -11,7 +11,7 @@ import type { VizMode } from "./session";
 import type { UserPlaylist } from "./playlists";
 import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
-import type { SlskFile } from "./soulseek";
+import type { SlsKFile } from "./soulseek";
 import { listStoredTracks, putStoredTrack, clearStoredLibrary, deleteStoredTrack, getAudioBlob } from "./persist";
 import { exportLibraryBackup, importLibraryBackup } from "./backup";
 import { isAudioFile, copyAudioBlob } from "./format";
@@ -247,7 +247,7 @@ export const usePlayer = create((set, get) => ({
     const state = get();
     const id = `custom-${Date.now().toString(36)}`;
     const next = [{ id, label: name, gains: state.eq.slice(), preamp: state.preamp },
-      ...state.customPresets.filter((item) => item.label.toLowerCase() !== name.toLowerCase())].slice(0, 12);
+      ...state.customPresets.filter((item) => item.label.toLowerCase() !== name.toLowerCase())].slice(0, 12)];
     set({ customPresets: next, presetId: id });
   },
   deleteCustomPreset: (id) => set((s) => ({
@@ -327,12 +327,42 @@ export const usePlayer = create((set, get) => ({
   },
   patchTrack: (id, patch) => set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   removeTrack: (id) => {
-    revokePlayUrl(id);
-    void deleteStoredTrack(id).catch(() => {});
-    set((s) => {
-      const tracks = s.tracks.filter((t) => t.id !== id);
-      return { tracks, index: Math.min(s.index, Math.max(-1, tracks.length - 1)) };
+    get().removeTracks([id]);
+  },
+  removeTracks: (ids) => {
+    const gone = new Set((ids || []).filter(Boolean));
+    if (!gone.size) return;
+    const { tracks, index, upNext } = get();
+    const current = tracks[index];
+    const removingCurrent = Boolean(current && gone.has(current.id));
+    const doomed = tracks.filter((t) => gone.has(t.id));
+    if (!doomed.length) return;
+    for (const track of doomed) {
+      revokePlayUrl(track.id);
+      if (track.url?.startsWith("blob:")) {
+        try { URL.revokeObjectURL(track.url); } catch {}
+      }
+      if (track.coverUrl?.startsWith("blob:")) {
+        try { URL.revokeObjectURL(track.coverUrl); } catch {}
+      }
+      void deleteStoredTrack(track.id).catch(() => {});
+    }
+    const next = tracks.filter((t) => !gone.has(t.id));
+    let nextIndex = index;
+    if (next.length === 0) nextIndex = -1;
+    else if (removingCurrent) nextIndex = Math.min(index, next.length - 1);
+    else if (current) {
+      const found = next.findIndex((t) => t.id === current.id);
+      nextIndex = found >= 0 ? found : Math.min(index, next.length - 1);
+    }
+    set({
+      tracks: next,
+      index: nextIndex,
+      upNext: upNext.filter((id) => !gone.has(id)),
+      playing: removingCurrent ? false : get().playing,
     });
+    const n = doomed.length;
+    get().flash(n === 1 ? "Removed 1 song" : `Removed ${n} songs`);
   },
 
   addFiles: (files) => {
