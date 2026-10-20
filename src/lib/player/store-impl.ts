@@ -246,8 +246,10 @@ export const usePlayer = create((set, get) => ({
     const name = (label || "").trim().slice(0, 24) || "Custom";
     const state = get();
     const id = `custom-${Date.now().toString(36)}`;
-    const next = [{ id, label: name, gains: state.eq.slice(), preamp: state.preamp },
-      ...state.customPresets.filter((item) => item.label.toLowerCase() !== name.toLowerCase())].slice(0, 12)];
+    const next = [
+      { id, label: name, gains: state.eq.slice(), preamp: state.preamp },
+      ...state.customPresets.filter((item) => item.label.toLowerCase() !== name.toLowerCase()),
+    ].slice(0, 12);
     set({ customPresets: next, presetId: id });
   },
   deleteCustomPreset: (id) => set((s) => ({
@@ -336,7 +338,10 @@ export const usePlayer = create((set, get) => ({
     const current = tracks[index];
     const removingCurrent = Boolean(current && gone.has(current.id));
     const doomed = tracks.filter((t) => gone.has(t.id));
-    if (!doomed.length) return;
+    if (!doomed.length) {
+      get().flash("Nothing to remove");
+      return;
+    }
     for (const track of doomed) {
       revokePlayUrl(track.id);
       if (track.url?.startsWith("blob:")) {
@@ -345,21 +350,24 @@ export const usePlayer = create((set, get) => ({
       if (track.coverUrl?.startsWith("blob:")) {
         try { URL.revokeObjectURL(track.coverUrl); } catch {}
       }
-      void deleteStoredTrack(track.id).catch(() => {});
+      void deleteStoredTrack(track.id).catch((err) => console.warn("deleteStoredTrack", track.id, err));
     }
     const next = tracks.filter((t) => !gone.has(t.id));
     let nextIndex = index;
     if (next.length === 0) nextIndex = -1;
-    else if (removingCurrent) nextIndex = Math.min(index, next.length - 1);
+    else if (removingCurrent) nextIndex = Math.min(Math.max(0, index), next.length - 1);
     else if (current) {
       const found = next.findIndex((t) => t.id === current.id);
-      nextIndex = found >= 0 ? found : Math.min(index, next.length - 1);
+      nextIndex = found >= 0 ? found : Math.min(Math.max(0, index), next.length - 1);
+    } else {
+      nextIndex = Math.min(Math.max(0, index), next.length - 1);
     }
     set({
       tracks: next,
       index: nextIndex,
       upNext: upNext.filter((id) => !gone.has(id)),
       playing: removingCurrent ? false : get().playing,
+      currentTime: removingCurrent ? 0 : get().currentTime,
     });
     const n = doomed.length;
     get().flash(n === 1 ? "Removed 1 song" : `Removed ${n} songs`);
@@ -386,21 +394,28 @@ export const usePlayer = create((set, get) => ({
             name: tags?.title || parsed.title || file.name.replace(/\.[^.]+$/, ""),
             artist: tags?.artist || parsed.artist || "Unknown Artist",
             album: tags?.album || parsed.album || "Unknown Album",
-            genre: tags?.genre || "", tags: tags?.tags || [], year: tags?.year || parsed.year || "",
-            url, coverUrl,
-            format: (tags?.format || file.name.split(".").pop() || "AUDIO").toUpperCase(),
-            sampleRate: tags?.sampleRate ?? null, bitDepth: tags?.bitDepth ?? null,
-            bitrate: tags?.bitrate ?? null, channels: tags?.channels ?? null,
-            lossless: Boolean(tags?.lossless), liked: false, starred: false, addedAt: Date.now(),
-            trackNo: tags?.trackNo || trackNoFromName(file.name) || parsed.trackNo,
-            diskNo: tags?.diskNo || 1, durationSec: tags?.duration || 0, bytes: audio.size,
-            albumArtist: tags?.albumArtist || "",
-            explicit: Boolean(tags?.explicit) || isExplicitContent({ name: tags?.title ?? parsed.title, artist: tags?.artist ?? parsed.artist, album: tags?.album ?? parsed.album }),
+            genre: tags?.genre || "",
+            tags: tags?.genre ? [tags.genre] : [],
+            year: tags?.year || parsed.year || "",
+            url,
+            coverUrl,
+            format: (file.name.split(".").pop() || "").toUpperCase(),
+            sampleRate: tags?.sampleRate ?? null,
+            bitDepth: tags?.bitDepth ?? null,
+            bitrate: tags?.bitrate ?? null,
+            channels: tags?.channels ?? null,
+            lossless: /flac|alac|wav|aiff/i.test(file.name),
+            liked: false,
+            starred: false,
+            addedAt: Date.now() + i,
+            trackNo: tags?.trackNo ?? trackNoFromName(file.name),
+            diskNo: tags?.diskNo,
+            durationSec: tags?.duration,
+            bytes: file.size,
+            albumArtist: tags?.albumArtist,
+            explicit: isExplicitContent(tags?.title || file.name),
           };
-          set((s) => {
-            const tracks = [...s.tracks, track];
-            return { tracks, index: s.index === -1 ? tracks.length - 1 : s.index };
-          });
+          set((s) => ({ tracks: [...s.tracks, track] }));
           await putStoredTrack({
             id, name: track.name, artist: track.artist, album: track.album, genre: track.genre,
             tags: track.tags, year: track.year, format: track.format, sampleRate: track.sampleRate,
@@ -456,54 +471,104 @@ export const usePlayer = create((set, get) => ({
       have.add(sid);
       const id = crypto.randomUUID();
       const polished = polishTrackFromFilename(file.filename);
-      const url = slskStreamUrl(file, session);
       incoming.push({
-        id,
-        name: file.name || polished.name || "Track",
+        id, name: file.name || polished.name || "Track",
         artist: file.artist || polished.artist || file.username,
-        album: file.album || polished.album || "Soulseek",
-        genre: "",
-        tags: ["Soulseek", file.ext].filter(Boolean),
-        year: file.year || polished.year || "",
-        url,
-        coverUrl: null,
-        format: (file.ext || "SLSK").toUpperCase(),
-        sampleRate: null, bitDepth: null, bitrate: file.bitRate || null, channels: null,
-        lossless: Boolean(file.lossless), liked: false, starred: false,
-        soulseekId: sid, trackNo: file.trackNo || polished.trackNo,
-        durationSec: file.length || 0, bytes: file.size, addedAt: Date.now(),
+        album: file.album || polished.album || "Soulseek", genre: "",
+        tags: ["Soulseek", file.ext].filter(Boolean), year: file.year || polished.year || "",
+        url: slskStreamUrl(file, session),
+        coverUrl: null, format: (file.ext || "").toUpperCase() || "SLSK",
+        sampleRate: null, bitDepth: null, bitrate: file.bitrate || null, channels: null,
+        lossless: /flac|wav|aiff/i.test(file.ext || ""), liked: false, starred: false,
+        soulseekId: sid, addedAt: Date.now(), bytes: file.size,
       });
     }
     if (!incoming.length) {
-      get().flash("Those Soulseek tracks are already in the library");
+      get().flash("Already in library");
       return 0;
     }
     set((s) => ({ tracks: [...s.tracks, ...incoming] }));
-    for (let i = 0; i < incoming.length; i++) {
-      const track = incoming[i];
+    for (const track of incoming) {
       try {
         await putStoredTrack({
           id: track.id, name: track.name, artist: track.artist, album: track.album,
           genre: "", tags: track.tags, year: track.year, format: track.format,
           sampleRate: null, bitDepth: null, bitrate: track.bitrate, channels: null,
           lossless: track.lossless, liked: false, soulseekId: track.soulseekId,
-          duration: track.durationSec, bytes: track.bytes, trackNo: track.trackNo,
           audio: new Blob([track.soulseekId], { type: "text/plain" }), cover: null,
-          addedAt: Date.now() + i,
+          addedAt: track.addedAt, bytes: track.bytes,
         });
       } catch {}
     }
-    get().flash(`Added ${incoming.length} Soulseek ${incoming.length === 1 ? "track" : "tracks"}`);
+    get().flash(`Added ${incoming.length} from Soulseek`);
     if (autoplay && incoming[0]) {
       const idx = get().tracks.findIndex((t) => t.id === incoming[0].id);
-      if (idx >= 0) get().playIndex(idx, true);
+      if (idx >= 0) get().playIndex(idx);
     }
     return incoming.length;
   },
 
+  importBandcamp: async (hits) => {
+    const n = await importBandcampTracks(get, set, hits);
+    return n;
+  },
+
+  setCover: async (ids, file) => {
+    try {
+      const blob = file.slice(0, file.size, file.type || "image/jpeg");
+      const url = URL.createObjectURL(blob);
+      const idSet = new Set(ids);
+      set((s) => ({
+        tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, coverUrl: url } : t)),
+      }));
+      for (const id of ids) {
+        try {
+          const { updateStoredMeta } = await import("./persist");
+          await updateStoredMeta(id, { cover: blob });
+        } catch {}
+      }
+      get().flash("Cover updated");
+      return true;
+    } catch {
+      get().flash("Could not set cover");
+      return false;
+    }
+  },
+  setCoverUrl: async (ids, remoteUrl) => {
+    const idSet = new Set(ids);
+    set((s) => ({
+      tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, coverUrl: remoteUrl } : t)),
+    }));
+    for (const id of ids) {
+      try {
+        const { updateStoredMeta } = await import("./persist");
+        await updateStoredMeta(id, { coverRemote: remoteUrl });
+      } catch {}
+    }
+    return true;
+  },
+  updateMeta: (id, patch) => {
+    set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+    void (async () => {
+      try {
+        const { updateStoredMeta } = await import("./persist");
+        await updateStoredMeta(id, patch);
+      } catch {}
+    })();
+  },
+  updateAlbumMeta: (ids, patch) => {
+    const idSet = new Set(ids);
+    set((s) => ({ tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)) }));
+    void (async () => {
+      try {
+        const { updateStoredMeta } = await import("./persist");
+        for (const id of ids) await updateStoredMeta(id, patch);
+      } catch {}
+    })();
+  },
+  searchAlbumOnline: asyncNoop,
+  applyAlbumHit: asyncNoop,
   importAmazon: asyncNoop,
-  importBandcamp: async (url, autoplay = true) => importBandcampTracks(get, set, url, autoplay),
-  importDeezer: asyncNoop,
   importDeezerArl: asyncNoop,
   importIbroadcast: asyncNoop,
   importFoundAudio: asyncNoop,
