@@ -10,10 +10,11 @@ import type { VizMode } from "./session";
 import type { UserPlaylist } from "./playlists";
 import type { StreamHit } from "./stream-search";
 import type { FoundAudio } from "./find-audio";
-import type { SlsKFile } from "./soulseek";
+import type { SlskFile } from "./soulseek";
 import { listStoredTracks, putStoredTrack, clearStoredLibrary, deleteStoredTrack, getAudioBlob } from "./persist";
 import { exportLibraryBackup, importLibraryBackup } from "./backup";
 import { isAudioFile, copyAudioBlob } from "./format";
+import { albumKey, compareTracks } from "./catalog";
 import { readFileTags, tagsFromFilename, trackNoFromName } from "./tags";
 import { isExplicitContent } from "./explicit";
 import { loadSlskSession, parseSlskTrackId, polishTrackFromFilename, slskStreamUrl, slskTrackId } from "./soulseek";
@@ -161,8 +162,14 @@ export const usePlayer = create((set, get) => ({
     })();
   },
   playIds: (ids) => {
-    const first = get().tracks.findIndex((t) => ids.includes(t.id));
-    if (first >= 0) get().playIndex(first, true);
+    const unique = [...new Set((ids || []).filter(Boolean))];
+    if (!unique.length) return;
+    const tracks = get().tracks;
+    const first = unique[0];
+    const index = tracks.findIndex((t) => t.id === first);
+    if (index < 0) return;
+    set({ upNext: unique.slice(1), radio: false });
+    get().playIndex(index, true);
   },
   queueNext: (id) => set((s) => ({ upNext: [id, ...s.upNext.filter((x) => x !== id)] })),
   queueNextMany: (ids) => set((s) => {
@@ -170,7 +177,34 @@ export const usePlayer = create((set, get) => ({
     return { upNext: [...ids, ...s.upNext.filter((x) => !hold.has(x))] };
   }),
   queueLast: (id) => set((s) => ({ upNext: [...s.upNext.filter((x) => x !== id), id] })),
-  playRest: () => {}, playAlbum: () => {}, skipAlbum: () => {},
+  playRest: (id) => {
+    const tracks = get().tracks;
+    const current = tracks.find((t) => t.id === id);
+    if (!current) return;
+    const album = tracks.filter((t) => albumKey(t) === albumKey(current)).sort(compareTracks);
+    const i = album.findIndex((t) => t.id === id);
+    if (i < 0) return;
+    get().playIds(album.slice(i).map((t) => t.id));
+  },
+  playAlbum: (id) => {
+    const tracks = get().tracks;
+    const current = tracks.find((t) => t.id === id);
+    if (!current) return;
+    get().playIds(tracks.filter((t) => albumKey(t) === albumKey(current)).sort(compareTracks).map((t) => t.id));
+  },
+  skipAlbum: () => {
+    const { tracks, index, upNext } = get();
+    const current = tracks[index];
+    if (!current) return;
+    const key = albumKey(current);
+    const rest = upNext.filter((id) => {
+      const t = tracks.find((x) => x.id === id);
+      return t && albumKey(t) !== key;
+    });
+    set({ upNext: rest });
+    const next = get().nextIndex(true);
+    if (next !== null) get().playIndex(next, true);
+  },
   clearQueue: () => set({ upNext: [] }),
   flash: (message) => set({ notice: message }),
   setPlaying: (playing) => set({ playing }),
