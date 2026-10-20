@@ -20,6 +20,7 @@ import { readFileTags, tagsFromFilename, trackNoFromName } from "./tags";
 import { isExplicitContent } from "./explicit";
 import { loadSlskSession, parseSlskTrackId, polishTrackFromFilename, slskStreamUrl, slskTrackId } from "./soulseek";
 import { parseYoutubeId, youtubeThumb } from "./youtube";
+import { importBandcampTracks, playBandcampTrack } from "./bandcamp-play";
 
 export type RepeatMode = "off" | "all" | "one";
 export type StopAfter = "off" | "track" | "album";
@@ -151,8 +152,12 @@ export const usePlayer = create((set, get) => ({
     const tracks = get().tracks;
     if (index < 0 || index >= tracks.length) return;
     const track = tracks[index];
-    // Must unlock inside the user-gesture stack (iOS Safari)
     try { unlockEngine(); primePlayback(); setAudioSessionPlayback(); } catch {}
+    set({ index, playing: true, currentTime: 0 });
+    if (track.bandcampId) {
+      void playBandcampTrack(get, set, track, index);
+      return;
+    }
     void (async () => {
       let url = track.url || "";
       if (!url || (!url.startsWith("http") && !url.startsWith("/api/") && !url.startsWith("blob:") && !url.startsWith("yt:"))) {
@@ -161,7 +166,6 @@ export const usePlayer = create((set, get) => ({
           set((s) => ({ tracks: s.tracks.map((t, i) => (i === index ? { ...t, url } : t)) }));
         }
       }
-      set({ index, playing: true, currentTime: 0 });
       if (!url) {
         get().flash("No audio for this track yet");
         return;
@@ -468,7 +472,7 @@ export const usePlayer = create((set, get) => ({
   },
 
   importAmazon: asyncNoop,
-  importBandcamp: asyncNoop,
+  importBandcamp: async (url, autoplay = true) => importBandcampTracks(get, set, url, autoplay),
   importDeezer: asyncNoop,
   importDeezerArl: asyncNoop,
   importIbroadcast: asyncNoop,
