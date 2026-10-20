@@ -5,6 +5,7 @@ import type { IsolateMode, RemasterPreset, SpatialPreset } from "./engine";
 import {
   applyEq, applyPreamp, setBassLock, setRemaster as engSetRemaster,
   setSpatialMode, setBalance as engSetBalance, setMasterGain, setPlaybackRate,
+  unlockEngine, primePlayback, beginPlayback, resumeEngine, setAudioSessionPlayback,
 } from "./engine";
 import type { VizMode } from "./session";
 import type { UserPlaylist } from "./playlists";
@@ -150,15 +151,29 @@ export const usePlayer = create((set, get) => ({
     const tracks = get().tracks;
     if (index < 0 || index >= tracks.length) return;
     const track = tracks[index];
+    // Must unlock inside the user-gesture stack (iOS Safari)
+    try { unlockEngine(); primePlayback(); setAudioSessionPlayback(); } catch {}
     void (async () => {
-      let url = track.url;
+      let url = track.url || "";
       if (!url || (!url.startsWith("http") && !url.startsWith("/api/") && !url.startsWith("blob:") && !url.startsWith("yt:"))) {
-        url = await ensurePlayUrl(track);
+        url = (await ensurePlayUrl(track)) || "";
         if (url && url !== track.url) {
           set((s) => ({ tracks: s.tracks.map((t, i) => (i === index ? { ...t, url } : t)) }));
         }
       }
       set({ index, playing: true, currentTime: 0 });
+      if (!url) {
+        get().flash("No audio for this track yet");
+        return;
+      }
+      if (url.startsWith("yt:")) return;
+      try {
+        await beginPlayback(url, 0);
+        if (get().playing) await resumeEngine();
+      } catch (err) {
+        console.warn("playIndex beginPlayback failed", err);
+        get().flash("Could not start that track");
+      }
     })();
   },
   playIds: (ids) => {
