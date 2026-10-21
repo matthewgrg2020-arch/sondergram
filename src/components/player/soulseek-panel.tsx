@@ -62,11 +62,11 @@ export function SoulseekPanel() {
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [openKey, setOpenKey] = useState("");
   const [copyKey, setCopyKey] = useState<Record<string, string>>({});
-  const inLib = tracks.filter((t) => t.soulseekId).length;
+  const inLib = (tracks || []).filter((t) => t.soulseekId).length;
   const native = isNativeSlsk(session);
 
   const filtered = useMemo(() => {
-    return hits.filter((hit) => {
+    return (hits || []).filter((hit) => {
       if (format === "mp3") {
         if (hit.lossless) return false;
         if (hit.ext && !/mp3|m4a|aac|ogg|opus|wma/i.test(hit.ext)) return false;
@@ -116,7 +116,6 @@ export function SoulseekPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      // Bias the network search toward the chosen format so results are not only FLAC
       let searchQ = q;
       if (format === "mp3" && !/\bmp3\b/i.test(q)) searchQ = `${q} mp3`;
       if (format === "flac" && !/\bflac\b/i.test(q)) searchQ = `${q} flac`;
@@ -129,10 +128,16 @@ export function SoulseekPanel() {
           q: searchQ,
         },
       });
-      setHits(result.hits);
+      // API returns { files }; accept hits as alias
+      const files = Array.isArray((result as { files?: SlskFile[]; hits?: SlskFile[] }).files)
+        ? (result as { files: SlskFile[] }).files
+        : Array.isArray((result as { hits?: SlskFile[] }).hits)
+          ? (result as { hits: SlskFile[] }).hits
+          : [];
+      setHits(files);
       setHistory(pushHistory(q));
-      const folders = groupSlskAlbums(result.hits).filter((row) => row.files.length >= 2).length;
-      const shown = result.hits.filter((hit) => {
+      const folders = groupSlskAlbums(files).filter((row) => row.files.length >= 2).length;
+      const shown = files.filter((hit) => {
         if (format === "mp3") {
           if (hit.lossless) return false;
           if (hit.ext && !/mp3|m4a|aac|ogg|opus|wma/i.test(hit.ext)) return false;
@@ -141,8 +146,8 @@ export function SoulseekPanel() {
         return true;
       });
       setMessage(
-        result.hits.length
-          ? `${shown.length} ${format === "mp3" ? "MP3" : format === "flac" ? "FLAC" : "audio"} files${folders ? ` · ${folders} album folders` : ""} (of ${result.hits.length} total)`
+        files.length
+          ? `${shown.length} ${format === "mp3" ? "MP3" : format === "flac" ? "FLAC" : "audio"} files${folders ? ` · ${folders} album folders` : ""} (of ${files.length} total)`
           : "No audio files matched. Try Format → Any, or add mp3 to your search.",
       );
     } catch (err) {
@@ -163,17 +168,16 @@ export function SoulseekPanel() {
           name: session.name,
           username: album.username,
           folder: album.folder,
-          artist: album.artist,
-          album: album.album,
           speed: album.speed,
           queue: album.queue,
           free: album.free,
         },
       });
-      if (!extra.hits.length) return album.files;
+      const extraHits = Array.isArray(extra?.hits) ? extra.hits : [];
+      if (!extraHits.length) return album.files;
       const seen = new Set(album.files.map((file) => file.filename.replace(/\\/g, "/").toLowerCase()));
       const merged = [...album.files];
-      for (const hit of extra.hits) {
+      for (const hit of extraHits) {
         const key = hit.filename.replace(/\\/g, "/").toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -468,16 +472,16 @@ export function SoulseekPanel() {
                       type="button"
                       disabled={busy}
                       onClick={() => void addAlbum(selected, false)}
-                      className="inline-flex h-9 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium text-fg disabled:opacity-40"
+                      className="inline-flex h-9 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium disabled:opacity-40"
                     >
                       <Plus className="size-3.5" strokeWidth={2} />
-                      Library
+                      Add
                     </button>
                     <button
                       type="button"
                       disabled={busy}
                       onClick={() => void addAlbum(selected, false, true)}
-                      className="inline-flex h-9 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium text-fg disabled:opacity-40"
+                      className="inline-flex h-9 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium disabled:opacity-40"
                     >
                       <ListMusic className="size-3.5" strokeWidth={2} />
                       Queue
@@ -485,26 +489,26 @@ export function SoulseekPanel() {
                     <button
                       type="button"
                       onClick={() => setOpenKey(open ? "" : selected.key)}
-                      className="inline-flex h-9 items-center gap-1 rounded-full px-2 text-xs text-muted hover:text-fg"
+                      className="inline-flex h-9 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium"
                     >
-                      <ChevronDown className={cn("size-4 transition", open && "rotate-180")} strokeWidth={1.75} />
+                      <ChevronDown className={cn("size-3.5 transition", open && "rotate-180")} strokeWidth={2} />
+                      Tracks
                     </button>
                   </div>
                 </div>
                 {open ? (
-                  <ul className="mt-3 space-y-1 border-t border-raised pt-3">
+                  <ul className="mt-3 space-y-1 border-t border-border/40 pt-3">
                     {selected.files.map((file) => (
-                      <li key={file.filename} className="flex items-center justify-between gap-2 text-xs">
-                        <span className="min-w-0 truncate text-muted">
+                      <li key={file.filename} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate">
                           {file.trackNo ? `${file.trackNo}. ` : ""}
                           {file.name}
-                          {file.ext ? ` · ${file.ext}` : ""}
                         </span>
                         <button
                           type="button"
                           disabled={busy}
                           onClick={() => void add([file], true)}
-                          className="shrink-0 rounded-full px-2 py-1 text-muted hover:bg-raised hover:text-fg"
+                          className="shrink-0 rounded-full bg-raised px-2 py-1 text-[11px] disabled:opacity-40"
                         >
                           Play
                         </button>
@@ -520,16 +524,15 @@ export function SoulseekPanel() {
 
       {singles.length > 0 ? (
         <ul className="max-w-2xl space-y-1">
-          {singles.slice(0, 40).map((hit) => (
-            <li key={`${hit.username}|${hit.filename}`} className="flex items-center justify-between gap-2 rounded-lg bg-surface px-3 py-2 text-sm">
+          {singles.slice(0, 80).map((hit) => (
+            <li key={`${hit.username}|${hit.filename}`} className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2 text-sm">
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{hit.name}</p>
                 <p className="truncate text-xs text-muted">
-                  {hit.artist}
-                  {hit.album ? ` · ${hit.album}` : ""}
+                  {hit.artist || hit.username}
                   {hit.ext ? ` · ${hit.ext}` : ""}
-                  {hit.bitRate ? ` · ${hit.bitRate}k` : ""}
-                  {` · ${formatBytes(hit.size)}`}
+                  {hit.bitRate ? ` · ${hit.bitRate} kbps` : ""}
+                  {hit.free ? " · ready" : ""}
                 </p>
               </div>
               <button
@@ -543,10 +546,6 @@ export function SoulseekPanel() {
             </li>
           ))}
         </ul>
-      ) : null}
-
-      {session && !busy && !albumPacks.length && !singles.length && hits.length === 0 && message ? (
-        <p className="text-sm text-muted">Try Format → Any, or search with the word mp3 if you only see FLAC.</p>
       ) : null}
     </section>
   );
