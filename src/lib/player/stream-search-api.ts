@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { STREAM_SOURCES, type StreamHit, type StreamSource } from "./stream-search";
+import { ytDlpSearch, ytDlpStreamUrl } from "./yt-dlp.server";
 
 type Json = Record<string, unknown>;
 
@@ -282,6 +283,31 @@ function walkYtm(node: unknown, out: { id: string; title: string; artist: string
 }
 
 async function youtubeSearch(q: string): Promise<StreamHit[]> {
+  // Prefer yt-dlp (ytsearchmusic) — cleaner titles than scraping WEB_REMIX JSON
+  try {
+    const dlp = await ytDlpSearch(q, 12);
+    if (dlp.length) {
+      return dlp.map((row) =>
+        hit({
+          source: "YouTube Music",
+          kind: "track",
+          name: row.title,
+          artist: row.artist.replace(/\s+[-–—]\s+Topic$/i, "").trim() || "YouTube Music",
+          album: "YouTube Music",
+          year: "",
+          cover: row.cover || `https://i.ytimg.com/vi/${row.id}/hqdefault.jpg`,
+          preview: "",
+          duration: row.duration || 0,
+          trackNo: 0,
+          youtubeId: row.id,
+          page: `https://music.youtube.com/watch?v=${row.id}`,
+        }),
+      );
+    }
+  } catch {
+    /* fall through to innertube scrape */
+  }
+
   try {
     const res = await fetch("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", {
       method: "POST",
@@ -491,7 +517,6 @@ export const streamAlbum = createServerFn({ method: "POST" })
         const url = new URL("https://itunes.apple.com/lookup");
         url.searchParams.set("id", data.collectionId);
         url.searchParams.set("entity", "song");
-        url.searchParams.set("limit", "200");
         const json = asJson(await getJson(url.toString()));
         const rows = Array.isArray(json.results) ? (json.results as unknown[]) : [];
         for (const row of rows) {
@@ -509,16 +534,17 @@ export const streamAlbum = createServerFn({ method: "POST" })
               preview: str(item.previewUrl),
               duration: Math.round(num(item.trackTimeMillis) / 1000),
               trackNo: num(item.trackNumber),
-              appleId: str(item.trackId),
               collectionId: str(item.collectionId),
+              appleId: str(item.trackId),
               page: str(item.trackViewUrl),
             }),
           );
         }
       } else if (data.source === "Spotify" && data.spotifyId && data.token && data.kind === "album") {
+        const headers = { Authorization: `Bearer ${data.token}` };
         const json = asJson(
-          await getJson(`https://api.spotify.com/v1/albums/${encodeURIComponent(data.spotifyId)}/tracks?limit=50`, {
-            headers: { Authorization: `Bearer ${data.token}` },
+          await getJson(`https://api.spotify.com/v1/albums/${encodeURIComponent(data.spotifyId)}/tracks?limit=50&market=from_token`, {
+            headers,
           }),
         );
         const rows = Array.isArray(json.items) ? (json.items as unknown[]) : [];
@@ -550,6 +576,12 @@ export const streamAlbum = createServerFn({ method: "POST" })
   });
 
 async function youtubeStreamUrl(videoId: string): Promise<string> {
+  try {
+    const dlp = await ytDlpStreamUrl(videoId);
+    if (dlp.url) return dlp.url;
+  } catch {
+    /* fall through */
+  }
   try {
     const res = await fetch(`https://www.youtube.com/youtubei/v1/player?prettyPrint=false`, {
       method: "POST",
@@ -587,6 +619,14 @@ export const resolveFullTrack = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const youtubeId = str(data.youtubeId);
     if (youtubeId) {
+      try {
+        const dlp = await ytDlpStreamUrl(youtubeId);
+        if (dlp.url) {
+          return { youtubeId, url: dlp.url, duration: dlp.duration || num(data.duration) };
+        }
+      } catch {
+        /* fall through */
+      }
       const url = await youtubeStreamUrl(youtubeId);
       return { youtubeId, url, duration: num(data.duration) };
     }
@@ -596,6 +636,18 @@ export const resolveFullTrack = createServerFn({ method: "POST" })
       const yt = await youtubeSearch(`${artist} ${name}`.trim());
       const best = yt[0];
       if (best?.youtubeId) {
+        try {
+          const dlp = await ytDlpStreamUrl(best.youtubeId);
+          if (dlp.url) {
+            return {
+              youtubeId: best.youtubeId,
+              url: dlp.url,
+              duration: dlp.duration || best.duration || num(data.duration),
+            };
+          }
+        } catch {
+          /* fall through */
+        }
         const url = await youtubeStreamUrl(best.youtubeId);
         return { youtubeId: best.youtubeId, url, duration: best.duration || num(data.duration) };
       }
