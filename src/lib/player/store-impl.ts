@@ -21,6 +21,7 @@ import { isExplicitContent } from "./explicit";
 import { loadSlskSession, parseSlskTrackId, polishTrackFromFilename, slskStreamUrl, slskTrackId } from "./soulseek";
 import { parseYoutubeId, youtubeThumb } from "./youtube";
 import { importBandcampTracks, playBandcampTrack } from "./bandcamp-play";
+import { resolveFullTrack } from "./stream-search-api";
 
 export type RepeatMode = "off" | "all" | "one";
 export type StopAfter = "off" | "track" | "album";
@@ -166,11 +167,43 @@ export const usePlayer = create((set, get) => ({
           set((s) => ({ tracks: s.tracks.map((t, i) => (i === index ? { ...t, url } : t)) }));
         }
       }
+      if ((url.startsWith("yt:") || track.youtubeId) && !url.startsWith("http")) {
+        const youtubeId = track.youtubeId || url.slice(3);
+        try {
+          const full = await resolveFullTrack({
+            data: {
+              artist: track.artist,
+              name: track.name,
+              album: track.album,
+              duration: track.durationSec,
+              youtubeId,
+            },
+          });
+          if (full?.url) {
+            url = full.url;
+            set((s) => ({
+              tracks: s.tracks.map((t, i) =>
+                i === index ? { ...t, url, previewUrl: full.url, youtubeId: full.youtubeId || youtubeId } : t,
+              ),
+            }));
+          } else {
+            get().flash("Could not resolve YouTube audio");
+            return;
+          }
+        } catch (err) {
+          console.warn("resolveFullTrack failed", err);
+          get().flash("Could not resolve YouTube audio");
+          return;
+        }
+      }
       if (!url) {
         get().flash("No audio for this track yet");
         return;
       }
-      if (url.startsWith("yt:")) return;
+      if (url.startsWith("yt:")) {
+        get().flash("No streamable audio for this track");
+        return;
+      }
       try {
         await beginPlayback(url, 0);
         if (get().playing) await resumeEngine();
@@ -241,7 +274,7 @@ export const usePlayer = create((set, get) => ({
   applyPreset: (id, gains, preamp) => {
     set({ eq: gains.slice(), preamp, presetId: id });
     try { applyEq(gains); applyPreamp(preamp); } catch {}
-  },
+  }),
   saveCustomPreset: (label) => {
     const name = (label || "").trim().slice(0, 24) || "Custom";
     const state = get();
@@ -301,8 +334,8 @@ export const usePlayer = create((set, get) => ({
   toggleBookmarks: () => set((s) => { const bookmarks = !s.bookmarks; savePlaybackSettings({ bookmarks }); return { bookmarks }; }),
   toggleBookmarkPrompt: () => set((s) => { const bookmarkPrompt = !s.bookmarkPrompt; savePlaybackSettings({ bookmarkPrompt }); return { bookmarkPrompt }; }),
   toggleSkipLowRated: () => set((s) => { const skipLowRated = !s.skipLowRated; savePlaybackSettings({ skipLowRated }); return { skipLowRated }; }),
-  setSkipSeconds: (n) => { const skipSeconds = Math.max(10, Math.min(90, Math.round(n))); savePlaybackSettings({ skipSeconds }); set({ skipSeconds }); },
-  setPlayRecordPercent: (n) => { const playRecordPercent = Math.max(25, Math.min(100, Math.round(n))); savePlaybackSettings({ playRecordPercent }); set({ playRecordPercent }); },
+  setSkipSeconds: (n) => { const skipSeconds = Math.max(10, Math.min(90, Math.round(n)); savePlaybackSettings({ skipSeconds }); set({ skipSeconds }); },
+  setPlayRecordPercent: (n) => { const playRecordPercent = Math.max(25, Math.min(100, Math.round(n)); savePlaybackSettings({ playRecordPercent }); set({ playRecordPercent }); },
   toggleRestrictData: () => set((s) => { const restrictData = !s.restrictData; savePlaybackSettings({ restrictData }); return { restrictData }; }),
   toggleAutoFullScreen: () => set((s) => { const autoFullScreen = !s.autoFullScreen; savePlaybackSettings({ autoFullScreen }); return { autoFullScreen }; }),
   saveQueuePlaylist: () => {}, createPlaylist: () => {}, addTracksToPlaylist: () => {}, playPlaylist: () => {}, deletePlaylist: () => {},
@@ -373,6 +406,162 @@ export const usePlayer = create((set, get) => ({
     get().flash(n === 1 ? "Removed 1 song" : `Removed ${n} songs`);
   },
 
+  importStreamHits: async (hits, autoplay = true) => {
+    const list = Array.isArray(hits) ? hits : [];
+    if (!list.length) return 0;
+    const have = new Set(
+      get().tracks.flatMap((t) => [t.youtubeId, t.previewUrl, t.deezerId, t.spotifyId, t.amazonId].filter(Boolean)),
+    );
+    const incoming = [];
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (!item) continue;
+      const key = item.youtubeId || item.deezerId || item.spotifyId || item.amazonId || item.preview || item.key;
+      if (key && have.has(key)) continue;
+      if (key) have.add(key);
+      const id = crypto.randomUUID();
+      let playUrl = item.preview || "";
+      let youtubeId = item.youtubeId || "";
+      if (youtubeId && !playUrl) {
+        try {
+          const full = await resolveFullTrack({
+            data: {
+              artist: item.artist,
+              name: item.name,
+              album: item.album,
+              duration: item.duration,
+              youtubeId,
+            },
+          });
+          if (full?.url) playUrl = full.url;
+          if (full?.youtubeId) youtubeId = full.youtubeId;
+        } catch (err) {
+          console.warn("importStreamHits resolve", err);
+        }
+      }
+      const track = {
+        id,
+        name: item.name || "Track",
+        artist: item.artist || item.source || "Unknown",
+        album: item.album || item.source || "Streaming",
+        genre: item.genre || "",
+        tags: [item.source, "Stream"].filter(Boolean),
+        year: item.year || "",
+        url: playUrl || (youtubeId ? `yt:${youtubeId}` : ""),
+        coverUrl: item.cover || (youtubeId ? youtubeThumb(youtubeId) : null),
+        format: item.source === "YouTube Music" || youtubeId ? "YTM" : (item.source || "STREAM").slice(0, 8).toUpperCase(),
+        sampleRate: null,
+        bitDepth: null,
+        bitrate: null,
+        channels: null,
+        lossless: false,
+        liked: false,
+        starred: false,
+        youtubeId: youtubeId || undefined,
+        deezerId: item.deezerId,
+        spotifyId: item.spotifyId,
+        amazonId: item.amazonId,
+        archiveId: item.archiveId,
+        bandcampId: item.bandcampUrl,
+        bandcampUrl: item.bandcampUrl,
+        previewUrl: playUrl || item.preview || undefined,
+        addedAt: Date.now() + i,
+        trackNo: item.trackNo || 0,
+        durationSec: item.duration || 0,
+      };
+      incoming.push(track);
+    }
+    if (!incoming.length) {
+      get().flash("Already in your library");
+      return 0;
+    }
+    set((s) => ({ tracks: [...s.tracks, ...incoming] }));
+    for (const track of incoming) {
+      try {
+        await putStoredTrack({
+          id: track.id,
+          name: track.name,
+          artist: track.artist,
+          album: track.album,
+          genre: track.genre,
+          tags: track.tags,
+          year: track.year,
+          format: track.format,
+          sampleRate: null,
+          bitDepth: null,
+          bitrate: null,
+          channels: null,
+          lossless: false,
+          liked: false,
+          youtubeId: track.youtubeId,
+          deezerId: track.deezerId,
+          spotifyId: track.spotifyId,
+          amazonId: track.amazonId,
+          archiveId: track.archiveId,
+          bandcampId: track.bandcampId,
+          bandcampUrl: track.bandcampUrl,
+          previewUrl: track.previewUrl,
+          coverRemote: track.coverUrl || undefined,
+          duration: track.durationSec,
+          trackNo: track.trackNo,
+          audio: new Blob([track.youtubeId || track.id], { type: "text/plain" }),
+          cover: null,
+          addedAt: track.addedAt,
+        });
+      } catch {}
+    }
+    get().flash(`Added ${incoming.length} from ${list[0]?.source || "search"}`);
+    if (autoplay && incoming[0]) {
+      const idx = get().tracks.findIndex((t) => t.id === incoming[0].id);
+      if (idx >= 0) get().playIndex(idx);
+    }
+    return incoming.length;
+  },
+
+  importYoutube: async (idOrUrl) => {
+    const youtubeId = parseYoutubeId(idOrUrl);
+    if (!youtubeId) {
+      get().flash("Not a valid YouTube link");
+      return 0;
+    }
+    const existing = get().tracks.findIndex((t) => t.youtubeId === youtubeId);
+    if (existing >= 0) {
+      get().playIndex(existing, true);
+      return 0;
+    }
+    const id = crypto.randomUUID();
+    const track = {
+      id,
+      name: `YouTube ${youtubeId}`,
+      artist: "YouTube",
+      album: "YouTube Music",
+      genre: "",
+      tags: ["YouTube"],
+      year: "",
+      url: `yt:${youtubeId}`,
+      coverUrl: youtubeThumb(youtubeId),
+      format: "YT",
+      sampleRate: null, bitDepth: null, bitrate: null, channels: null,
+      lossless: false, liked: false, starred: false,
+      youtubeId, addedAt: Date.now(),
+    };
+    set((s) => ({ tracks: [...s.tracks, track] }));
+    try {
+      await putStoredTrack({
+        id, name: track.name, artist: track.artist, album: track.album,
+        genre: "", tags: ["YouTube"], year: "", format: "YT",
+        sampleRate: null, bitDepth: null, bitrate: null, channels: null,
+        lossless: false, liked: false, youtubeId,
+        coverRemote: track.coverUrl || undefined,
+        audio: new Blob([youtubeId], { type: "text/plain" }), cover: null,
+        addedAt: Date.now(),
+      });
+    } catch {}
+    get().flash("Added YouTube track");
+    get().playIndex(get().tracks.length - 1, true);
+    return 1;
+  },
+
   addFiles: (files) => {
     void (async () => {
       let added = 0;
@@ -391,9 +580,9 @@ export const usePlayer = create((set, get) => ({
           playUrls.set(id, url);
           const track = {
             id,
-            name: tags?.title || parsed.title || file.name.replace(/\.[^.]+$/, ""),
-            artist: tags?.artist || parsed.artist || "Unknown Artist",
-            album: tags?.album || parsed.album || "Unknown Album",
+            name: tags?.title || parsed.title || file.name,
+            artist: tags?.artist || parsed.artist || "Unknown",
+            album: tags?.album || parsed.album || "Unknown",
             genre: tags?.genre || "",
             tags: tags?.genre ? [tags.genre] : [],
             year: tags?.year || parsed.year || "",
@@ -513,59 +702,6 @@ export const usePlayer = create((set, get) => ({
     return n;
   },
 
-  setCover: async (ids, file) => {
-    try {
-      const blob = file.slice(0, file.size, file.type || "image/jpeg");
-      const url = URL.createObjectURL(blob);
-      const idSet = new Set(ids);
-      set((s) => ({
-        tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, coverUrl: url } : t)),
-      }));
-      for (const id of ids) {
-        try {
-          const { updateStoredMeta } = await import("./persist");
-          await updateStoredMeta(id, { cover: blob });
-        } catch {}
-      }
-      get().flash("Cover updated");
-      return true;
-    } catch {
-      get().flash("Could not set cover");
-      return false;
-    }
-  },
-  setCoverUrl: async (ids, remoteUrl) => {
-    const idSet = new Set(ids);
-    set((s) => ({
-      tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, coverUrl: remoteUrl } : t)),
-    }));
-    for (const id of ids) {
-      try {
-        const { updateStoredMeta } = await import("./persist");
-        await updateStoredMeta(id, { coverRemote: remoteUrl });
-      } catch {}
-    }
-    return true;
-  },
-  updateMeta: (id, patch) => {
-    set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
-    void (async () => {
-      try {
-        const { updateStoredMeta } = await import("./persist");
-        await updateStoredMeta(id, patch);
-      } catch {}
-    })();
-  },
-  updateAlbumMeta: (ids, patch) => {
-    const idSet = new Set(ids);
-    set((s) => ({ tracks: s.tracks.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)) }));
-    void (async () => {
-      try {
-        const { updateStoredMeta } = await import("./persist");
-        for (const id of ids) await updateStoredMeta(id, patch);
-      } catch {}
-    })();
-  },
   searchAlbumOnline: asyncNoop,
   applyAlbumHit: asyncNoop,
   importAmazon: asyncNoop,
@@ -574,47 +710,9 @@ export const usePlayer = create((set, get) => ({
   importFoundAudio: asyncNoop,
   findOnArchive: asyncNoop,
   archiveRadio: asyncNoop,
-  importYoutube: async (idOrUrl) => {
-    const youtubeId = parseYoutubeId(idOrUrl);
-    if (!youtubeId) {
-      get().flash("Not a valid YouTube link");
-      return 0;
-    }
-    const existing = get().tracks.findIndex((t) => t.youtubeId === youtubeId);
-    if (existing >= 0) {
-      get().playIndex(existing, true);
-      return 0;
-    }
-    const id = crypto.randomUUID();
-    const track = {
-      id,
-      name: `YouTube ${youtubeId}`,
-      artist: "YouTube",
-      album: "YouTube Music",
-      genre: "",
-      tags: ["YouTube"],
-      year: "",
-      url: `yt:${youtubeId}`,
-      coverUrl: youtubeThumb(youtubeId),
-      format: "YT",
-      sampleRate: null, bitDepth: null, bitrate: null, channels: null,
-      lossless: false, liked: false, starred: false,
-      youtubeId, addedAt: Date.now(),
-    };
-    set((s) => ({ tracks: [...s.tracks, track] }));
-    try {
-      await putStoredTrack({
-        id, name: track.name, artist: track.artist, album: track.album,
-        genre: "", tags: ["YouTube"], year: "", format: "YT",
-        sampleRate: null, bitDepth: null, bitrate: null, channels: null,
-        lossless: false, liked: false, youtubeId,
-        coverRemote: track.coverUrl || undefined,
-        audio: new Blob([youtubeId], { type: "text/plain" }), cover: null,
-        addedAt: Date.now(),
-      });
-    } catch {}
-    get().flash("Added YouTube track");
-    get().playIndex(get().tracks.length - 1, true);
-    return 1;
-  },
+
+  setCover: async () => false,
+  setCoverUrl: async () => false,
+  updateMeta: () => {},
+  updateAlbumMeta: () => {},
 }));
