@@ -151,15 +151,15 @@ export const slskSearch = createServerFn({ method: "POST" })
   }) => d)
   .handler(async ({ data }) => {
     const q = str(data.q);
-    if (q.length < 2) return { files: [] as SlskFile[] };
+    if (q.length < 2) return { files: [] as SlskFile[], hits: [] as SlskFile[] };
     const sessionLike = { base: data.base, key: data.key, token: data.token, name: data.name } as SlskSession;
     if (isNativeSlsk(sessionLike)) {
       const liveApi = await live();
-      const files = await liveApi.liveSearch(str(data.name), str(data.key), q);
-      return { files };
+      const files = (await liveApi.liveSearch(str(data.name), str(data.key), q)) || [];
+      return { files, hits: files };
     }
     const base = normalizeSlskBase(data.base || "");
-    if (!base) return { files: [] as SlskFile[] };
+    if (!base) return { files: [] as SlskFile[], hits: [] as SlskFile[] };
     const session = { key: str(data.key), token: str(data.token) };
     const searchId = crypto.randomUUID();
     await slskFetch(base, "/api/v0/searches", session, {
@@ -195,7 +195,7 @@ export const slskSearch = createServerFn({ method: "POST" })
     try {
       await slskFetch(base, `/api/v0/searches/${encodeURIComponent(searchId)}`, session, { method: "DELETE" });
     } catch {}
-    return { files };
+    return { files, hits: files };
   });
 
 export const slskExpandFolder = createServerFn({ method: "POST" })

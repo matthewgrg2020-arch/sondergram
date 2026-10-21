@@ -162,8 +162,9 @@ export function mapLiveHit(row: SearchResult): SlskFile | null {
   if (!filename || !isAudioFile(filename)) return null;
   const parsed = parseSlskFilename(filename);
   const ext = fileExt(filename);
-  const bitRate = Number(row.attribs[FileAttribute.Bitrate] ?? row.attribs[0] ?? 0) || 0;
-  const length = Number(row.attribs[FileAttribute.Duration] ?? row.attribs[1] ?? 0) || 0;
+  const attrs = (row as any).attribs || {};
+  const bitRate = Number(attrs[FileAttribute.Bitrate] ?? attrs[0] ?? 0) || 0;
+  const length = Number(attrs[FileAttribute.Duration] ?? attrs[1] ?? 0) || 0;
   return {
     username: row.user,
     filename,
