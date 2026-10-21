@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { FileAttribute, SlskClient } from "slsk-client";
+import { FileAttribute, SlskClient, type SearchResult } from "slsk-client";
 import { fileExt, isAudioFile, parseSlskFilename, type SlskFile } from "./soulseek";
 
 const MAX_BYTES = 420_000_000;
@@ -9,19 +8,8 @@ const CACHE_MAX = 80_000_000;
 type Ticket = { user: string; pass: string };
 type Cached = { buf: Buffer; mime: string; at: number };
 
-type LiveDl = {
-  chunks: Buffer[];
-  size: number;
-  mime: string;
-  done: boolean;
-  failed: Error | null;
-  listeners: Set<(chunk: Buffer | null, err?: Error) => void>;
-  startedAt: number;
-};
-
 const tickets = new Map<string, Ticket>();
 const cache = new Map<string, Cached>();
-const liveDls = new Map<string, LiveDl>();
 const lastError = new Map<string, string>();
 
 let client: any = null;
@@ -42,6 +30,10 @@ function fileKey(peer: string, file: string) {
   return `${peer}|${file}`;
 }
 
+function sameFile(a: string, b: string) {
+  return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+
 function cacheGet(key: string) {
   const hit = cache.get(key);
   if (!hit) return null;
@@ -59,81 +51,123 @@ function cachePut(key: string, buf: Buffer, mime: string) {
   }
 }
 
-function issueTicket(user: string, pass: string) {
+export function issueTicket(user: string, pass: string) {
   const ticket = `${user}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
   tickets.set(ticket, { user, pass });
   return ticket;
 }
 
-export function dropLive(name?: string) {
-  if (name) {
+export function ticketSession(id: string) {
+  return tickets.get(id) || null;
+}
+
+export function dropLive(user?: string) {
+  if (user) {
     for (const [k, t] of tickets) {
-      if (t.user === name) tickets.delete(k);
+      if (t.user === user) tickets.delete(k);
     }
-    if (client?.username === name) {
-      try { client.destroy(); } catch {}
+    if (client?.username === user) {
+      try {
+        client.destroy();
+      } catch {
+        /* ignore */
+      }
       client = null;
       loginKey = "";
-      boot = null;
     }
     return;
   }
   tickets.clear();
   if (client) {
-    try { client.destroy(); } catch {}
+    try {
+      client.destroy();
+    } catch {
+      /* ignore */
+    }
+    client = null;
+    loginKey = "";
   }
-  client = null;
-  loginKey = "";
-  boot = null;
 }
 
-async function ensureClient(user: string, pass: string) {
-  if (!user || !pass) throw new Error("Enter your Soulseek username and password.");
+function loginErrorMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err || "");
+  const lower = text.toLowerCase();
+  const hardCredential =
+    /login\s*refus/i.test(text) ||
+    /invalid\s*(user|pass|credential)/i.test(text) ||
+    /wrong\s*(user|pass)/i.test(text) ||
+    /bad\s*password/i.test(text) ||
+    /unknown\s*user/i.test(text);
+  if (hardCredential) {
+    return "Soulseek did not accept that username or password. Confirm they work in SoulseekQt, then try again.";
+  }
+  const networkish =
+    /timeout|timed\s*out|econn|enotfound|ehost|network|socket|reset|refused|unreachable|abort|epipe|etimedout/i.test(lower) ||
+    /could not connect|connection failed|server did not/i.test(lower);
+  if (networkish) {
+    return "Could not reach Soulseek from this server (common on Vercel). Try again, or use an slskd instance instead of native login.";
+  }
+  return "Soulseek login failed from this server. If the same credentials work in SoulseekQt, use an slskd instance (more reliable on Vercel) or try again in a moment.";
+}
+
+async function connect(user: string, pass: string) {
   const key = `${user}\0${pass}`;
-  if (client && loginKey === key) return client;
+  if (client && loginKey === key && client.username === user) return client;
   if (boot && loginKey === key) return boot;
   if (client) {
-    try { client.destroy(); } catch {}
+    try {
+      client.destroy();
+    } catch {
+      /* ignore */
+    }
     client = null;
   }
   loginKey = key;
   boot = (async () => {
-    const c = new (SlskClient as any)({ username: String(user), password: String(pass) });
-    await c.login();
-    client = c;
-    return c;
+    const next = new (SlskClient as any)();
+    try {
+      await next.login(user, pass);
+      client = next;
+      return next;
+    } catch (err) {
+      try {
+        next.destroy();
+      } catch {
+        /* ignore */
+      }
+      throw new Error(loginErrorMessage(err));
+    }
   })();
   try {
     return await boot;
   } catch (err) {
-    boot = null;
     loginKey = "";
     client = null;
     throw err;
+  } finally {
+    boot = null;
   }
 }
 
 export async function liveConnect(user: string, pass: string) {
-  const c = await ensureClient(user, pass);
-  const ticket = issueTicket(user, pass);
-  return { name: c.username || user, ticket };
+  const name = user.trim();
+  const secret = pass.trim();
+  if (!name || !secret) throw new Error("Enter your Soulseek username and password.");
+  await connect(name, secret);
+  return { ticket: issueTicket(name, secret), name };
 }
 
-function mapResult(peer: string, file: any, speed: number, queue: number, free: boolean): SlskFile | null {
-  const filename = String(file.filename || file.Filename || "");
+export function mapLiveHit(row: SearchResult): SlskFile | null {
+  const filename = row.file || "";
   if (!filename || !isAudioFile(filename)) return null;
-  if (file.locked || file.isLocked) return null;
-  const size = Number(file.size || file.Size || 0);
-  if (size > MAX_BYTES) return null;
   const parsed = parseSlskFilename(filename);
   const ext = fileExt(filename);
-  const attrs = file.attrs || file.attributes || {};
-  const bitRate = Number(attrs[FileAttribute?.Bitrate ?? 0] || attrs.bitrate || file.bitRate || 0);
-  const length = Number(attrs[FileAttribute?.Duration ?? 1] || attrs.duration || file.length || 0);
+  const bitRate = Number(row.attribs[FileAttribute.Bitrate] ?? row.attribs[0] ?? 0) || 0;
+  const length = Number(row.attribs[FileAttribute.Duration] ?? row.attribs[1] ?? 0) || 0;
   return {
-    username: peer,
+    username: row.user,
     filename,
-    size,
+    size: row.size || 0,
     bitRate,
     length,
     ext,
@@ -142,9 +176,9 @@ function mapResult(peer: string, file: any, speed: number, queue: number, free: 
     album: parsed.album,
     lossless: /flac|alac|wav|aiff/i.test(ext),
     locked: false,
-    speed,
-    queue,
-    free,
+    speed: row.speed || 0,
+    queue: row.queueLength || 0,
+    free: Boolean(row.slots),
     folder: parsed.folder,
     trackNo: parsed.trackNo,
     year: parsed.year,
@@ -152,31 +186,27 @@ function mapResult(peer: string, file: any, speed: number, queue: number, free: 
 }
 
 export async function liveSearch(user: string, pass: string, q: string) {
-  const c = await ensureClient(user, pass);
-  const results: any[] = await new Promise((resolve, reject) => {
-    const hits: any[] = [];
+  const c = await connect(user, pass);
+  const results: SearchResult[] = await new Promise((resolve) => {
+    const hits: SearchResult[] = [];
     const timer = setTimeout(() => resolve(hits), 12000);
     try {
-      c.search(q, (res: any) => hits.push(res));
+      c.search(q, (res: SearchResult) => {
+        hits.push(res);
+      });
       setTimeout(() => {
         clearTimeout(timer);
         resolve(hits);
       }, 11000);
-    } catch (err) {
+    } catch {
       clearTimeout(timer);
-      reject(err);
+      resolve(hits);
     }
   });
-  const out: any[] = [];
-  for (const res of results) {
-    const peer = String(res.username || res.user || "");
-    const speed = Number(res.speed || res.avgSpeed || 0);
-    const queue = Number(res.queueSize || res.queue || 0);
-    const free = Boolean(res.freeUploadSlots ?? res.slotsFree ?? true);
-    for (const f of res.files || res.fileList || []) {
-      const mapped = mapResult(peer, f, speed, queue, free);
-      if (mapped) out.push(mapped);
-    }
+  const out: SlskFile[] = [];
+  for (const row of results) {
+    const mapped = mapLiveHit(row);
+    if (mapped) out.push(mapped);
   }
   out.sort((a, b) => {
     const aMp3 = /mp3/i.test(a.ext) ? 0 : a.lossless ? 2 : 1;
@@ -188,7 +218,7 @@ export async function liveSearch(user: string, pass: string, q: string) {
   return out.slice(0, 400);
 }
 
-export async function liveFolder(user: string, pass: string, peer: string, folder: string, q?: string) {
+export async function liveFolder(user: string, pass: string, peer: string, folder: string, q: string) {
   const hits = await liveSearch(
     user,
     pass,
@@ -202,191 +232,126 @@ export async function liveFolder(user: string, pass: string, peer: string, folde
   });
 }
 
-export function liveStart(account: string, key: string, peer: string, filename: string, size = 0) {
-  const k = fileKey(peer, filename);
-  if (liveDls.has(k)) return;
-  const dl: LiveDl = {
-    chunks: [],
-    size,
-    mime: mimeOf(filename),
-    done: false,
-    failed: null,
-    listeners: new Set(),
-    startedAt: Date.now(),
-  };
-  liveDls.set(k, dl);
+export function liveStart(user: string, pass: string, peer: string, file: string, size: number) {
   void (async () => {
     try {
-      const c = await ensureClient(account, key);
-      const stream = await c.download(peer, filename);
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        if (chunk == null) continue;
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as ArrayBuffer | string);
-        chunks.push(buf);
-        dl.chunks = chunks;
-        for (const fn of dl.listeners) fn(buf);
-      }
-      dl.done = true;
-      const full = Buffer.concat(chunks);
-      dl.size = full.length;
-      cachePut(k, full, dl.mime);
-      for (const fn of dl.listeners) fn(null);
+      const c = await connect(user, pass);
+      await c.download(peer, file);
     } catch (err) {
-      dl.failed = err instanceof Error ? err : new Error(String(err));
-      lastError.set(k, dl.failed.message);
-      for (const fn of dl.listeners) fn(null, dl.failed);
+      lastError.set(fileKey(peer, file), err instanceof Error ? err.message : String(err));
     }
   })();
 }
 
-export function liveStatus(peer: string, filename: string) {
-  const k = fileKey(peer, filename);
-  const dl = liveDls.get(k);
-  const cached = cacheGet(k);
+export function liveStatus(peer: string, file: string) {
+  const key = fileKey(peer, file);
+  const cached = cacheGet(key);
   if (cached) {
-    return { done: true, size: cached.buf.length, percent: 100, error: "" };
+    return { done: true, percent: 100, state: "complete", error: "", local: "", size: cached.buf.length };
   }
+  const dl = client?.downloads?.find((row: any) => row.user === peer && sameFile(row.file, file));
   if (!dl) {
-    return { done: false, size: 0, percent: 0, error: lastError.get(k) || "" };
+    return { done: false, percent: 0, state: "Queued", error: lastError.get(key) || "", local: "", size: 0 };
   }
-  const got = dl.chunks.reduce((n, b) => n + b.length, 0);
-  const total = dl.size || got;
+  const total = dl.totalBytes || 0;
+  const received = dl.receivedBytes || 0;
+  const percent = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : dl.status === "downloading" ? 8 : 1;
+  const failed = dl.status === "failed" || dl.status === "cancelled";
   return {
-    done: dl.done,
-    size: got,
-    percent: total ? Math.min(100, Math.round((got / total) * 100)) : 0,
-    error: dl.failed?.message || "",
+    done: dl.status === "complete",
+    percent: failed ? 0 : percent,
+    state: dl.status,
+    error: failed ? "Could not get that file from the other user." : "",
+    local: dl.destination || "",
+    size: total,
   };
 }
 
-export function liveStream(peer: string, filename: string, rangeHeader?: string) {
-  const k = fileKey(peer, filename);
-  const cached = cacheGet(k);
+export async function liveStream(opts: {
+  user: string;
+  pass: string;
+  peer: string;
+  file: string;
+  size: number;
+  range: string | null;
+  signal?: AbortSignal;
+}) {
+  const key = fileKey(opts.peer, opts.file);
+  const cached = cacheGet(key);
   if (cached) {
-    return rangeResponse(cached.buf, cached.mime, rangeHeader);
-  }
-  const dl = liveDls.get(k);
-  if (!dl) {
-    return new Response("Not found", { status: 404 });
-  }
-  const mime = dl.mime;
-  let start = 0;
-  let end: number | null = null;
-  if (rangeHeader?.startsWith("bytes=")) {
-    const part = rangeHeader.slice(6);
-    const [a, b] = part.split("-");
-    start = parseInt(a || "0", 10) || 0;
-    if (b) end = parseInt(b, 10);
-  }
-  const stream = new ReadableStream({
-    start(controller) {
-      let offset = 0;
-      const pushExisting = () => {
-        for (const chunk of dl.chunks) {
-          const next = offset + chunk.length;
-          if (next <= start) {
-            offset = next;
-            continue;
-          }
-          let slice = chunk;
-          if (offset < start) {
-            slice = chunk.subarray(start - offset);
-            offset = start;
-          }
-          if (end != null && offset + slice.length > end + 1) {
-            slice = slice.subarray(0, end + 1 - offset);
-          }
-          if (slice.length) controller.enqueue(slice);
-          offset += chunk.length;
-          if (end != null && offset > end) {
-            controller.close();
-            return true;
-          }
-        }
-        return false;
-      };
-      if (pushExisting()) return;
-      if (dl.done) {
-        controller.close();
-        return;
+    const buf = cached.buf;
+    const mime = mimeOf(opts.file);
+    const total = buf.length;
+    const headers: Record<string, string> = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type",
+      "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+      "Accept-Ranges": "bytes",
+      "Content-Type": mime,
+      "Cache-Control": "private, max-age=120",
+    };
+    const range = opts.range?.match(/bytes=(\d+)-(\d*)/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = range[2] ? Number(range[2]) : total - 1;
+      if (!Number.isFinite(start) || start >= total) {
+        headers["Content-Range"] = `bytes */${total}`;
+        return new Response(null, { status: 416, headers });
       }
-      const onChunk = (chunk: Buffer | null, err?: Error) => {
-        if (err) {
-          try { controller.error(err); } catch {}
-          return;
+      const to = Math.min(Number.isFinite(end) ? end : total - 1, total - 1);
+      const slice = buf.subarray(start, to + 1);
+      headers["Content-Range"] = `bytes ${start}-${to}/${total}`;
+      headers["Content-Length"] = String(slice.length);
+      return new Response(slice, { status: 206, headers });
+    }
+    headers["Content-Length"] = String(total);
+    return new Response(buf, { status: 200, headers });
+  }
+
+  const c = await connect(opts.user, opts.pass);
+  let stream: AsyncIterable<Buffer | Uint8Array | string> | null = null;
+  try {
+    stream = await c.download(opts.peer, opts.file);
+  } catch (err) {
+    lastError.set(key, err instanceof Error ? err.message : String(err));
+    return new Response("Download failed", { status: 502 });
+  }
+
+  const chunks: Buffer[] = [];
+  const mime = mimeOf(opts.file);
+  const readable = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of stream!) {
+          if (opts.signal?.aborted) break;
+          if (chunk == null) continue;
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as ArrayBuffer | string);
+          chunks.push(buf);
+          controller.enqueue(buf);
         }
-        if (chunk == null) {
-          try { controller.close(); } catch {}
-          return;
+        if (chunks.length) {
+          const full = Buffer.concat(chunks);
+          cachePut(key, full, mime);
         }
-        let slice = chunk;
-        const next = offset + chunk.length;
-        if (next <= start) {
-          offset = next;
-          return;
+        controller.close();
+      } catch (err) {
+        lastError.set(key, err instanceof Error ? err.message : String(err));
+        try {
+          controller.error(err);
+        } catch {
+          /* ignore */
         }
-        if (offset < start) {
-          slice = chunk.subarray(start - offset);
-          offset = start;
-        }
-        if (end != null && offset + slice.length > end + 1) {
-          slice = slice.subarray(0, end + 1 - offset);
-        }
-        if (slice.length) {
-          try { controller.enqueue(slice); } catch {}
-        }
-        offset += chunk.length;
-        if (end != null && offset > end) {
-          try { controller.close(); } catch {}
-          dl.listeners.delete(onChunk);
-        }
-      };
-      dl.listeners.add(onChunk);
+      }
     },
   });
-  const headers: Record<string, string> = {
-    "Content-Type": mime,
-    "Accept-Ranges": "bytes",
-    "Cache-Control": "no-store",
-  };
-  if (dl.size) {
-    const knownTotal = dl.size;
-    if (rangeHeader?.startsWith("bytes=")) {
-      const endByte = end != null ? end : knownTotal - 1;
-      headers["Content-Range"] = `bytes ${start}-${endByte}/${knownTotal}`;
-      headers["Content-Length"] = String(Math.max(0, endByte - start + 1));
-      return new Response(stream, { status: 206, headers });
-    }
-    headers["Content-Length"] = String(knownTotal);
-  }
-  return new Response(stream, { status: 200, headers });
-}
 
-function rangeResponse(buf: Buffer, mime: string, rangeHeader?: string) {
-  if (!rangeHeader?.startsWith("bytes=")) {
-    return new Response(buf, {
-      status: 200,
-      headers: {
-        "Content-Type": mime,
-        "Content-Length": String(buf.length),
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-  const part = rangeHeader.slice(6);
-  const [a, b] = part.split("-");
-  const start = parseInt(a || "0", 10) || 0;
-  const end = b ? parseInt(b, 10) : buf.length - 1;
-  const slice = buf.subarray(start, end + 1);
-  return new Response(slice, {
-    status: 206,
+  return new Response(readable, {
+    status: 200,
     headers: {
-      "Content-Type": mime,
-      "Content-Length": String(slice.length),
-      "Content-Range": `bytes ${start}-${end}/${buf.length}`,
+      "Access-Control-Allow-Origin": "*",
       "Accept-Ranges": "bytes",
+      "Content-Type": mime,
       "Cache-Control": "no-store",
     },
   });
