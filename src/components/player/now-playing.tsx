@@ -177,11 +177,11 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
           showLyrics ? "lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-10 lg:px-10 lg:pb-6 lg:pt-2" : "lg:place-items-center lg:px-10 lg:pb-6",
         )}
       >
-        {/* Left column: compact cover + pinned controls (never covered) */}
+        {/* Left column: cover + pinned controls */}
         <div className="relative z-20 flex min-h-0 flex-col items-center justify-between gap-3 px-5 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:items-stretch lg:justify-center lg:gap-5 lg:px-0 lg:pb-0">
-          <div className="flex w-full max-w-[18rem] shrink-0 flex-col items-center justify-center lg:max-w-[min(100%,20rem)]">
+          <div className="flex w-full max-w-[22rem] shrink-0 flex-col items-center justify-center lg:max-w-[min(100%,26rem)]">
             <div
-              className="relative mx-auto aspect-square w-full max-h-[min(28dvh,16rem)] max-w-[min(100%,16rem)] overflow-hidden rounded-2xl bg-raised shadow-[0_16px_48px_rgba(0,0,0,0.45)] lg:max-h-[min(38dvh,20rem)] lg:max-w-[min(100%,20rem)]"
+              className="relative mx-auto aspect-square w-full max-h-[min(42dvh,22rem)] max-w-[min(100%,22rem)] overflow-hidden rounded-2xl bg-raised shadow-[0_20px_56px_rgba(0,0,0,0.5)] lg:max-h-[min(52dvh,26rem)] lg:max-w-[min(100%,26rem)]"
               onPointerDown={(e) => {
                 swipeX.current = e.clientX;
               }}
@@ -205,8 +205,8 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
             </div>
           </div>
 
-          {/* Controls — always below cover, high z so never blocked */}
-          <div className="relative z-20 w-full max-w-[20rem] shrink-0 lg:max-w-[min(100%,22rem)]">
+          {/* Controls — always below cover */}
+          <div className="relative z-20 w-full max-w-[22rem] shrink-0 lg:max-w-[min(100%,26rem)]">
             <div className="flex items-center gap-3">
               <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-white/50">{formatTime(currentTime)}</span>
               <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
