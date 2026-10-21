@@ -1,0 +1,30 @@
+appId: app.sondergram.desktop
+productName: Sondergram
+copyright: Copyright © Sondergram
+directories:
+  output: dist-desktop
+files:
+  - electron/main.cjs
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Sondergram-Setup-${version}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  shortcutName: Sondergram
+mac:
+  target:
+    - dmg
+  category: public.app-category.music
+linux:
+  target:
+    - AppImage
+  category: Audio
+
+extraMetadata:
+  main: electron/main.cjs
