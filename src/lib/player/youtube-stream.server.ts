@@ -54,33 +54,59 @@ function pickAudioFromPlayer(data: Json): string {
 
 async function innertubePlayerUrl(videoId: string): Promise<string> {
   const clients = [
-    { clientName: "ANDROID_MUSIC", clientVersion: "7.27.52", userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 13)" },
-    { clientName: "ANDROID", clientVersion: "19.17.34", userAgent: "com.google.android.youtube/19.17.34 (Linux; U; Android 13)" },
-    { clientName: "IOS", clientVersion: "19.45.4", userAgent: "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X)" },
-    { clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER", clientVersion: "2.0", userAgent: UA },
+    {
+      clientName: "ANDROID_MUSIC",
+      clientVersion: "7.27.52",
+      userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 13)",
+      apiKey: "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUd0rJydQ",
+    },
+    {
+      clientName: "ANDROID",
+      clientVersion: "19.17.34",
+      userAgent: "com.google.android.youtube/19.17.34 (Linux; U; Android 13)",
+      apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+    },
+    {
+      clientName: "IOS",
+      clientVersion: "19.45.4",
+      userAgent: "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X)",
+      apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+    },
+    {
+      clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+      clientVersion: "2.0",
+      userAgent: UA,
+      apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+    },
   ];
   for (const client of clients) {
     try {
-      const res = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": client.userAgent,
-        },
-        body: JSON.stringify({
-          context: {
-            client: {
-              clientName: client.clientName,
-              clientVersion: client.clientVersion,
-              hl: "en",
-              gl: "US",
-            },
+      const res = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${client.apiKey}&prettyPrint=false`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": client.userAgent,
+            "X-Goog-Api-Format-Version": "2",
           },
-          videoId,
-          contentCheckOk: true,
-          racyCheckOk: true,
-        }),
-      });
+          body: JSON.stringify({
+            context: {
+              client: {
+                clientName: client.clientName,
+                clientVersion: client.clientVersion,
+                hl: "en",
+                gl: "US",
+                timeZone: "UTC",
+                utcOffsetMinutes: 0,
+              },
+            },
+            videoId,
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+        },
+      );
       const data = asJson(await res.json().catch(() => ({})));
       const href = pickAudioFromPlayer(data);
       if (href) return href;
@@ -95,6 +121,9 @@ async function publicInstanceStreamUrl(videoId: string): Promise<string> {
   const bases = [
     `https://pipedapi.kavin.rocks/streams/${videoId}`,
     `https://pipedapi.adminforge.de/streams/${videoId}`,
+    `https://pipedapi.nosea.duckdns.org/streams/${videoId}`,
+    `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+    `https://yewtu.be/api/v1/videos/${videoId}`,
   ];
   for (const endpoint of bases) {
     try {
@@ -103,19 +132,39 @@ async function publicInstanceStreamUrl(videoId: string): Promise<string> {
       });
       if (!res.ok) continue;
       const data = asJson(await res.json().catch(() => ({})));
+
+      // Piped shape
       const audioStreams = Array.isArray(data.audioStreams) ? (data.audioStreams as unknown[]) : [];
-      const ranked = audioStreams
+      if (audioStreams.length) {
+        const ranked = audioStreams
+          .map((row) => {
+            const item = asJson(row);
+            const href = str(item.url);
+            if (!href) return null;
+            let score = num(item.bitrate) || num(item.quality);
+            if (/m4a|mp4|aac/i.test(str(item.mimeType) || str(item.format))) score += 1000;
+            return { href, score };
+          })
+          .filter((row): row is { href: string; score: number } => Boolean(row))
+          .sort((a, b) => b.score - a.score);
+        if (ranked[0]?.href) return ranked[0].href;
+      }
+
+      // Invidious shape
+      const adaptive = Array.isArray(data.adaptiveFormats) ? (data.adaptiveFormats as unknown[]) : [];
+      const rankedIv = adaptive
         .map((row) => {
           const item = asJson(row);
           const href = str(item.url);
-          if (!href) return null;
-          let score = num(item.bitrate) || num(item.quality);
-          if (/m4a|mp4|aac/i.test(str(item.mimeType) || str(item.format))) score += 1000;
+          const type = str(item.type || item.mimeType);
+          if (!href || !/audio/i.test(type)) return null;
+          let score = num(item.bitrate);
+          if (/mp4|m4a|aac/i.test(type)) score += 1000;
           return { href, score };
         })
         .filter((row): row is { href: string; score: number } => Boolean(row))
         .sort((a, b) => b.score - a.score);
-      if (ranked[0]?.href) return ranked[0].href;
+      if (rankedIv[0]?.href) return rankedIv[0].href;
     } catch {
       /* next */
     }
@@ -123,19 +172,30 @@ async function publicInstanceStreamUrl(videoId: string): Promise<string> {
   return "";
 }
 
+/**
+ * Resolve a direct audio URL for a YouTube / YouTube Music video id.
+ * Order: Innertube (works on serverless) → public proxies → yt-dlp last (often blocked on Vercel).
+ */
 export async function youtubeStreamUrl(videoId: string): Promise<string> {
   if (!videoId) return "";
+
+  const innertube = await innertubePlayerUrl(videoId);
+  if (innertube) return innertube;
+
+  try {
+    const pub = await publicInstanceStreamUrl(videoId);
+    if (pub) return pub;
+  } catch {
+    /* fall through */
+  }
+
+  // yt-dlp is last: binary spawn often fails on Vercel Hobby / serverless
   try {
     const dlp = await ytDlpStreamUrl(videoId);
     if (dlp.url) return dlp.url;
   } catch {
-    /* fall through */
+    /* ignore */
   }
-  const innertube = await innertubePlayerUrl(videoId);
-  if (innertube) return innertube;
-  try {
-    return await publicInstanceStreamUrl(videoId);
-  } catch {
-    return "";
-  }
+
+  return "";
 }
