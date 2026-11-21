@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { STREAM_SOURCES, type StreamHit, type StreamSource } from "./stream-search";
-import { ytDlpSearch, ytDlpStreamUrl } from "./yt-dlp.server";
+import { ytDlpSearch } from "./yt-dlp.server";
 import { proxyAudioUrl, youtubeStreamUrl } from "./youtube-stream.server";
 
 type Json = Record<string, unknown>;
@@ -290,7 +290,7 @@ export const streamSearch = createServerFn({ method: "POST" })
 
 export const streamAlbum = createServerFn({ method: "POST" })
   .validator((d: StreamHit & { token?: string }) => d)
-  .handler(async ({ data }) => {
+  .handler(async () => {
     return { tracks: [] as StreamHit[] };
   });
 
@@ -299,14 +299,6 @@ export const resolveFullTrack = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const youtubeId = str(data.youtubeId);
     if (youtubeId) {
-      try {
-        const dlp = await ytDlpStreamUrl(youtubeId);
-        if (dlp.url) {
-          return { youtubeId, url: proxyAudioUrl(dlp.url), duration: dlp.duration || num(data.duration) };
-        }
-      } catch {
-        /* fall through */
-      }
       const url = await youtubeStreamUrl(youtubeId);
       return { youtubeId, url: proxyAudioUrl(url), duration: num(data.duration) };
     }
@@ -316,20 +308,12 @@ export const resolveFullTrack = createServerFn({ method: "POST" })
       const yt = await youtubeSearch(`${artist} ${name}`.trim());
       const best = yt.find((t) => t.kind === "track" && t.youtubeId) || yt[0];
       if (best?.youtubeId) {
-        try {
-          const dlp = await ytDlpStreamUrl(best.youtubeId);
-          if (dlp.url) {
-            return {
-              youtubeId: best.youtubeId,
-              url: proxyAudioUrl(dlp.url),
-              duration: dlp.duration || best.duration || num(data.duration),
-            };
-          }
-        } catch {
-          /* fall through */
-        }
         const url = await youtubeStreamUrl(best.youtubeId);
-        return { youtubeId: best.youtubeId, url: proxyAudioUrl(url), duration: best.duration || num(data.duration) };
+        return {
+          youtubeId: best.youtubeId,
+          url: proxyAudioUrl(url),
+          duration: best.duration || num(data.duration),
+        };
       }
     }
     return { youtubeId: "", url: "", duration: 0 };
