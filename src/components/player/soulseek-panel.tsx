@@ -1,15 +1,14 @@
-import { ChevronDown, ListMusic, LogOut, Play, Plus, Share2 } from "lucide-react";
+import { Play, Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { slskConnect, slskExpandFolder, slskForget, slskSearch } from "@/lib/player/soulseek-api";
+import { slskConnect, slskSearch } from "@/lib/player/soulseek-api";
 import {
   groupSlskAlbums,
   loadSlskSession,
   packSlskAlbums,
   saveSlskSession,
-  type SltFile,
+  type SlskFile,
   type SlskSession,
 } from "@/lib/player/soulseek";
-import { cn } from "@/lib/utils";
 import { usePlayer } from "@/lib/player/store";
 
 const MAX_BYTES = 420_000_000;
@@ -75,7 +74,9 @@ export function SoulseekPanel() {
   const singles = showSingles
     ? filtered.filter((hit) => {
         const folder = hit.folder || "";
-        const album = packs.find((pack) => pack.copies.some((copy) => copy.username === hit.username && copy.folder === folder));
+        const album = packs.find((pack) =>
+          pack.copies.some((copy) => copy.username === hit.username && copy.folder === folder),
+        );
         return !album || album.copies.every((copy) => copy.files.length < 2);
       })
     : [];
@@ -91,7 +92,11 @@ export function SoulseekPanel() {
       setSession(next);
       setPassword("");
       setApiKey("");
-      setMessage(next.kind === "native" ? `Signed in as ${next.name}. Search below.` : "Connected. Search the network below.");
+      setMessage(
+        next.kind === "native"
+          ? `Signed in as ${next.name}. Search below.`
+          : "Connected. Search the network below.",
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not sign in to Soulseek.");
     } finally {
@@ -150,7 +155,7 @@ export function SoulseekPanel() {
     }
   };
 
-  const add = async (files: SlskFile[], play: boolean) => {
+  const add = async (files: SltFile[], play: boolean) => {
     const ok = files.filter((file) => file.size <= MAX_BYTES);
     if (!ok.length) {
       setMessage("Those files are over 400 MB. Pick an MP3 or FLAC copy of the same album.");
@@ -290,14 +295,16 @@ export function SoulseekPanel() {
                     onClick={() => void add(copy.files, true)}
                     className="inline-flex h-9 items-center gap-1 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg"
                   >
-                    <Play className="size-3.5" strokeWidth={1.75} />Play
+                    <Play className="size-3.5" strokeWidth={1.75} />
+                    Play
                   </button>
                   <button
                     type="button"
                     onClick={() => void add(copy.files, false)}
                     className="inline-flex h-9 items-center gap-1 rounded-full bg-white/10 px-3 text-xs font-medium"
                   >
-                    <Plus className="size-3.5" strokeWidth={1.75} />Add
+                    <Plus className="size-3.5" strokeWidth={1.75} />
+                    Add
                   </button>
                 </div>
               </div>
@@ -306,7 +313,10 @@ export function SoulseekPanel() {
         })}
 
         {singles.slice(0, 80).map((hit) => (
-          <div key={`${hit.username}|${hit.filename}`} className="flex items-center gap-2 rounded-lg bg-raised/60 px-3 py-2">
+          <div
+            key={`${hit.username}|${hit.filename}`}
+            className="flex items-center gap-2 rounded-lg bg-raised/60 px-3 py-2"
+          >
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm">{hit.name}</p>
               <p className="truncate text-xs text-muted">
