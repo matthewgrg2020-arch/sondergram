@@ -2,15 +2,11 @@ import { ChevronDown, ListMusic, LogOut, Play, Plus, Share2 } from "lucide-react
 import { useMemo, useState } from "react";
 import { slskConnect, slskExpandFolder, slskForget, slskSearch } from "@/lib/player/soulseek-api";
 import {
-  formatBytes,
-  formatSpeed,
   groupSlskAlbums,
-  isNativeSlsk,
   loadSlskSession,
   packSlskAlbums,
   saveSlskSession,
-  type SltAlbum,
-  type SlskFile,
+  type SltFile,
   type SlskSession,
 } from "@/lib/player/soulseek";
 import { cn } from "@/lib/utils";
@@ -111,14 +107,13 @@ export function SoulseekPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      const searchQ = q;
       const result = await slskSearch({
         data: {
           base: session.base,
           key: session.key,
           token: session.token,
           name: session.name,
-          q: searchQ,
+          q,
           timeoutMs: 18000,
         },
       });
