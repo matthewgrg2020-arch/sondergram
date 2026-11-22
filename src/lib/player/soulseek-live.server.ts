@@ -1,4 +1,4 @@
-import { FileAttribute, SlskClient, type SearchResult } from "slsk-client";
+import { FileAttribute, AbstractskClient, type SearchResult } from "slsk-client";
 import { fileExt, isAudioFile, parseSlskFilename, type SlskFile } from "./soulseek";
 
 const MAX_BYTES = 420_000_000;
@@ -188,26 +188,25 @@ export function mapLiveHit(row: SearchResult): SlskFile | null {
 
 export async function liveSearch(user: string, pass: string, q: string) {
   const c = await connect(user, pass);
-  const results: SearchResult[] = await new Promise((resolve) => {
-    const hits: SearchResult[] = [];
-    const timer = setTimeout(() => resolve(hits), 12000);
-    try {
-      c.search(q, (res: SearchResult) => {
-        hits.push(res);
-      });
-      setTimeout(() => {
-        clearTimeout(timer);
-        resolve(hits);
-      }, 11000);
-    } catch {
-      clearTimeout(timer);
-      resolve(hits);
-    }
-  });
+  // slsk-client v2: search({ req, timeout }) returns Promise<SearchResult[]>
+  // (the old callback form never filled results → always "No audio files matched")
+  let results: SearchResult[] = [];
+  try {
+    const raw = await c.search({ req: q.trim(), timeout: 16000 });
+    results = Array.isArray(raw) ? raw : [];
+  } catch (err) {
+    console.warn("liveSearch failed", err);
+    results = [];
+  }
   const out: SlskFile[] = [];
+  const seen = new Set<string>();
   for (const row of results) {
     const mapped = mapLiveHit(row);
-    if (mapped) out.push(mapped);
+    if (!mapped) continue;
+    const key = `${mapped.username}|${mapped.filename}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(mapped);
   }
   out.sort((a, b) => {
     const aMp3 = /mp3/i.test(a.ext) ? 0 : a.lossless ? 2 : 1;
@@ -216,7 +215,7 @@ export async function liveSearch(user: string, pass: string, q: string) {
     if (a.free !== b.free) return a.free ? -1 : 1;
     return b.bitRate - a.bitRate || a.queue - b.queue || a.size - b.size;
   });
-  return out.slice(0, 400);
+  return out.slice(0, 500);
 }
 
 export async function liveFolder(user: string, pass: string, peer: string, folder: string, q: string) {
@@ -237,7 +236,8 @@ export function liveStart(user: string, pass: string, peer: string, file: string
   void (async () => {
     try {
       const c = await connect(user, pass);
-      await c.download(peer, file);
+      const dl = c.download({ user: peer, file, expectedSize: size || undefined });
+      await dl;
     } catch (err) {
       lastError.set(fileKey(peer, file), err instanceof Error ? err.message : String(err));
     }
@@ -254,7 +254,7 @@ export function liveStatus(peer: string, file: string) {
   if (!dl) {
     return { done: false, percent: 0, state: "Queued", error: lastError.get(key) || "", local: "", size: 0 };
   }
-  const total = dl.totalBytes || 0;
+  const total = dl.totalBytes || dl.expectedSize || 0;
   const received = dl.receivedBytes || 0;
   const percent = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : dl.status === "downloading" ? 8 : 1;
   const failed = dl.status === "failed" || dl.status === "cancelled";
@@ -263,7 +263,7 @@ export function liveStatus(peer: string, file: string) {
     percent: failed ? 0 : percent,
     state: dl.status,
     error: failed ? "Could not get that file from the other user." : "",
-    local: dl.destination || "",
+    local: dl.path || "",
     size: total,
   };
 }
@@ -311,25 +311,42 @@ export async function liveStream(opts: {
   }
 
   const c = await connect(opts.user, opts.pass);
-  let stream: AsyncIterable<Buffer | Uint8Array | string> | null = null;
+  const mime = mimeOf(opts.file);
+  let download: any;
   try {
-    stream = await c.download(opts.peer, opts.file);
+    download = c.download({
+      user: opts.peer,
+      file: opts.file,
+      expectedSize: opts.size || undefined,
+      signal: opts.signal,
+      timeout: 120_000,
+    });
   } catch (err) {
     lastError.set(key, err instanceof Error ? err.message : String(err));
     return new Response("Download failed", { status: 502 });
   }
 
   const chunks: Buffer[] = [];
-  const mime = mimeOf(opts.file);
+  const nodeStream = download.stream || download;
   const readable = new ReadableStream({
     async start(controller) {
       try {
-        for await (const chunk of stream!) {
-          if (opts.signal?.aborted) break;
-          if (chunk == null) continue;
-          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as ArrayBuffer | string);
-          chunks.push(buf);
-          controller.enqueue(buf);
+        if (nodeStream && typeof nodeStream[Symbol.asyncIterator] === "function") {
+          for await (const chunk of nodeStream as AsyncIterable<Buffer | Uint8Array | string>) {
+            if (opts.signal?.aborted) break;
+            if (chunk == null) continue;
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as ArrayBuffer | string);
+            chunks.push(buf);
+            controller.enqueue(buf);
+          }
+        } else {
+          const result = await download;
+          const data = result?.buffer || result;
+          if (data) {
+            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+            chunks.push(buf);
+            controller.enqueue(buf);
+          }
         }
         if (chunks.length) {
           const full = Buffer.concat(chunks);
