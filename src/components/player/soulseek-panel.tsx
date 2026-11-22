@@ -9,12 +9,10 @@ import {
   loadSlskSession,
   packSlskAlbums,
   saveSlskSession,
-  sortSlskFiles,
-  type SlskAlbum,
+  type SltAlbum,
   type SlskFile,
   type SlskSession,
 } from "@/lib/player/soulseek";
-import { formatTime } from "@/lib/player/time";
 import { cn } from "@/lib/utils";
 import { usePlayer } from "@/lib/player/store";
 
@@ -60,10 +58,7 @@ export function SoulseekPanel() {
   const [freeOnly, setFreeOnly] = useState(false);
   const [albumsOnly, setAlbumsOnly] = useState(true);
   const [history, setHistory] = useState<string[]>(() => loadHistory());
-  const [openKey, setOpenKey] = useState("");
-  const [copyKey, setCopyKey] = useState<Record<string, string>>({});
   const inLib = (tracks || []).filter((t) => t.soulseekId).length;
-  const native = isNativeSlsk(session);
 
   const filtered = useMemo(() => {
     return (hits || []).filter((hit) => {
@@ -116,7 +111,6 @@ export function SoulseekPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      // Format filtering is client-side; don't force keywords into the network query.
       const searchQ = q;
       const result = await slskSearch({
         data: {
@@ -130,7 +124,7 @@ export function SoulseekPanel() {
       });
       const files = Array.isArray((result as { files?: SlskFile[]; hits?: SlskFile[] }).files)
         ? (result as { files: SlskFile[] }).files
-        : Array.isArray((result as { hits?: SltFile[] }).hits)
+        : Array.isArray((result as { hits?: SlskFile[] }).hits)
           ? (result as { hits: SlskFile[] }).hits
           : [];
       setHits(files);
@@ -161,14 +155,14 @@ export function SoulseekPanel() {
     }
   };
 
-  const add = async (files: SlskFile[], play: boolean, queue = false) => {
+  const add = async (files: SlskFile[], play: boolean) => {
     const ok = files.filter((file) => file.size <= MAX_BYTES);
     if (!ok.length) {
       setMessage("Those files are over 400 MB. Pick an MP3 or FLAC copy of the same album.");
       return;
     }
     try {
-      await importSoulseek(ok, play, queue);
+      await importSoulseek(ok, play);
       flash(ok.length === 1 ? `Added “${ok[0].name}”` : `Added ${ok.length} tracks`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not add those files.");
