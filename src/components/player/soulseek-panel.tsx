@@ -155,7 +155,7 @@ export function SoulseekPanel() {
     }
   };
 
-  const add = async (files: SltFile[], play: boolean) => {
+  const add = async (files: SlskFile[], play: boolean) => {
     const ok = files.filter((file) => file.size <= MAX_BYTES);
     if (!ok.length) {
       setMessage("Those files are over 400 MB. Pick an MP3 or FLAC copy of the same album.");
