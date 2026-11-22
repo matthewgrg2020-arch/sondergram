@@ -75,10 +75,10 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
 
   const albums = useMemo(() => groupAlbums(tracks), [tracks]);
   const artists = useMemo(() => groupArtists(tracks), [tracks]);
-  const genres = useMemo(() => groupGenres(tracks), [tracks]);
+  const genres = useMemo(() => groupGenres(albums), [albums]);
 
-  const songsOf = (ids: string[]) =>
-    ids.map((id) => tracks.find((t) => t.id === id)).filter(Boolean) as Track[];
+  const songsOf = (ids?: string[] | null) =>
+    (ids || []).map((id) => tracks.find((t) => t.id === id)).filter(Boolean) as Track[];
 
   const albumDuration = (ids: string[]) =>
     songsOf(ids).reduce((sum, t) => sum + (t.durationSec || 0), 0);
@@ -119,7 +119,9 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     );
   }
 
-  const album = openAlbum ? albums.find((a) => albumKey(a as never) === openAlbum || a.key === openAlbum || `${a.artist}::${a.title}` === openAlbum) : null;
+  const album = openAlbum
+    ? albums.find((a) => a.key === openAlbum || `${a.artist}::${a.title}` === openAlbum) || null
+    : null;
 
   return (
     <section className="panel flex min-h-0 flex-1 flex-col p-4 sm:p-5">
@@ -192,7 +194,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       </div>
 
       <p className="mb-3 text-xs text-subtle">
-        Tip: use <span className="text-fg">Add files</span> to import MP3/FLAC from this device. Settings also has link import.
+        Tip: use <span className="text-fg">Add files</span> to import MP3/FLAC from this device.
       </p>
 
       {/* Songs list when on songs / liked / added tabs */}
@@ -235,7 +237,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             .sort((a, b) => {
               if (albumSort === "artist") return a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title);
               if (albumSort === "year") return (b.year || "").localeCompare(a.year || "") || a.title.localeCompare(b.title);
-              if (albumSort === "added") return (b.addedAt || 0) - (a.addedAt || 0);
+              if (albumSort === "added") return 0;
               return a.title.localeCompare(b.title);
             })
             .map((item) => (
@@ -272,7 +274,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-raised"
             >
               <span className="text-sm">{a.name}</span>
-              <span className="text-xs text-subtle">{a.trackIds.length}</span>
+              <span className="text-xs text-subtle">{a.trackCount}</span>
             </button>
           ))}
         </div>
@@ -289,7 +291,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-raised"
             >
               <span className="text-sm">{g.name}</span>
-              <span className="text-xs text-subtle">{g.trackIds.length}</span>
+              <span className="text-xs text-subtle">{g.trackCount}</span>
             </button>
           ))}
         </div>
@@ -313,7 +315,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
         </div>
       ) : null}
 
-      {/* Open album detail (simplified) */}
+      {/* Open album detail */}
       {openAlbum && album ? (
         <div>
           <button
@@ -339,14 +341,14 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => playIds(album.trackIds)}
+                  onClick={() => playIds(album.trackIds || [])}
                   className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg"
                 >
                   Play
                 </button>
                 <button
                   type="button"
-                  onClick={() => removeTracks(album.trackIds)}
+                  onClick={() => removeTracks(album.trackIds || [])}
                   className="h-10 rounded-full bg-raised px-4 text-sm text-muted hover:text-fg"
                 >
                   Remove album
