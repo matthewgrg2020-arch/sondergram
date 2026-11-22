@@ -1,4 +1,4 @@
-import { FileAttribute, AbstractskClient, type SearchResult } from "slsk-client";
+import { FileAttribute, SlskClient, type SearchResult } from "slsk-client";
 import { fileExt, isAudioFile, parseSlskFilename, type SlskFile } from "./soulseek";
 
 const MAX_BYTES = 420_000_000;
@@ -189,7 +189,6 @@ export function mapLiveHit(row: SearchResult): SlskFile | null {
 export async function liveSearch(user: string, pass: string, q: string) {
   const c = await connect(user, pass);
   // slsk-client v2: search({ req, timeout }) returns Promise<SearchResult[]>
-  // (the old callback form never filled results → always "No audio files matched")
   let results: SearchResult[] = [];
   try {
     const raw = await c.search({ req: q.trim(), timeout: 16000 });
