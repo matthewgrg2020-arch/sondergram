@@ -16,12 +16,39 @@ function albumKey(t: IbTrack) {
   return `${(t.artist || "").toLowerCase()}::${(t.album || "Unknown album").toLowerCase()}`;
 }
 
+/** Always produce a readable string from Error / server-fn payload / plain object. */
 function errText(err: unknown, fallback: string) {
-  const msg = err instanceof Error ? err.message : String(err || "");
-  if (/server error has occurred/i.test(msg)) {
-    return "iBroadcast request failed on the server. Sign out, sign back in, then Load / refresh library.";
+  if (err == null) return fallback;
+  if (err instanceof Error) {
+    const m = (err.message || "").trim();
+    if (/server error has occurred/i.test(m)) {
+      return "iBroadcast request failed on the server. Sign out, sign back in, then Load / refresh library.";
+    }
+    if (m && m !== "[object Object]") return m;
   }
-  return msg || fallback;
+  if (typeof err === "string") {
+    const m = err.trim();
+    if (m && m !== "[object Object]") return m;
+    return fallback;
+  }
+  if (typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    const candidates = [o.message, o.error, o.msg, o.reason, o.detail];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.trim() && c.trim() !== "[object Object]") return c.trim();
+      if (c && typeof c === "object") {
+        const nested = (c as Record<string, unknown>).message;
+        if (typeof nested === "string" && nested.trim()) return nested.trim();
+      }
+    }
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== "{}" && json !== "null") return json.slice(0, 240);
+    } catch {
+      /* ignore */
+    }
+  }
+  return fallback;
 }
 
 export function IbroadcastPanel() {
@@ -81,14 +108,39 @@ export function IbroadcastPanel() {
       email: sess.email,
       q: q.trim() || undefined,
     };
-    const lib = q.trim()
-      ? await ibSearch({ data: payload as any })
-      : await ibLibrary({ data: payload as any });
-    if (!lib.ok && !(lib.tracks && lib.tracks.length)) {
-      throw new Error(lib.error || lib.debug || "Could not load library.");
+    let lib: Awaited<ReturnType<typeof ibLibrary>>;
+    try {
+      lib = q.trim()
+        ? await ibSearch({ data: payload as any })
+        : await ibLibrary({ data: payload as any });
+    } catch (raw) {
+      throw new Error(errText(raw, "Could not load library."));
     }
-    setLibTracks(lib.tracks || []);
-    setPlaylists(lib.playlists || []);
+    // Server sometimes returns a plain error-shaped object instead of IbLibraryResult
+    if (!lib || typeof lib !== "object") {
+      throw new Error("Empty response from iBroadcast.");
+    }
+    const anyLib = lib as Record<string, unknown>;
+    if (anyLib.ok === false || (anyLib.error && !(Array.isArray(anyLib.tracks) && (anyLib.tracks as unknown[]).length))) {
+      const errMsg =
+        typeof anyLib.error === "string"
+          ? anyLib.error
+          : errText(anyLib.error ?? anyLib, "Could not load library.");
+      throw new Error(errMsg);
+    }
+    const trackList = Array.isArray(anyLib.tracks) ? (anyLib.tracks as IbTrack[]) : [];
+    const playlistList = Array.isArray(anyLib.playlists) ? (anyLib.playlists as IbPlaylist[]) : [];
+    if (!trackList.length) {
+      const hint =
+        typeof anyLib.debug === "string" && anyLib.debug
+          ? ` (${anyLib.debug})`
+          : "";
+      throw new Error(
+        "No tracks returned from iBroadcast. Sign out, sign back in, then Load / refresh library." + hint,
+      );
+    }
+    setLibTracks(trackList);
+    setPlaylists(playlistList);
     return lib;
   };
 
@@ -99,7 +151,10 @@ export function IbroadcastPanel() {
     void refreshLibrary(session)
       .then((lib) => {
         if (cancelled) return;
-        const total = "total" in lib ? lib.total : lib.tracks?.length || 0;
+        const total =
+          lib && typeof lib === "object" && "total" in lib
+            ? Number((lib as { total?: number }).total) || 0
+            : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
         setMessage(`Loaded ${total} tracks from iBroadcast.`);
       })
       .catch((err) => {
@@ -117,7 +172,12 @@ export function IbroadcastPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      const next = await ibLogin({ data: { email, password } });
+      let next: IbSession;
+      try {
+        next = await ibLogin({ data: { email, password } });
+      } catch (raw) {
+        throw new Error(errText(raw, "Sign-in failed."));
+      }
       if (!next?.userId || !next?.token) {
         throw new Error("Sign-in did not return a session. Check email/password.");
       }
@@ -133,7 +193,10 @@ export function IbroadcastPanel() {
       setLoadingLib(true);
       try {
         const lib = await refreshLibrary(sess);
-        const total = "total" in lib ? lib.total : 0;
+        const total =
+          lib && typeof lib === "object" && "total" in lib
+            ? Number((lib as { total?: number }).total) || 0
+            : 0;
         setMessage(`Signed in. ${total} tracks in your iBroadcast library — search or add below.`);
       } catch (err) {
         setMessage(errText(err, "Signed in, but library failed to load.") + " Try Load / refresh library.");
@@ -314,7 +377,10 @@ export function IbroadcastPanel() {
               setLoadingLib(true);
               void refreshLibrary(session)
                 .then((lib) => {
-                  const total = "total" in lib ? lib.total : lib.tracks?.length || 0;
+                  const total =
+                    lib && typeof lib === "object" && "total" in lib
+                      ? Number((lib as { total?: number }).total) || 0
+                      : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
                   setMessage(`Loaded ${total} tracks from iBroadcast.`);
                 })
                 .catch((err) => setMessage(errText(err, "Could not load library.")))
@@ -402,7 +468,11 @@ export function IbroadcastPanel() {
             </div>
           ))}
           {!filteredAlbums.length && !loadingLib ? (
-            <p className="text-sm text-muted">No albums found. Load your library or try another filter.</p>
+            <p className="text-sm text-muted">
+              {message
+                ? "No albums yet — see the message above. Try Load / refresh library or sign out and back in."
+                : "No albums found. Load your library or try another filter."}
+            </p>
           ) : null}
         </div>
       ) : null}
