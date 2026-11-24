@@ -113,8 +113,13 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
       const album = albumsMap[str(row.album_id)] || {};
       const artist = artistsMap[str(row.artist_id)] || {};
       const extraArtist = str(row.artist || row.artist_name);
-      const artId = str(row.artwork_id || album.artwork_id || "");
+      const artId = str(row.artwork_id || album.artwork_id || row.image_id || "");
       const file = str(row.file || row.path || row.url);
+      // iBroadcast serves art at artwork.ibroadcast.com/{id} and /{id}-SIZE variants
+      let artwork = "";
+      if (artId && artId !== "0") {
+        artwork = `https://artwork.ibroadcast.com/${artId}-500`;
+      }
       tracks.push({
         id,
         name: str(row.title || row.name) || "Untitled",
@@ -123,7 +128,7 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
         year: str(row.year || album.year || "").slice(0, 4),
         genre: str(row.genre || ""),
         file,
-        artwork: artId ? `https://artwork.ibroadcast.com/${artId}` : "",
+        artwork,
       });
     } catch {
       /* skip bad row */
