@@ -8,6 +8,7 @@ import {
   type IbSession,
   type IbTrack,
 } from "@/lib/player/ibroadcast";
+import { searchIbLibraryClient } from "@/lib/player/ib-search-client";
 import { ibLogin } from "@/lib/player/ibroadcast-api";
 import { putStoredTrack } from "@/lib/player/persist";
 import { usePlayer } from "@/lib/player/store";
@@ -20,6 +21,9 @@ function errText(err: unknown, fallback: string) {
   if (err == null) return fallback;
   if (err instanceof Error) {
     const m = (err.message || "").trim();
+    if (/abort/i.test(m)) {
+      return "Search timed out on this host. Try a more specific song or album title.";
+    }
     if (/server error has occurred/i.test(m)) {
       return "Search hit a server limit. Try a more specific artist or album name.";
     }
@@ -27,6 +31,9 @@ function errText(err: unknown, fallback: string) {
   }
   if (typeof err === "string") {
     const m = err.trim();
+    if (/abort/i.test(m)) {
+      return "Search timed out on this host. Try a more specific song or album title.";
+    }
     if (m && m !== "[object Object]") return m;
     return fallback;
   }
@@ -34,7 +41,10 @@ function errText(err: unknown, fallback: string) {
     const o = err as Record<string, unknown>;
     const candidates = [o.message, o.error, o.msg, o.reason, o.detail];
     for (const c of candidates) {
-      if (typeof c === "string" && c.trim() && c.trim() !== "[object Object]") return c.trim();
+      if (typeof c === "string" && c.trim() && c.trim() !== "[object Object]") {
+        if (/abort/i.test(c)) return "Search timed out on this host. Try a more specific song or album title.";
+        return c.trim();
+      }
       if (c && typeof c === "object") {
         const nested = (c as Record<string, unknown>).message;
         if (typeof nested === "string" && nested.trim()) return nested.trim();
@@ -66,6 +76,7 @@ export function IbroadcastPanel() {
   const [playlists, setPlaylists] = useState<IbPlaylist[]>([]);
   const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("tracks");
   const [adding, setAdding] = useState<string | null>(null);
+  const [foundCount, setFoundCount] = useState(0);
 
   const have = useMemo(
     () => new Set(tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]),
@@ -84,40 +95,26 @@ export function IbroadcastPanel() {
   }, [libTracks]);
 
   const searchLibrary = async (sess: IbSession, q: string) => {
-    const queryText = q.trim();
-    if (queryText.length < 2) throw new Error("Type at least 2 characters to search.");
-    const res = await fetch("/api/ib-search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: sess.userId,
-        token: sess.token,
-        streaming: sess.streaming,
-        q: queryText,
-      }),
+    const data = await searchIbLibraryClient(sess, q, {
+      maxHits: 80,
+      onProgress: (n) => {
+        setFoundCount(n);
+        setMessage(`Found ${n} so far for “${q.trim()}”…`);
+      },
     });
-    let data: any;
-    try {
-      data = await res.json();
-    } catch {
-      throw new Error("Search returned an invalid response.");
+    if (!data.ok) {
+      throw new Error(data.error || "Search failed.");
     }
-    if (!data?.ok) {
-      throw new Error(errText(data?.error, data?.error || "Search failed."));
-    }
-    const trackList = Array.isArray(data.tracks) ? (data.tracks as IbTrack[]) : [];
-    if (!trackList.length) {
-      throw new Error("No matches. Try another artist, album, or song name.");
-    }
-    setLibTracks(trackList);
+    setLibTracks(data.tracks);
     setPlaylists([]);
+    setFoundCount(data.total);
     return data;
   };
 
   useEffect(() => {
     if (!session) return;
     setMessage(
-      "Type an artist, album, or song name and press Search. Results stream from iBroadcast without loading all 625k tracks.",
+      "Type an artist, album, or song and press Search. Matching scans in your browser as the library streams.",
     );
   }, [session?.userId, session?.token]);
 
@@ -129,11 +126,13 @@ export function IbroadcastPanel() {
       return;
     }
     setLoadingLib(true);
-    setMessage(`Searching iBroadcast for “${q}”… large libraries can take up to a minute.`);
+    setFoundCount(0);
+    setLibTracks([]);
+    setMessage(`Searching iBroadcast for “${q}”…`);
     void searchLibrary(session, q)
       .then((data) => {
-        const total = typeof data?.total === "number" ? data.total : 0;
-        const extra = data?.truncated ? " (first matches)" : "";
+        const total = data.total;
+        const extra = data.truncated ? " (first matches)" : "";
         setMessage(`Found ${total.toLocaleString()} match${total === 1 ? "" : "es"} for “${q}”${extra}.`);
         setTab("tracks");
       })
@@ -367,7 +366,7 @@ export function IbroadcastPanel() {
       </div>
 
       <p className="text-xs text-subtle">
-        Search streams your library and returns matching tracks (up to 80). Example: “Lana Del Rey” or “Born to Die”.
+        Search runs in your browser while the library streams. Specific song titles work best on a 600k+ library.
       </p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
@@ -391,7 +390,7 @@ export function IbroadcastPanel() {
       {loadingLib ? (
         <p className="flex items-center gap-2 text-sm text-muted">
           <LoaderCircle className="size-4 animate-spin" />
-          Searching… this can take a while on a huge library.
+          Searching…{foundCount ? ` ${foundCount} found` : ""}
         </p>
       ) : null}
 
