@@ -371,8 +371,19 @@ async function playEl(el: HTMLAudioElement, url: string, at: number, graph: bool
     el.pause();
     return;
   }
+  // Always unmute + full volume on the playing element.
+  // Graph path still needs volume=1 so MediaElementSource receives signal;
+  // non-graph path needs it for direct speaker output.
   el.muted = false;
-  if (!graph) el.volume = 1;
+  el.volume = 1;
+  try {
+    const eng = engine;
+    if (eng?.ctx && eng.ctx.state !== "running") eng.ctx.resume().catch(() => {});
+    if (eng?.graphActive && eng.gain) {
+      // Keep current master gain, but never leave it at 0 by accident
+      if (eng.gain.gain.value <= 0) eng.gain.gain.value = 1;
+    }
+  } catch {}
 }
 
 export async function beginPlayback(url: string, at = 0) {
@@ -396,8 +407,35 @@ export async function beginPlayback(url: string, at = 0) {
 
   const blob = url.startsWith("blob:") || url.startsWith("data:");
   const hiddenApple = Boolean(eng.apple && typeof document !== "undefined" && document.visibilityState === "hidden");
-  const forceGraph = dspActive() || !hiddenApple || graphOnly(url);
+  const isIb = url.includes("/api/ib-stream") || url.includes("streaming.ibroadcast.com");
+  // iBroadcast + Web Audio MediaElementSource often advances time with zero samples
+  // (CORS / iOS). When DSP is off, play through the plain HTMLAudioElement instead.
+  const preferDirect = isIb && !dspActive();
+  const forceGraph = !preferDirect && (dspActive() || !hiddenApple || graphOnly(url));
   const graphSrc = blob ? url : proxyStreamUrl(url);
+
+  if (preferDirect && eng.bgAudio) {
+    eng.audio.pause();
+    eng.graphActive = false;
+    applyOutputGain();
+    try {
+      await playEl(eng.bgAudio, graphSrc, at, false, gen);
+      if (gen !== playGen) {
+        silenceAll();
+        return;
+      }
+      eng.audio.pause();
+      eng.audio.muted = true;
+      eng.audio.volume = 0;
+      eng.bgAudio.muted = false;
+      eng.bgAudio.volume = 1;
+      return;
+    } catch {
+      // fall through to graph path
+      eng.graphActive = true;
+      applyOutputGain();
+    }
+  }
 
   if (forceGraph) {
     bg.pause();
@@ -653,5 +691,5 @@ export function makeDemoTone(): { name: string; blob: Blob } {
     const s = Math.max(-1, Math.min(1, sample));
     view.setInt16(44 + i * 2, (s * 0x7fff) | 0, true);
   }
-  return { name: "A440 Studio Tone", blob: new Blob([buffer], { type: "audio/wav" }) };
+  return { name: "demo-tone.wav", blob: new Blob([buffer], { type: "audio/wav" }) };
 }
