@@ -16,13 +16,12 @@ function albumKey(t: IbTrack) {
   return `${(t.artist || "").toLowerCase()}::${(t.album || "Unknown album").toLowerCase()}`;
 }
 
-/** Always produce a readable string from Error / server-fn payload / plain object. */
 function errText(err: unknown, fallback: string) {
   if (err == null) return fallback;
   if (err instanceof Error) {
     const m = (err.message || "").trim();
     if (/server error has occurred/i.test(m)) {
-      return "iBroadcast request failed on the server. Sign out, sign back in, then Load / refresh library.";
+      return "iBroadcast request failed on the server (library may be too large for this host). Try searching for an artist or album instead.";
     }
     if (m && m !== "[object Object]") return m;
   }
@@ -67,6 +66,7 @@ export function IbroadcastPanel() {
   const [playlists, setPlaylists] = useState<IbPlaylist[]>([]);
   const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("albums");
   const [adding, setAdding] = useState<string | null>(null);
+  const [lastTotal, setLastTotal] = useState(0);
 
   const have = useMemo(
     () => new Set(tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]),
@@ -99,7 +99,6 @@ export function IbroadcastPanel() {
   }, [albums, query]);
 
   const refreshLibrary = async (sess: IbSession, q = "") => {
-    // Send session both nested and flat — server accepts either shape.
     const payload = {
       session: sess,
       userId: sess.userId,
@@ -116,7 +115,6 @@ export function IbroadcastPanel() {
     } catch (raw) {
       throw new Error(errText(raw, "Could not load library."));
     }
-    // Server sometimes returns a plain error-shaped object instead of IbLibraryResult
     if (!lib || typeof lib !== "object") {
       throw new Error("Empty response from iBroadcast.");
     }
@@ -131,16 +129,14 @@ export function IbroadcastPanel() {
     const trackList = Array.isArray(anyLib.tracks) ? (anyLib.tracks as IbTrack[]) : [];
     const playlistList = Array.isArray(anyLib.playlists) ? (anyLib.playlists as IbPlaylist[]) : [];
     if (!trackList.length) {
-      const hint =
-        typeof anyLib.debug === "string" && anyLib.debug
-          ? ` (${anyLib.debug})`
-          : "";
       throw new Error(
-        "No tracks returned from iBroadcast. Sign out, sign back in, then Load / refresh library." + hint,
+        "No tracks returned. For very large iBroadcast libraries (100k+), the web host cannot download the full dump — search for a specific artist or album, or use playlists.",
       );
     }
     setLibTracks(trackList);
     setPlaylists(playlistList);
+    const total = typeof anyLib.total === "number" ? anyLib.total : trackList.length;
+    setLastTotal(total);
     return lib;
   };
 
@@ -148,6 +144,9 @@ export function IbroadcastPanel() {
     if (!session) return;
     let cancelled = false;
     setLoadingLib(true);
+    setMessage(
+      "Large iBroadcast libraries cannot be fully listed in the web app (iBroadcast returns one giant dump). Loading a sample — then search for artists/albums to add.",
+    );
     void refreshLibrary(session)
       .then((lib) => {
         if (cancelled) return;
@@ -155,10 +154,20 @@ export function IbroadcastPanel() {
           lib && typeof lib === "object" && "total" in lib
             ? Number((lib as { total?: number }).total) || 0
             : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-        setMessage(`Loaded ${total} tracks from iBroadcast.`);
+        const shown = (lib as { tracks?: unknown[] })?.tracks?.length || 0;
+        setMessage(
+          total > shown
+            ? `Showing ${shown.toLocaleString()} of ~${total.toLocaleString()} tracks (host limit). Type an artist or album name to search within what loaded, or use Playlists.`
+            : `Loaded ${total.toLocaleString()} tracks. Search or add below.`,
+        );
       })
       .catch((err) => {
-        if (!cancelled) setMessage(errText(err, "Could not load library."));
+        if (!cancelled) {
+          setMessage(
+            errText(err, "Could not load library.") +
+              " With 600k+ tracks the full library cannot load here — try a shorter search after sign-in, or host Sondergram on a VPS that can cache the library.",
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingLib(false);
@@ -167,6 +176,26 @@ export function IbroadcastPanel() {
       cancelled = true;
     };
   }, [session?.userId, session?.token]);
+
+  const runSearch = () => {
+    if (!session) return;
+    const q = query.trim();
+    if (q.length < 2) {
+      setMessage("Type at least 2 characters, then press Search.");
+      return;
+    }
+    setLoadingLib(true);
+    void refreshLibrary(session, q)
+      .then((lib) => {
+        const total =
+          lib && typeof lib === "object" && "total" in lib
+            ? Number((lib as { total?: number }).total) || 0
+            : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
+        setMessage(`Search “${q}”: ${total.toLocaleString()} matches (from the portion the host could load).`);
+      })
+      .catch((err) => setMessage(errText(err, "Search failed.")))
+      .finally(() => setLoadingLib(false));
+  };
 
   const signIn = async () => {
     setBusy(true);
@@ -190,19 +219,7 @@ export function IbroadcastPanel() {
       saveIbSession(sess);
       setSession(sess);
       setPassword("");
-      setLoadingLib(true);
-      try {
-        const lib = await refreshLibrary(sess);
-        const total =
-          lib && typeof lib === "object" && "total" in lib
-            ? Number((lib as { total?: number }).total) || 0
-            : 0;
-        setMessage(`Signed in. ${total} tracks in your iBroadcast library — search or add below.`);
-      } catch (err) {
-        setMessage(errText(err, "Signed in, but library failed to load.") + " Try Load / refresh library.");
-      } finally {
-        setLoadingLib(false);
-      }
+      setMessage("Signed in. Loading a sample of your library…");
     } catch (err) {
       setMessage(errText(err, "Sign-in failed."));
     } finally {
@@ -215,6 +232,7 @@ export function IbroadcastPanel() {
     setSession(null);
     setLibTracks([]);
     setPlaylists([]);
+    setLastTotal(0);
     setMessage("Signed out of iBroadcast.");
   };
 
@@ -326,8 +344,8 @@ export function IbroadcastPanel() {
           <h3 className="text-lg font-semibold">iBroadcast</h3>
         </div>
         <p className="text-sm text-muted">
-          Sign in to browse and search your iBroadcast library, then add any song or album into Sondergram — same idea as
-          Bandcamp.
+          Sign in to search your iBroadcast library and add songs or albums into Sondergram. Very large libraries (100k+
+          tracks) cannot be fully listed in the web app — use search or playlists.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <input
@@ -381,7 +399,12 @@ export function IbroadcastPanel() {
                     lib && typeof lib === "object" && "total" in lib
                       ? Number((lib as { total?: number }).total) || 0
                       : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-                  setMessage(`Loaded ${total} tracks from iBroadcast.`);
+                  const shown = (lib as { tracks?: unknown[] })?.tracks?.length || 0;
+                  setMessage(
+                    total > shown
+                      ? `Showing ${shown.toLocaleString()} tracks (sample). Search for specific music.`
+                      : `Loaded ${total.toLocaleString()} tracks.`,
+                  );
                 })
                 .catch((err) => setMessage(errText(err, "Could not load library.")))
                 .finally(() => setLoadingLib(false));
@@ -389,7 +412,7 @@ export function IbroadcastPanel() {
             className="inline-flex h-9 items-center gap-1.5 rounded-full bg-raised px-3 text-xs font-medium hover:bg-white/10"
           >
             {loadingLib ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-            Load / refresh library
+            Load sample
           </button>
           <button
             type="button"
@@ -402,15 +425,36 @@ export function IbroadcastPanel() {
         </div>
       </div>
 
-      <label className="relative block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter your iBroadcast library…"
-          className="h-10 w-full rounded-full bg-raised pl-10 pr-4 text-sm outline-none ring-1 ring-border focus:ring-accent"
-        />
-      </label>
+      <div className="flex gap-2">
+        <label className="relative block min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                runSearch();
+              }
+            }}
+            placeholder="Search artist, album, or song…"
+            className="h-10 w-full rounded-full bg-raised pl-10 pr-4 text-sm outline-none ring-1 ring-border focus:ring-accent"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={loadingLib || query.trim().length < 2}
+          onClick={runSearch}
+          className="h-10 shrink-0 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg disabled:opacity-50"
+        >
+          Search
+        </button>
+      </div>
+
+      <p className="text-xs text-subtle">
+        Your iBroadcast library is ~625k tracks. iBroadcast’s API only offers a full-library dump, which is too large for
+        this web host — Sondergram can only show a sample or search matches, not all 625,560 songs at once.
+      </p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["albums", "tracks", "playlists"] as const).map((id) => (
@@ -433,7 +477,7 @@ export function IbroadcastPanel() {
       {loadingLib && !libTracks.length ? (
         <p className="flex items-center gap-2 text-sm text-muted">
           <LoaderCircle className="size-4 animate-spin" />
-          Loading library…
+          Loading…
         </p>
       ) : null}
 
@@ -468,11 +512,7 @@ export function IbroadcastPanel() {
             </div>
           ))}
           {!filteredAlbums.length && !loadingLib ? (
-            <p className="text-sm text-muted">
-              {message
-                ? "No albums yet — see the message above. Try Load / refresh library or sign out and back in."
-                : "No albums found. Load your library or try another filter."}
-            </p>
+            <p className="text-sm text-muted">Search for an artist or album name to find music to add.</p>
           ) : null}
         </div>
       ) : null}
@@ -507,7 +547,7 @@ export function IbroadcastPanel() {
             </div>
           ))}
           {!filteredTracks.length && !loadingLib ? (
-            <p className="py-2 text-sm text-muted">No tracks matched.</p>
+            <p className="py-2 text-sm text-muted">No tracks matched. Try another search.</p>
           ) : null}
         </div>
       ) : null}
@@ -542,7 +582,7 @@ export function IbroadcastPanel() {
             );
           })}
           {!playlists.length && !loadingLib ? (
-            <p className="text-sm text-muted">No playlists returned from iBroadcast.</p>
+            <p className="text-sm text-muted">No playlists in the loaded sample.</p>
           ) : null}
         </div>
       ) : null}
