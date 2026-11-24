@@ -43,15 +43,25 @@ export function saveIbSession(session: IbSession | null) {
   else localStorage.setItem(KEY, JSON.stringify(session));
 }
 
+/**
+ * Build a streaming URL.
+ * Format (from iBroadcast / LMS plugin):
+ *   https://streaming.ibroadcast.com/{file}?
+ *     expires={unix_seconds}&signature={token}&user_id={id}&file_id={trackId}&platform=...
+ */
 export function streamUrl(session: IbSession, file: string, fileId: string) {
-  const path = file.replace(/^\//, "");
-  const expires = Date.now();
-  const base = session.streaming || "https://streaming.ibroadcast.com";
+  let path = String(file || "").trim();
+  if (!path) return "";
+  // Prefer 128kbps path token if present
+  path = path.replace(/\{bitrate\}/gi, "128");
+  path = path.replace(/^\//, "");
+  const expires = Math.floor(Date.now() / 1000);
+  const base = (session.streaming || "https://streaming.ibroadcast.com").replace(/\/$/, "");
   const params = new URLSearchParams({
-    Expires: String(expires),
-    Signature: session.token,
-    file_id: fileId,
-    user_id: session.userId,
+    expires: String(expires),
+    signature: session.token,
+    file_id: String(fileId),
+    user_id: String(session.userId),
     platform: "Sondergram",
     version: "1.0",
   });
