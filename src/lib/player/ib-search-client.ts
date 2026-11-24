@@ -40,6 +40,7 @@ function parseMap(mapRaw: string): Record<string, number> {
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v === "number") out[k] = v;
+      // skip nested map objects (artists_additional_map etc.)
     }
     return out;
   } catch {
@@ -58,6 +59,47 @@ function numAt(row: unknown[], idx: number | undefined): string {
   const s = strAt(row, idx);
   return s && s !== "0" ? s : "";
 }
+
+/** Best-effort artist/album from iBroadcast path field. */
+function namesFromPath(path: string): { artist: string; album: string } {
+  const p = (path || "").replace(/\\/g, "/").trim();
+  if (!p) return { artist: "", album: "" };
+  // music/Artists/Artist Name/(2007) Album Name/file.mp3
+  // music/Artist Name/Album Name/file.mp3
+  const parts = p.split("/").filter(Boolean);
+  // drop filename
+  if (parts.length) parts.pop();
+  // strip leading music / Artists / Albums
+  while (
+    parts.length &&
+    /^(music|artists|albums|compilations|tracks|audio)$/i.test(parts[0]!)
+  ) {
+    parts.shift();
+  }
+  let artist = "";
+  let album = "";
+  if (parts.length >= 2) {
+    artist = parts[0] || "";
+    album = parts[1] || "";
+  } else if (parts.length === 1) {
+    album = parts[0] || "";
+  }
+  // strip year prefix on album: (2007) Name
+  album = album.replace(/^\(\d{4}\)\s*/, "").trim();
+  return { artist: artist.trim(), album: album.trim() };
+}
+
+type PendingHit = {
+  id: string;
+  title: string;
+  genre: string;
+  year: string;
+  albumId: string;
+  artistId: string;
+  artId: string;
+  file: string;
+  path: string;
+};
 
 export type IbSearchResult = {
   ok: boolean;
@@ -85,9 +127,37 @@ function authPayload(session: IbSession) {
   };
 }
 
+function resolveHit(
+  hit: PendingHit,
+  artists: Map<string, string>,
+  albums: Map<string, string>,
+): IbTrack {
+  const fromPath = namesFromPath(hit.path);
+  const artist =
+    artists.get(hit.artistId) ||
+    fromPath.artist ||
+    (hit.artistId ? `Artist ${hit.artistId}` : "") ||
+    "Unknown artist";
+  const album =
+    albums.get(hit.albumId) ||
+    fromPath.album ||
+    (hit.albumId ? `Album ${hit.albumId}` : "") ||
+    "Unknown album";
+  return {
+    id: hit.id,
+    name: hit.title || "Untitled",
+    artist,
+    album,
+    year: hit.year,
+    genre: hit.genre,
+    file: hit.file,
+    artwork: artworkUrl(hit.artId),
+  };
+}
+
 /**
  * Fetch library.ibroadcast.com DIRECTLY from the browser (CORS is open)
- * and match as the stream arrives. Avoids Vercel/host time limits.
+ * and match as the stream arrives. Resolves artist/album after maps load.
  */
 export async function searchIbLibraryClient(
   session: IbSession,
@@ -111,7 +181,6 @@ export async function searchIbLibraryClient(
       body: JSON.stringify(authPayload(session)),
     });
   } catch (err) {
-    // Fallback through our proxy if direct fails (rare)
     try {
       res = await fetch("/api/ib-library-stream", {
         method: "POST",
@@ -163,9 +232,24 @@ export async function searchIbLibraryClient(
   let trackMap: Record<string, number> = {};
   let albumMap: Record<string, number> = {};
   let artistMap: Record<string, number> = {};
-  const hits: IbTrack[] = [];
+  const pending: PendingHit[] = [];
   const seen = new Set<string>();
+  let sawArtists = false;
+  let sawAlbums = false;
   const MAX_BUF = 12_000_000;
+
+  // Default field indices from iBroadcast docs / community clients
+  const defaultTrackMap: Record<string, number> = {
+    track: 0,
+    year: 1,
+    title: 2,
+    genre: 3,
+    length: 4,
+    album_id: 5,
+    artwork_id: 6,
+    artist_id: 7,
+    // path and file vary; filled when map is seen
+  };
 
   const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
     const mapIdx = section.indexOf('"map"');
@@ -176,7 +260,7 @@ export async function searchIbLibraryClient(
         const raw = extractBalanced(section, brace);
         if (raw) {
           const m = parseMap(raw);
-          if (label === "tracks") trackMap = { ...trackMap, ...m };
+          if (label === "tracks") trackMap = { ...defaultTrackMap, ...trackMap, ...m };
           if (label === "albums") albumMap = { ...albumMap, ...m };
           if (label === "artists") artistMap = { ...artistMap, ...m };
         }
@@ -200,46 +284,66 @@ export async function searchIbLibraryClient(
       if (!Array.isArray(row)) continue;
 
       if (label === "artists") {
+        sawArtists = true;
         const name = strAt(row, artistMap.name ?? 0);
         if (name) artists.set(id, name);
         continue;
       }
       if (label === "albums") {
+        sawAlbums = true;
         const name = strAt(row, albumMap.name ?? 0);
         if (name) albums.set(id, name);
         continue;
       }
 
-      if (hits.length >= MAX_HITS || seen.has(id)) continue;
-      const title = strAt(row, trackMap.title ?? trackMap.name ?? 2);
-      const genre = strAt(row, trackMap.genre ?? 3);
-      const year = strAt(row, trackMap.year ?? 1).slice(0, 4);
-      const albumId = numAt(row, trackMap.album_id ?? 5);
-      const artistId = numAt(row, trackMap.artist_id ?? 7);
-      const artId = numAt(row, trackMap.artwork_id ?? 6);
-      const file = strAt(row, trackMap.file ?? 16);
-      const path = strAt(row, trackMap.path ?? 12);
-      const albumName = albums.get(albumId) || "";
+      // tracks
+      if (pending.length >= MAX_HITS || seen.has(id)) continue;
+
+      const tm = Object.keys(trackMap).length ? trackMap : defaultTrackMap;
+      const title = strAt(row, tm.title ?? tm.name ?? 2);
+      const genre = strAt(row, tm.genre ?? 3);
+      const year = strAt(row, tm.year ?? 1).slice(0, 4);
+      const albumId = numAt(row, tm.album_id ?? 5);
+      const artistId = numAt(row, tm.artist_id ?? 7);
+      const artId = numAt(row, tm.artwork_id ?? 6);
+      // file/path indices differ across accounts — scan string fields as fallback
+      let file = strAt(row, tm.file);
+      let path = strAt(row, tm.path);
+      if (!file || !path) {
+        for (const cell of row) {
+          if (typeof cell !== "string") continue;
+          if (!file && /^\/\d+\//.test(cell)) file = cell;
+          if (!path && /music\//i.test(cell)) path = cell;
+        }
+      }
+
       const artistName = artists.get(artistId) || "";
-      const hay = [title, artistName, albumName, genre, path, arrRaw].join(" ").toLowerCase();
+      const albumName = albums.get(albumId) || "";
+      const pathNames = namesFromPath(path);
+      const hay = [title, artistName, albumName, pathNames.artist, pathNames.album, genre, path, arrRaw]
+        .join(" ")
+        .toLowerCase();
       if (!hay.includes(q)) continue;
-      const trashedIdx = trackMap.trashed;
+
+      const trashedIdx = tm.trashed;
       if (trashedIdx != null) {
         const tr = row[trashedIdx];
         if (tr === true || tr === 1 || tr === "1" || tr === "true") continue;
       }
+
       seen.add(id);
-      hits.push({
+      pending.push({
         id,
-        name: title || "Untitled",
-        artist: artistName || "Unknown artist",
-        album: albumName || "Unknown album",
-        year,
+        title: title || "Untitled",
         genre,
+        year,
+        albumId,
+        artistId,
+        artId,
         file,
-        artwork: artworkUrl(artId),
+        path,
       });
-      opts?.onProgress?.(hits.length);
+      opts?.onProgress?.(pending.length);
     }
   };
 
@@ -258,12 +362,16 @@ export async function searchIbLibraryClient(
           continue;
         }
         digestSection(label, section);
-        if (label === "tracks" && hits.length >= MAX_HITS) return true;
         from = brace + section.length;
       }
     }
     if (buf.length > MAX_BUF) buf = buf.slice(-Math.floor(MAX_BUF / 2));
-    return hits.length >= MAX_HITS;
+
+    // Only stop early once we have enough hits AND name maps (so artist/album resolve)
+    if (pending.length >= MAX_HITS && sawArtists && sawAlbums) return true;
+    // Or enough hits and path-based names can fill gaps after a long scan
+    if (pending.length >= MAX_HITS && (artists.size > 0 || albums.size > 0)) return true;
+    return false;
   };
 
   try {
@@ -283,8 +391,9 @@ export async function searchIbLibraryClient(
     buf += decoder.decode();
     scanBuffer();
   } catch (err) {
-    if (hits.length) {
-      return { ok: true, tracks: hits, total: hits.length, truncated: true };
+    if (pending.length) {
+      const tracks = pending.map((h) => resolveHit(h, artists, albums));
+      return { ok: true, tracks, total: tracks.length, truncated: true };
     }
     return {
       ok: false,
@@ -299,7 +408,7 @@ export async function searchIbLibraryClient(
     };
   }
 
-  if (!hits.length) {
+  if (!pending.length) {
     return {
       ok: false,
       tracks: [],
@@ -308,10 +417,11 @@ export async function searchIbLibraryClient(
     };
   }
 
+  const tracks = pending.map((h) => resolveHit(h, artists, albums));
   return {
     ok: true,
-    tracks: hits,
-    total: hits.length,
-    truncated: hits.length >= MAX_HITS,
+    tracks,
+    total: tracks.length,
+    truncated: tracks.length >= MAX_HITS,
   };
 }
