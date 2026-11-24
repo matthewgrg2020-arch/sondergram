@@ -40,6 +40,7 @@ function referersFor(url: URL): (string | undefined)[] {
   }
   if (h.includes("theaudiodb") || h.includes("audiodb")) return ["https://www.theaudiodb.com/", undefined];
   if (h.includes("last.fm") || h.includes("lastfm")) return ["https://www.last.fm/", undefined];
+  if (h.includes("ibroadcast")) return ["https://media.ibroadcast.com/", "https://www.ibroadcast.com/", undefined];
   return ["https://www.google.com/", url.origin + "/", undefined];
 }
 
@@ -67,7 +68,7 @@ export async function pullCoverBytes(url: string): Promise<{ type: string; buf: 
       });
       if (!res.ok) continue;
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length < 400 || buf.length > 8_000_000) continue;
+      if (buf.length < 200 || buf.length > 8_000_000) continue;
       const header = (res.headers.get("content-type") || "").split(";")[0].trim();
       const type = /^image\//i.test(header) && !/svg/i.test(header) ? header : magicType(buf);
       if (!type || /svg/i.test(type)) continue;
