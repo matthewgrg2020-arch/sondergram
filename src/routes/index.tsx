@@ -8,16 +8,44 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   const [App, setApp] = useState<ComponentType | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
-    void import("@/components/player/player-app").then((mod) => {
-      if (live) setApp(() => mod.PlayerApp);
-    });
+    void import("@/components/player/player-app")
+      .then((mod) => {
+        if (!live) return;
+        if (typeof mod.PlayerApp !== "function") {
+          setErr("PlayerApp export missing");
+          return;
+        }
+        setApp(() => mod.PlayerApp);
+      })
+      .catch((e) => {
+        if (!live) return;
+        setErr(e?.message || String(e));
+        console.error("player-app import failed", e);
+      });
     return () => {
       live = false;
     };
   }, []);
+
+  if (err) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-bg p-6 text-fg">
+        <div className="text-lg font-medium">Sondergram failed to load</div>
+        <div className="max-w-md text-center text-sm text-muted">{err}</div>
+        <button
+          type="button"
+          className="rounded-full bg-raised px-4 py-2 text-sm"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </button>
+      </main>
+    );
+  }
 
   if (!App) {
     return <main className="min-h-dvh bg-black" />;
