@@ -66,10 +66,11 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
   const coverSrc = track?.coverUrl ? proxyCoverUrl(track.coverUrl) : null;
   const swipeX = useRef<number | null>(null);
   const activeRef = useRef<HTMLParagraphElement | null>(null);
+  const lyricsBoxRef = useRef<HTMLDivElement | null>(null);
   const [pulse, setPulse] = useState(1);
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [lyricsBusy, setLyricsBusy] = useState(false);
-  const [showLyrics, setShowLyrics] = useState(true);
+  const [showLyrics, setShowLyrics] = useState(false);
   const from = playingFrom(track);
 
   useEffect(() => {
@@ -117,9 +118,14 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
 
   const line = activeLine(lines, currentTime);
 
+  // Only scroll inside the lyrics box — never the whole page (breaks iOS close/back)
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [line]);
+    if (!showLyrics || !activeRef.current || !lyricsBoxRef.current) return;
+    const box = lyricsBoxRef.current;
+    const el = activeRef.current;
+    const top = el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2;
+    box.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }, [line, showLyrics]);
 
   const onCoverPointerUp = (e: PointerEvent) => {
     if (swipeX.current == null) return;
@@ -140,18 +146,23 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
         </div>
       ) : null}
 
-      {/* Header */}
-      <div className="relative z-10 flex shrink-0 items-center justify-between gap-2 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] lg:px-6 lg:pt-4">
+      {/* Header — always on top, always tappable on iOS */}
+      <div className="relative z-50 flex shrink-0 items-center justify-between gap-2 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] lg:px-6 lg:pt-4">
         <div className="flex items-center gap-1">
-          <button type="button" aria-label="Close" onClick={onClose} className="flex size-10 items-center justify-center rounded-full bg-white/5 text-fg hover:bg-white/10">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="flex size-11 items-center justify-center rounded-full bg-white/10 text-fg active:bg-white/20"
+          >
             <X className="size-5" strokeWidth={1.75} />
           </button>
           <button
             type="button"
             onClick={() => setShowLyrics((v) => !v)}
             className={cn(
-              "inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-medium",
-              showLyrics ? "bg-white/10 text-fg" : "bg-white/5 text-muted hover:text-fg",
+              "inline-flex h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium",
+              showLyrics ? "bg-white/15 text-fg" : "bg-white/5 text-muted",
             )}
           >
             <ExternalLink className="size-3.5" strokeWidth={1.75} />
@@ -159,29 +170,32 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
           </button>
         </div>
         <div className="min-w-0 flex-1 px-2 text-center">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Playing from search</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Now playing</p>
           <p className="truncate text-xs text-white/70">
             {from.source}
             {from.query ? `: ${from.query}` : track?.album ? `: ${track.album}` : ""}
           </p>
         </div>
-        <button type="button" aria-label="Party visualizer" onClick={onParty} className="flex size-10 items-center justify-center rounded-full text-muted hover:text-fg">
+        <button type="button" aria-label="Party visualizer" onClick={onParty} className="flex size-11 items-center justify-center rounded-full text-muted">
           <AudioLines className="size-5" strokeWidth={1.75} />
         </button>
       </div>
 
-      {/* Body: cover+controls | lyrics */}
       <div
         className={cn(
           "relative z-10 grid min-h-0 flex-1",
           showLyrics ? "lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-10 lg:px-10 lg:pb-6 lg:pt-2" : "lg:place-items-center lg:px-10 lg:pb-6",
         )}
       >
-        {/* Left column: cover + pinned controls */}
-        <div className="relative z-20 flex min-h-0 flex-col items-center justify-between gap-3 px-5 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:items-stretch lg:justify-center lg:gap-5 lg:px-0 lg:pb-0">
-          <div className="flex w-full max-w-[22rem] shrink-0 flex-col items-center justify-center lg:max-w-[min(100%,26rem)]">
+        <div className="relative z-20 flex min-h-0 flex-col items-center justify-center gap-2 px-5 pt-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:items-stretch lg:justify-center lg:gap-5 lg:px-0 lg:pb-0">
+          <div className="flex w-full max-w-[22rem] shrink flex-col items-center justify-center lg:max-w-[min(100%,26rem)]">
             <div
-              className="relative mx-auto aspect-square w-full max-h-[min(42dvh,22rem)] max-w-[min(100%,22rem)] overflow-hidden rounded-2xl bg-raised shadow-[0_20px_56px_rgba(0,0,0,0.5)] lg:max-h-[min(52dvh,26rem)] lg:max-w-[min(100%,26rem)]"
+              className={cn(
+                "relative mx-auto aspect-square w-full overflow-hidden rounded-2xl bg-raised shadow-[0_20px_56px_rgba(0,0,0,0.5)]",
+                showLyrics
+                  ? "max-h-[min(28dvh,14rem)] max-w-[min(100%,14rem)] lg:max-h-[min(52dvh,26rem)] lg:max-w-[min(100%,26rem)]"
+                  : "max-h-[min(42dvh,22rem)] max-w-[min(100%,22rem)] lg:max-h-[min(52dvh,26rem)] lg:max-w-[min(100%,26rem)]",
+              )}
               onPointerDown={(e) => {
                 swipeX.current = e.clientX;
               }}
@@ -205,8 +219,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
             </div>
           </div>
 
-          {/* Controls — always below cover */}
-          <div className="relative z-20 w-full max-w-[22rem] shrink-0 lg:max-w-[min(100%,26rem)]">
+          <div className="relative z-30 w-full max-w-[22rem] shrink-0 lg:max-w-[min(100%,26rem)]">
             <div className="flex items-center gap-3">
               <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-white/50">{formatTime(currentTime)}</span>
               <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
@@ -226,7 +239,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
               <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-white/50">{formatTime(duration)}</span>
             </div>
 
-            <div className="mt-3 flex items-start gap-3">
+            <div className="mt-2 flex items-start gap-3">
               <div className="min-w-0 flex-1 text-center lg:text-left">
                 <h2 className="truncate text-lg font-bold tracking-tight sm:text-xl">{track?.name ?? "Nothing playing"}</h2>
                 <p className="mt-0.5 truncate text-sm text-white/70">{track?.artist ?? ""}</p>
@@ -247,7 +260,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
               ) : null}
             </div>
 
-            <div className="mt-3 flex items-center justify-between px-1">
+            <div className="mt-2 flex items-center justify-between px-1">
               <button type="button" aria-label="Shuffle" onClick={toggleShuffle} className={cn("flex size-11 items-center justify-center", shuffle ? "text-accent" : "text-white/50")}>
                 <Shuffle className="size-5" strokeWidth={1.75} />
               </button>
@@ -258,7 +271,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
                 type="button"
                 aria-label={playing ? "Pause" : "Play"}
                 onClick={onTogglePlay}
-                className="relative z-20 flex size-14 items-center justify-center rounded-full bg-white text-black shadow-lg active:scale-95 sm:size-16"
+                className="relative z-30 flex size-14 items-center justify-center rounded-full bg-white text-black shadow-lg active:scale-95 sm:size-16"
               >
                 {playing ? <Pause className="size-7 sm:size-8" strokeWidth={1.75} /> : <Play className="size-7 translate-x-0.5 sm:size-8" strokeWidth={1.75} />}
               </button>
@@ -272,7 +285,6 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
           </div>
         </div>
 
-        {/* Desktop lyrics */}
         {showLyrics ? (
           <div className="relative hidden min-h-0 flex-col lg:flex">
             <div className="mb-3 flex shrink-0 items-center gap-2">
@@ -287,7 +299,7 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
               )}
               <span className="ml-auto rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/60">lrclib</span>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto pr-2 [mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]">
+            <div ref={lyricsBoxRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">
               {lines.length === 0 ? (
                 <p className="text-2xl font-semibold leading-snug text-white/35">
                   {lyricsBusy ? "Looking up lyrics…" : "No lyrics found for this track."}
@@ -319,23 +331,38 @@ export function NowPlaying({ onClose, onTogglePlay, onPrev, onNext, onSeek, onPa
         ) : null}
       </div>
 
+      {/* Mobile lyrics panel — fixed height, own scroll, does not trap the page */}
       {showLyrics ? (
-        <div className="relative z-10 max-h-[32dvh] shrink-0 overflow-y-auto border-t border-white/10 px-5 py-3 lg:hidden">
-          {lines.length === 0 ? (
-            <p className="text-base text-white/40">{lyricsBusy ? "Looking up lyrics…" : "No lyrics found."}</p>
-          ) : (
-            <div className="space-y-3">
-              {lines.map((row, i) => (
-                <p
-                  key={`${row.t}-${i}`}
-                  ref={i === line ? activeRef : undefined}
-                  className={cn("text-base font-semibold leading-snug", i === line ? "text-white" : "text-white/35")}
-                >
-                  {row.text}
-                </p>
-              ))}
-            </div>
-          )}
+        <div className="relative z-20 flex max-h-[30dvh] shrink-0 flex-col border-t border-white/10 lg:hidden">
+          <div className="flex shrink-0 items-center justify-between px-4 py-2">
+            <p className="text-[11px] uppercase tracking-widest text-white/40">
+              {lyricsBusy ? "Looking up…" : "Lyrics"}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowLyrics(false)}
+              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-fg"
+            >
+              Hide
+            </button>
+          </div>
+          <div ref={lyricsBoxRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-3">
+            {lines.length === 0 ? (
+              <p className="text-base text-white/40">{lyricsBusy ? "Looking up lyrics…" : "No lyrics found."}</p>
+            ) : (
+              <div className="space-y-3 pb-4">
+                {lines.map((row, i) => (
+                  <p
+                    key={`${row.t}-${i}`}
+                    ref={i === line ? activeRef : undefined}
+                    className={cn("text-base font-semibold leading-snug", i === line ? "text-white" : "text-white/35")}
+                  >
+                    {row.text}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
     </div>
