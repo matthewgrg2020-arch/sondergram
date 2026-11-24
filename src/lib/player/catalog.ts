@@ -54,16 +54,27 @@ export function isVariousName(value: string) {
     name === "various artist" ||
     name === "various artists" ||
     name.includes("various artist") ||
-    name.includes("compilation")
+    name.includes("compilation") ||
+    name === "ost" ||
+    name === "soundtrack" ||
+    name.endsWith(" soundtrack") ||
+    name.includes("original soundtrack")
   );
 }
 
+/** Group VA / compilation albums by album title alone so tracks stick together. */
 export function albumKey(track: Pick<Track, "album" | "albumArtist" | "artist" | "id">) {
   const album = normAlbum(track.album);
   if (!album || album === "unknown album") return `track::${track.id}`;
   const albumArtist = (track.albumArtist || "").trim().toLowerCase();
+  const artist = (track.artist || "").trim().toLowerCase();
+  if (isVariousName(albumArtist) || isVariousName(artist) || isVariousName(album)) {
+    return `album::va::${album}`;
+  }
   if (albumArtist && !isVariousName(albumArtist)) return `album::${albumArtist}::${album}`;
-  return `album::${album}`;
+  // Prefer album-title grouping when albumArtist is empty — compilations often omit it
+  if (!albumArtist) return `album::${album}`;
+  return `album::${albumArtist || artist}::${album}`;
 }
 
 export function artistKey(name: string) {
@@ -94,7 +105,9 @@ function pickAlbumArtist(songs: Track[]) {
   const artists = songs.map((s) => s.artist).filter((s) => s.trim() && !/^unknown/i.test(s));
   const top = majority(artists);
   if (!top) return "Unknown artist";
-  if (new Set(artists.map((a) => a.trim().toLowerCase())).size > 1) return "Various Artists";
+  const unique = new Set(artists.map((a) => a.trim().toLowerCase()));
+  if (unique.size > 1) return "Various Artists";
+  if (isVariousName(top.label)) return "Various Artists";
   return top.label;
 }
 
@@ -194,6 +207,8 @@ export function groupTags(albums: AlbumGroup[]): TagGroup[] {
     for (const tag of album.tags) {
       const key = tag.trim().toLowerCase();
       if (!key) continue;
+      // Skip source tags
+      if (["ibroadcast", "bandcamp", "youtube", "youtube music", "soulseek", "amazon"].includes(key)) continue;
       const existing = map.get(key);
       if (existing) {
         if (!existing.albums.some((a) => a.key === album.key)) existing.albums.push(album);
