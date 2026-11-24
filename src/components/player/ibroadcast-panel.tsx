@@ -8,7 +8,7 @@ import {
   type IbSession,
   type IbTrack,
 } from "@/lib/player/ibroadcast";
-import { ibLibrary, ibLogin, ibSearch } from "@/lib/player/ibroadcast-api";
+import { ibLogin } from "@/lib/player/ibroadcast-api";
 import { putStoredTrack } from "@/lib/player/persist";
 import { usePlayer } from "@/lib/player/store";
 
@@ -21,7 +21,7 @@ function errText(err: unknown, fallback: string) {
   if (err instanceof Error) {
     const m = (err.message || "").trim();
     if (/server error has occurred/i.test(m)) {
-      return "iBroadcast request failed on the server (library may be too large for this host). Try searching for an artist or album instead.";
+      return "Search hit a server limit. Try a more specific artist or album name.";
     }
     if (m && m !== "[object Object]") return m;
   }
@@ -64,9 +64,8 @@ export function IbroadcastPanel() {
   const [query, setQuery] = useState("");
   const [libTracks, setLibTracks] = useState<IbTrack[]>([]);
   const [playlists, setPlaylists] = useState<IbPlaylist[]>([]);
-  const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("albums");
+  const [tab, setTab] = useState<"tracks" | "albums" | "playlists">("tracks");
   const [adding, setAdding] = useState<string | null>(null);
-  const [lastTotal, setLastTotal] = useState(0);
 
   const have = useMemo(
     () => new Set(tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]),
@@ -84,97 +83,42 @@ export function IbroadcastPanel() {
     return [...map.values()].sort((a, b) => a.album.localeCompare(b.album));
   }, [libTracks]);
 
-  const filteredTracks = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return libTracks;
-    return libTracks.filter((t) =>
-      [t.name, t.artist, t.album, t.genre].join(" ").toLowerCase().includes(q),
-    );
-  }, [libTracks, query]);
-
-  const filteredAlbums = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return albums;
-    return albums.filter((a) => `${a.album} ${a.artist}`.toLowerCase().includes(q));
-  }, [albums, query]);
-
-  const refreshLibrary = async (sess: IbSession, q = "") => {
-    const payload = {
-      session: sess,
-      userId: sess.userId,
-      token: sess.token,
-      streaming: sess.streaming,
-      email: sess.email,
-      q: q.trim() || undefined,
-    };
-    let lib: Awaited<ReturnType<typeof ibLibrary>>;
+  const searchLibrary = async (sess: IbSession, q: string) => {
+    const queryText = q.trim();
+    if (queryText.length < 2) throw new Error("Type at least 2 characters to search.");
+    const res = await fetch("/api/ib-search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: sess.userId,
+        token: sess.token,
+        streaming: sess.streaming,
+        q: queryText,
+      }),
+    });
+    let data: any;
     try {
-      lib = q.trim()
-        ? await ibSearch({ data: payload as any })
-        : await ibLibrary({ data: payload as any });
-    } catch (raw) {
-      throw new Error(errText(raw, "Could not load library."));
+      data = await res.json();
+    } catch {
+      throw new Error("Search returned an invalid response.");
     }
-    if (!lib || typeof lib !== "object") {
-      throw new Error("Empty response from iBroadcast.");
+    if (!data?.ok) {
+      throw new Error(errText(data?.error, data?.error || "Search failed."));
     }
-    const anyLib = lib as Record<string, unknown>;
-    if (anyLib.ok === false || (anyLib.error && !(Array.isArray(anyLib.tracks) && (anyLib.tracks as unknown[]).length))) {
-      const errMsg =
-        typeof anyLib.error === "string"
-          ? anyLib.error
-          : errText(anyLib.error ?? anyLib, "Could not load library.");
-      throw new Error(errMsg);
-    }
-    const trackList = Array.isArray(anyLib.tracks) ? (anyLib.tracks as IbTrack[]) : [];
-    const playlistList = Array.isArray(anyLib.playlists) ? (anyLib.playlists as IbPlaylist[]) : [];
+    const trackList = Array.isArray(data.tracks) ? (data.tracks as IbTrack[]) : [];
     if (!trackList.length) {
-      throw new Error(
-        "No tracks returned. For very large iBroadcast libraries (100k+), the web host cannot download the full dump — search for a specific artist or album, or use playlists.",
-      );
+      throw new Error("No matches. Try another artist, album, or song name.");
     }
     setLibTracks(trackList);
-    setPlaylists(playlistList);
-    const total = typeof anyLib.total === "number" ? anyLib.total : trackList.length;
-    setLastTotal(total);
-    return lib;
+    setPlaylists([]);
+    return data;
   };
 
   useEffect(() => {
     if (!session) return;
-    let cancelled = false;
-    setLoadingLib(true);
     setMessage(
-      "Large iBroadcast libraries cannot be fully listed in the web app (iBroadcast returns one giant dump). Loading a sample — then search for artists/albums to add.",
+      "Type an artist, album, or song name and press Search. Results stream from iBroadcast without loading all 625k tracks.",
     );
-    void refreshLibrary(session)
-      .then((lib) => {
-        if (cancelled) return;
-        const total =
-          lib && typeof lib === "object" && "total" in lib
-            ? Number((lib as { total?: number }).total) || 0
-            : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-        const shown = (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-        setMessage(
-          total > shown
-            ? `Showing ${shown.toLocaleString()} of ~${total.toLocaleString()} tracks (host limit). Type an artist or album name to search within what loaded, or use Playlists.`
-            : `Loaded ${total.toLocaleString()} tracks. Search or add below.`,
-        );
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setMessage(
-            errText(err, "Could not load library.") +
-              " With 600k+ tracks the full library cannot load here — try a shorter search after sign-in, or host Sondergram on a VPS that can cache the library.",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingLib(false);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [session?.userId, session?.token]);
 
   const runSearch = () => {
@@ -185,13 +129,13 @@ export function IbroadcastPanel() {
       return;
     }
     setLoadingLib(true);
-    void refreshLibrary(session, q)
-      .then((lib) => {
-        const total =
-          lib && typeof lib === "object" && "total" in lib
-            ? Number((lib as { total?: number }).total) || 0
-            : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-        setMessage(`Search “${q}”: ${total.toLocaleString()} matches (from the portion the host could load).`);
+    setMessage(`Searching iBroadcast for “${q}”… large libraries can take up to a minute.`);
+    void searchLibrary(session, q)
+      .then((data) => {
+        const total = typeof data?.total === "number" ? data.total : 0;
+        const extra = data?.truncated ? " (first matches)" : "";
+        setMessage(`Found ${total.toLocaleString()} match${total === 1 ? "" : "es"} for “${q}”${extra}.`);
+        setTab("tracks");
       })
       .catch((err) => setMessage(errText(err, "Search failed.")))
       .finally(() => setLoadingLib(false));
@@ -219,7 +163,7 @@ export function IbroadcastPanel() {
       saveIbSession(sess);
       setSession(sess);
       setPassword("");
-      setMessage("Signed in. Loading a sample of your library…");
+      setMessage("Signed in. Search for an artist, album, or song to add music.");
     } catch (err) {
       setMessage(errText(err, "Sign-in failed."));
     } finally {
@@ -232,7 +176,6 @@ export function IbroadcastPanel() {
     setSession(null);
     setLibTracks([]);
     setPlaylists([]);
-    setLastTotal(0);
     setMessage("Signed out of iBroadcast.");
   };
 
@@ -344,8 +287,7 @@ export function IbroadcastPanel() {
           <h3 className="text-lg font-semibold">iBroadcast</h3>
         </div>
         <p className="text-sm text-muted">
-          Sign in to search your iBroadcast library and add songs or albums into Sondergram. Very large libraries (100k+
-          tracks) cannot be fully listed in the web app — use search or playlists.
+          Sign in, then search for any artist, album, or song in your iBroadcast library and add it to Sondergram.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <input
@@ -387,42 +329,14 @@ export function IbroadcastPanel() {
             <p className="text-xs text-subtle">{session.email || session.userId}</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={loadingLib}
-            onClick={() => {
-              setLoadingLib(true);
-              void refreshLibrary(session)
-                .then((lib) => {
-                  const total =
-                    lib && typeof lib === "object" && "total" in lib
-                      ? Number((lib as { total?: number }).total) || 0
-                      : (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-                  const shown = (lib as { tracks?: unknown[] })?.tracks?.length || 0;
-                  setMessage(
-                    total > shown
-                      ? `Showing ${shown.toLocaleString()} tracks (sample). Search for specific music.`
-                      : `Loaded ${total.toLocaleString()} tracks.`,
-                  );
-                })
-                .catch((err) => setMessage(errText(err, "Could not load library.")))
-                .finally(() => setLoadingLib(false));
-            }}
-            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-raised px-3 text-xs font-medium hover:bg-white/10"
-          >
-            {loadingLib ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-            Load sample
-          </button>
-          <button
-            type="button"
-            onClick={signOut}
-            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-raised px-3 text-xs font-medium text-muted hover:text-fg"
-          >
-            <LogOut className="size-3.5" />
-            Sign out
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={signOut}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full bg-raised px-3 text-xs font-medium text-muted hover:text-fg"
+        >
+          <LogOut className="size-3.5" />
+          Sign out
+        </button>
       </div>
 
       <div className="flex gap-2">
@@ -437,7 +351,7 @@ export function IbroadcastPanel() {
                 runSearch();
               }
             }}
-            placeholder="Search artist, album, or song…"
+            placeholder="Artist, album, or song…"
             className="h-10 w-full rounded-full bg-raised pl-10 pr-4 text-sm outline-none ring-1 ring-border focus:ring-accent"
           />
         </label>
@@ -447,17 +361,17 @@ export function IbroadcastPanel() {
           onClick={runSearch}
           className="h-10 shrink-0 rounded-full bg-accent px-4 text-xs font-semibold text-accent-fg disabled:opacity-50"
         >
+          {loadingLib ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
           Search
         </button>
       </div>
 
       <p className="text-xs text-subtle">
-        Your iBroadcast library is ~625k tracks. iBroadcast’s API only offers a full-library dump, which is too large for
-        this web host — Sondergram can only show a sample or search matches, not all 625,560 songs at once.
+        Search streams your library and returns matching tracks (up to 80). Example: “Lana Del Rey” or “Born to Die”.
       </p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
-        {(["albums", "tracks", "playlists"] as const).map((id) => (
+        {(["tracks", "albums"] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -474,16 +388,16 @@ export function IbroadcastPanel() {
 
       {message ? <p className="text-sm text-muted">{message}</p> : null}
 
-      {loadingLib && !libTracks.length ? (
+      {loadingLib ? (
         <p className="flex items-center gap-2 text-sm text-muted">
           <LoaderCircle className="size-4 animate-spin" />
-          Loading…
+          Searching… this can take a while on a huge library.
         </p>
       ) : null}
 
       {tab === "albums" ? (
         <div className="space-y-2">
-          {filteredAlbums.map((album) => (
+          {albums.map((album) => (
             <div key={album.key} className="flex items-center gap-2 rounded-xl bg-raised/60 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{album.album}</p>
@@ -511,20 +425,21 @@ export function IbroadcastPanel() {
               </button>
             </div>
           ))}
-          {!filteredAlbums.length && !loadingLib ? (
-            <p className="text-sm text-muted">Search for an artist or album name to find music to add.</p>
+          {!albums.length && !loadingLib ? (
+            <p className="text-sm text-muted">Search for an artist or album to see results.</p>
           ) : null}
         </div>
       ) : null}
 
       {tab === "tracks" ? (
         <div className="divide-y divide-border">
-          {filteredTracks.map((t) => (
+          {libTracks.map((t) => (
             <div key={t.id} className="flex items-center gap-2 py-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">{t.name}</p>
                 <p className="truncate text-xs text-muted">
                   {t.artist}
+                  {t.album ? ` · ${t.album}` : ""}
                   {have.has(t.id) ? " · in library" : ""}
                 </p>
               </div>
@@ -546,43 +461,8 @@ export function IbroadcastPanel() {
               </button>
             </div>
           ))}
-          {!filteredTracks.length && !loadingLib ? (
-            <p className="py-2 text-sm text-muted">No tracks matched. Try another search.</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {tab === "playlists" ? (
-        <div className="space-y-2">
-          {playlists.map((p) => {
-            const listTracks = libTracks.filter((t) => p.trackIds.includes(t.id));
-            return (
-              <div key={p.id} className="flex items-center gap-2 rounded-xl bg-raised/60 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{p.name}</p>
-                  <p className="text-xs text-muted">{listTracks.length || p.trackIds.length} tracks</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={!listTracks.length || adding === p.id}
-                  onClick={() => void addAlbum(listTracks, p.name, true)}
-                  className="h-8 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg disabled:opacity-50"
-                >
-                  Play
-                </button>
-                <button
-                  type="button"
-                  disabled={!listTracks.length || adding === p.id}
-                  onClick={() => void addAlbum(listTracks, p.name, false)}
-                  className="h-8 rounded-full bg-raised px-3 text-xs disabled:opacity-50"
-                >
-                  Add
-                </button>
-              </div>
-            );
-          })}
-          {!playlists.length && !loadingLib ? (
-            <p className="text-sm text-muted">No playlists in the loaded sample.</p>
+          {!libTracks.length && !loadingLib ? (
+            <p className="py-2 text-sm text-muted">Search for a song, artist, or album.</p>
           ) : null}
         </div>
       ) : null}
