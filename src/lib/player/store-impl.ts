@@ -50,6 +50,7 @@ const playUrls = new Map();
 
 function loadPlaybackSettings() {
   try {
+    if (typeof localStorage === "undefined") return {};
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return {};
     return JSON.parse(raw);
@@ -60,9 +61,49 @@ function loadPlaybackSettings() {
 
 function savePlaybackSettings(partial) {
   try {
+    if (typeof localStorage === "undefined") return;
     const prev = loadPlaybackSettings();
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...prev, ...partial }));
   } catch {}
+}
+
+/** Persist EQ + related audio prefs immediately (critical on iOS where tabs die). */
+function persistEqState(s) {
+  savePlaybackSettings({
+    eq: Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ],
+    preamp: typeof s.preamp === "number" ? s.preamp : 0,
+    presetId: s.presetId || "flat",
+    customPresets: Array.isArray(s.customPresets) ? s.customPresets : [],
+    bassLock: Boolean(s.bassLock),
+    remaster: s.remaster || "off",
+    remasterAmt: typeof s.remasterAmt === "number" ? s.remasterAmt : 0.7,
+    spatial: s.spatial || "off",
+    spatialAmount: typeof s.spatialAmount === "number" ? s.spatialAmount : 0.7,
+    normalize: Boolean(s.normalize),
+    volume: typeof s.volume === "number" ? s.volume : 0.85,
+    rate: typeof s.rate === "number" ? s.rate : 1,
+    gapless: s.gapless !== false,
+    crossfade: typeof s.crossfade === "number" ? s.crossfade : 4,
+  });
+}
+
+function normalizeCustomPresets(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p, i) => {
+      if (!p || typeof p !== "object") return null;
+      const id = String(p.id || p.name || `custom-${i}`);
+      const label = String(p.label || p.name || "Custom").slice(0, 24);
+      const gains = Array.isArray(p.gains)
+        ? p.gains.slice()
+        : Array.isArray(p.eq)
+          ? p.eq.slice()
+          : [...FLAT_EQ];
+      while (gains.length < FLAT_EQ.length) gains.push(0);
+      const preamp = typeof p.preamp === "number" ? p.preamp : 0;
+      return { id, label, gains: gains.slice(0, FLAT_EQ.length), preamp };
+    })
+    .filter(Boolean);
 }
 
 async function ensurePlayUrl(track) {
@@ -111,25 +152,44 @@ function storedToTrack(row) {
   };
 }
 
-const init = typeof localStorage !== "undefined" ? loadPlaybackSettings() : {
-  bookmarks: true, bookmarkPrompt: true, skipLowRated: false, skipSeconds: 30,
-  playRecordPercent: 50, restrictData: false, autoFullScreen: false,
-};
+const init = typeof localStorage !== "undefined" ? loadPlaybackSettings() : {};
+const initEq = Array.isArray(init.eq) && init.eq.length ? init.eq.slice(0, FLAT_EQ.length) : [...FLAT_EQ];
+while (initEq.length < FLAT_EQ.length) initEq.push(0);
+const initCustomPresets = normalizeCustomPresets(init.customPresets);
 
 export const usePlayer = create((set, get) => ({
   tracks: [], index: -1, ready: false, playing: false, currentTime: 0, duration: 0,
-  volume: 0.85, muted: false, shuffle: false, repeat: "off",
-  eq: [...FLAT_EQ], preamp: 0, presetId: "flat", customPresets: [],
-  rate: 1, pitch: 0, isolate: "mix", spatial: "off", spatialAmount: 0.7,
-  radio: false, radioRecent: [], upNext: [], notice: null, crossfade: 4,
+  volume: typeof init.volume === "number" ? init.volume : 0.85,
+  muted: false, shuffle: false, repeat: "off",
+  eq: initEq,
+  preamp: typeof init.preamp === "number" ? init.preamp : 0,
+  presetId: init.presetId || "flat",
+  customPresets: initCustomPresets,
+  rate: typeof init.rate === "number" ? init.rate : 1,
+  pitch: 0, isolate: "mix",
+  spatial: init.spatial || "off",
+  spatialAmount: typeof init.spatialAmount === "number" ? init.spatialAmount : 0.7,
+  radio: false, radioRecent: [], upNext: [], notice: null,
+  crossfade: typeof init.crossfade === "number" ? init.crossfade : 4,
   sleep: null, sleepUntil: null, stopAfter: "off", recent: [], plays: {}, positions: {},
   listenMs: 0, listenDay: "", listenLog: [], balance: 0, viz: "bars",
-  focus: false, quiet: false, normalize: false, skipSilence: false, bassLock: false,
-  haptic: false, shakeSkip: false, gapless: true, mono: false, remaster: "off",
-  remasterAmt: 0.7, autoEq: false, playlists: [], loopA: null, loopB: null,
-  bookmarks: init.bookmarks, bookmarkPrompt: init.bookmarkPrompt, skipLowRated: init.skipLowRated,
-  skipSeconds: init.skipSeconds, playRecordPercent: init.playRecordPercent,
-  restrictData: init.restrictData, autoFullScreen: init.autoFullScreen,
+  focus: false, quiet: false,
+  normalize: Boolean(init.normalize),
+  skipSilence: false,
+  bassLock: Boolean(init.bassLock),
+  haptic: false, shakeSkip: false,
+  gapless: init.gapless !== false,
+  mono: false,
+  remaster: init.remaster || "off",
+  remasterAmt: typeof init.remasterAmt === "number" ? init.remasterAmt : 0.7,
+  autoEq: false, playlists: [], loopA: null, loopB: null,
+  bookmarks: init.bookmarks !== false,
+  bookmarkPrompt: init.bookmarkPrompt !== false,
+  skipLowRated: Boolean(init.skipLowRated),
+  skipSeconds: typeof init.skipSeconds === "number" ? init.skipSeconds : 30,
+  playRecordPercent: typeof init.playRecordPercent === "number" ? init.playRecordPercent : 50,
+  restrictData: Boolean(init.restrictData),
+  autoFullScreen: Boolean(init.autoFullScreen),
 
   hydrate: async () => {
     try {
@@ -147,7 +207,39 @@ export const usePlayer = create((set, get) => ({
           } catch {}
         }
       }
-      set({ tracks, ready: true, ...loadPlaybackSettings() });
+      const settings = loadPlaybackSettings();
+      const eq = Array.isArray(settings.eq) && settings.eq.length
+        ? settings.eq.slice(0, FLAT_EQ.length)
+        : get().eq.slice();
+      while (eq.length < FLAT_EQ.length) eq.push(0);
+      const restored = {
+        tracks,
+        ready: true,
+        eq,
+        preamp: typeof settings.preamp === "number" ? settings.preamp : get().preamp,
+        presetId: settings.presetId || get().presetId,
+        customPresets: normalizeCustomPresets(settings.customPresets ?? get().customPresets),
+        bassLock: Boolean(settings.bassLock),
+        remaster: settings.remaster || get().remaster,
+        remasterAmt: typeof settings.remasterAmt === "number" ? settings.remasterAmt : get().remasterAmt,
+        spatial: settings.spatial || get().spatial,
+        spatialAmount: typeof settings.spatialAmount === "number" ? settings.spatialAmount : get().spatialAmount,
+        normalize: Boolean(settings.normalize),
+        volume: typeof settings.volume === "number" ? settings.volume : get().volume,
+        rate: typeof settings.rate === "number" ? settings.rate : get().rate,
+        gapless: settings.gapless !== false,
+        crossfade: typeof settings.crossfade === "number" ? settings.crossfade : get().crossfade,
+      };
+      set(restored);
+      try {
+        applyEq(restored.eq);
+        applyPreamp(restored.preamp);
+        setBassLock(restored.bassLock);
+        engSetRemaster(restored.remaster);
+        setSpatialMode(restored.spatial);
+        setMasterGain(restored.volume);
+        setPlaybackRate(restored.rate);
+      } catch {}
     } catch (err) {
       console.warn("hydrate failed", err);
       set({ ready: true, ...loadPlaybackSettings() });
@@ -278,45 +370,110 @@ export const usePlayer = create((set, get) => ({
   flash: (message) => set({ notice: message }),
   setPlaying: (playing) => set({ playing }),
   setTimes: (currentTime, duration) => set({ currentTime, duration }),
-  setVolume: (volume) => { set({ volume }); try { setMasterGain(volume); } catch {} },
+  setVolume: (volume) => {
+    set({ volume });
+    try { setMasterGain(volume); } catch {}
+    savePlaybackSettings({ volume });
+  },
   toggleMute: () => set((s) => ({ muted: !s.muted })),
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
   cycleRepeat: () => set((s) => ({ repeat: s.repeat === "off" ? "all" : s.repeat === "all" ? "one" : "off" })),
   setEqBand: (index, value) => set((s) => {
     const eq = s.eq.slice(); eq[index] = value;
     try { applyEq(eq); } catch {}
-    return { eq, presetId: "custom" };
+    const next = { eq, presetId: "custom" };
+    persistEqState({ ...s, ...next });
+    return next;
   }),
-  setPreamp: (value) => { set({ preamp: value, presetId: "custom" }); try { applyPreamp(value); } catch {} },
+  setPreamp: (value) => {
+    set((s) => {
+      const next = { preamp: value, presetId: "custom" };
+      persistEqState({ ...s, ...next });
+      return next;
+    });
+    try { applyPreamp(value); } catch {}
+  },
   applyPreset: (id, gains, preamp) => {
-    set({ eq: gains.slice(), preamp, presetId: id });
-    try { applyEq(gains); applyPreamp(preamp); } catch {}
+    const eq = (gains || FLAT_EQ).slice();
+    set((s) => {
+      const next = { eq, preamp: typeof preamp === "number" ? preamp : 0, presetId: id || "custom" };
+      persistEqState({ ...s, ...next });
+      return next;
+    });
+    try { applyEq(eq); applyPreamp(typeof preamp === "number" ? preamp : 0); } catch {}
   },
   saveCustomPreset: (label) => {
     const name = (label || "").trim().slice(0, 24) || "Custom";
-    set((s) => ({ customPresets: [...s.customPresets.filter((p) => p.name !== name), { name, eq: s.eq.slice(), preamp: s.preamp }] }));
+    const id = name.toLowerCase().replace(/\s+/g, "-") || "custom";
+    set((s) => {
+      const preset = { id, label: name, gains: s.eq.slice(), preamp: s.preamp };
+      const customPresets = [...s.customPresets.filter((p) => p.id !== id && p.label !== name), preset];
+      persistEqState({ ...s, customPresets });
+      return { customPresets, presetId: id };
+    });
   },
-  deleteCustomPreset: (name) => set((s) => ({ customPresets: s.customPresets.filter((p) => p.name !== name) })),
-  setRate: (rate) => { set({ rate }); try { setPlaybackRate(rate); } catch {} },
+  deleteCustomPreset: (idOrName) => set((s) => {
+    const customPresets = s.customPresets.filter((p) => p.id !== idOrName && p.label !== idOrName);
+    persistEqState({ ...s, customPresets });
+    return { customPresets };
+  }),
+  setRate: (rate) => {
+    set({ rate });
+    try { setPlaybackRate(rate); } catch {}
+    savePlaybackSettings({ rate });
+  },
   setPitch: (pitch) => set({ pitch }),
   setIsolate: (isolate) => set({ isolate }),
-  setSpatial: (spatial) => { set({ spatial }); try { setSpatialMode(spatial); } catch {} },
-  setSpatialAmount: (spatialAmount) => set({ spatialAmount }),
+  setSpatial: (spatial) => {
+    set((s) => {
+      persistEqState({ ...s, spatial });
+      return { spatial };
+    });
+    try { setSpatialMode(spatial); } catch {}
+  },
+  setSpatialAmount: (spatialAmount) => set((s) => {
+    persistEqState({ ...s, spatialAmount });
+    return { spatialAmount };
+  }),
   setBalance: (balance) => { set({ balance }); try { engSetBalance(balance); } catch {} },
   setViz: (viz) => set({ viz }),
   setFocus: (focus) => set({ focus }),
   setQuiet: (quiet) => set({ quiet }),
-  setNormalize: (normalize) => set({ normalize }),
+  setNormalize: (normalize) => set((s) => {
+    persistEqState({ ...s, normalize });
+    return { normalize };
+  }),
   setSkipSilence: (skipSilence) => set({ skipSilence }),
-  setBassLock: (bassLock) => { set({ bassLock }); try { setBassLock(bassLock); } catch {} },
+  setBassLock: (bassLock) => {
+    set((s) => {
+      persistEqState({ ...s, bassLock });
+      return { bassLock };
+    });
+    try { setBassLock(bassLock); } catch {}
+  },
   setHaptic: (haptic) => set({ haptic }),
   setShakeSkip: (shakeSkip) => set({ shakeSkip }),
-  setGapless: (gapless) => set({ gapless }),
+  setGapless: (gapless) => set((s) => {
+    persistEqState({ ...s, gapless });
+    return { gapless };
+  }),
   setMono: (mono) => set({ mono }),
-  setRemaster: (remaster) => { set({ remaster }); try { engSetRemaster(remaster); } catch {} },
-  setRemasterAmt: (remasterAmt) => set({ remasterAmt }),
+  setRemaster: (remaster) => {
+    set((s) => {
+      persistEqState({ ...s, remaster });
+      return { remaster };
+    });
+    try { engSetRemaster(remaster); } catch {}
+  },
+  setRemasterAmt: (remasterAmt) => set((s) => {
+    persistEqState({ ...s, remasterAmt });
+    return { remasterAmt };
+  }),
   setAutoEq: (autoEq) => set({ autoEq }),
-  setCrossfade: (crossfade) => set({ crossfade }),
+  setCrossfade: (crossfade) => set((s) => {
+    persistEqState({ ...s, crossfade });
+    return { crossfade };
+  }),
   setLoopA: (loopA) => set({ loopA }),
   setLoopB: (loopB) => set({ loopB }),
   setStopAfter: (stopAfter) => set({ stopAfter }),
