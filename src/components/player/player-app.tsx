@@ -71,7 +71,6 @@ import {
   youtubeDuration,
 } from "@/lib/player/youtube";
 
-/** Soulseek (and similar) need playIndex to fetch a stream before audio can start. */
 function needsDeferredStream(track?: Track | null) {
   if (!track) return false;
   if (track.soulseekId) {
@@ -84,11 +83,422 @@ function needsDeferredStream(track?: Track | null) {
 function mediaDuration(out: HTMLAudioElement, track?: Track | null) {
   const fromEl = Number.isFinite(out.duration) && out.duration > 0 && out.duration !== Infinity ? out.duration : 0;
   const meta = Number(track?.durationSec) || 0;
-  // Prefer real element duration; fall back to stored metadata (iBroadcast length)
   if (fromEl > 0) return fromEl;
   return meta > 0 ? meta : 0;
 }
 
 export function PlayerApp() {
+  const tracks = usePlayer((s) => s.tracks);
+  const index = usePlayer((s) => s.index);
+  const playing = usePlayer((s) => s.playing);
+  const volume = usePlayer((s) => s.volume);
+  const muted = usePlayer((s) => s.muted);
+  const eq = usePlayer((s) => s.eq);
+  const preamp = usePlayer((s) => s.preamp);
+  const rate = usePlayer((s) => s.rate);
+  const pitch = usePlayer((s) => s.pitch);
+  const isolate = usePlayer((s) => s.isolate);
+  const spatial = usePlayer((s) => s.spatial);
+  const spatialAmount = usePlayer((s) => s.spatialAmount);
+  const setPlaying = usePlayer((s) => s.setPlaying);
+  const setTimes = usePlayer((s) => s.setTimes);
+  const playIndex = usePlayer((s) => s.playIndex);
+  const nextIndex = usePlayer((s) => s.nextIndex);
+  const prevIndex = usePlayer((s) => s.prevIndex);
+  const hydrate = usePlayer((s) => s.hydrate);
+  const quiet = usePlayer((s) => s.quiet);
+  const bassLock = usePlayer((s) => s.bassLock);
+  const mono = usePlayer((s) => s.mono);
+  const remaster = usePlayer((s) => s.remaster);
+  const remasterAmt = usePlayer((s) => s.remasterAmt);
+  const balance = usePlayer((s) => s.balance);
+  const notice = usePlayer((s) => s.notice);
 
-/*__SP1__*/
+  const track = index >= 0 ? tracks[index] : undefined;
+  const [view, setView] = useState<AppView>("listen");
+  const [query, setQuery] = useState("");
+  const [nowOpen, setNowOpen] = useState(false);
+  const [party, setParty] = useState(false);
+  const [car, setCar] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [libraryAlbum, setLibraryAlbum] = useState<string | null>(null);
+
+  const boundRef = useRef(false);
+  const skipLockRef = useRef(false);
+  const startedAtRef = useRef(0);
+  const lastTrackIdRef = useRef<string | null>(null);
+  const lastProgressRef = useRef({ t: 0, at: 0 });
+
+  const goView = (next: AppView) => {
+    setView(next);
+    if (next !== "library") setLibraryAlbum(null);
+  };
+
+  const autoNext = useCallback(() => {
+    if (skipLockRef.current) return;
+    skipLockRef.current = true;
+    window.setTimeout(() => {
+      skipLockRef.current = false;
+    }, 900);
+    const state = usePlayer.getState();
+    if (!state.playing) return;
+    const next = state.nextIndex(false);
+    if (next === null) {
+      setPlaying(false);
+      return;
+    }
+    playIndex(next, false);
+  }, [playIndex, setPlaying]);
+
+  useEffect(() => {
+    void hydrate();
+    void loadYoutubeApi();
+  }, [hydrate]);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const arm = () => {
+      unlockEngine();
+      primePlayback();
+    };
+    document.addEventListener("pointerdown", arm, { passive: true });
+    document.addEventListener("touchstart", arm, { passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", arm);
+      document.removeEventListener("touchstart", arm);
+    };
+  }, []);
+
+  useEffect(() => {
+    const { audio, bgAudio } = getEngine();
+    if (boundRef.current) return;
+    boundRef.current = true;
+
+    const onEnded = (event: Event) => {
+      if (event.target !== outputAudio()) return;
+      const current = usePlayer.getState().tracks[usePlayer.getState().index];
+      if (isYoutubePlayback(current)) return;
+      if (Date.now() - startedAtRef.current < 1200) return;
+      autoNext();
+    };
+
+    const onError = (event: Event) => {
+      if (event.target !== outputAudio()) return;
+      const state = usePlayer.getState();
+      const current = state.tracks[state.index];
+      if (isYoutubePlayback(current)) return;
+      if (needsDeferredStream(current)) return;
+      if (current?.bandcampId && !(current.url || "").includes("bcbits.com")) return;
+      if (
+        current?.ibroadcastId ||
+        current?.soulseekId ||
+        current?.bandcampId ||
+        (current?.tags || []).includes("SoundCloud") ||
+        (current?.tags || []).includes("iBroadcast") ||
+        String(current?.url || "").includes("/api/ib-stream") ||
+        String(current?.url || "").includes("streaming.ibroadcast.com") ||
+        String(current?.url || "").includes("/api/stream")
+      ) {
+        usePlayer.getState().flash(
+          current?.ibroadcastId
+            ? "iBroadcast stream failed. Sign in again or re-add the track from Search."
+            : "That stream did not start. Try the song again.",
+        );
+        usePlayer.getState().setPlaying(false);
+        return;
+      }
+      if (Date.now() - startedAtRef.current < 800) return;
+      autoNext();
+    };
+
+    for (const el of [audio, bgAudio]) {
+      if (!el) continue;
+      el.addEventListener("ended", onEnded);
+      el.addEventListener("error", onError);
+    }
+
+    const onVis = () => {
+      setAudioSessionPlayback();
+      const hidden = document.visibilityState === "hidden";
+      const state = usePlayer.getState();
+      if (!state.playing) return;
+      if (isYoutubePlayback(state.tracks[state.index])) return;
+      if (hidden) {
+        setBackgroundOutput(true);
+        void getEngine().ctx.resume().catch(() => undefined);
+        return;
+      }
+      setBackgroundOutput(false);
+      void resumeEngine();
+    };
+
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", () => {
+      if (usePlayer.getState().playing) setBackgroundOutput(true);
+    });
+    window.addEventListener("pageshow", () => {
+      if (usePlayer.getState().playing) {
+        setBackgroundOutput(false);
+        void resumeEngine();
+      }
+    });
+
+    return () => {
+      for (const el of [audio, bgAudio]) {
+        if (!el) continue;
+        el.removeEventListener("ended", onEnded);
+        el.removeEventListener("error", onError);
+      }
+      document.removeEventListener("visibilitychange", onVis);
+      boundRef.current = false;
+    };
+  }, [autoNext]);
+
+  useEffect(() => {
+    setYoutubeHandlers({
+      onEnded: () => autoNext(),
+      onError: () => {
+        usePlayer.getState().flash("YouTube playback failed.");
+        usePlayer.getState().setPlaying(false);
+      },
+    });
+  }, [autoNext]);
+
+  useEffect(() => {
+    if (!track) return;
+    if (lastTrackIdRef.current === track.id) return;
+    lastTrackIdRef.current = track.id;
+    startedAtRef.current = Date.now();
+    lastProgressRef.current = { t: 0, at: Date.now() };
+
+    const run = async () => {
+      unlockEngine();
+      if (isYoutubePlayback(track)) {
+        const id = track.youtubeId || "";
+        if (id) youtubeLoad(id, playing);
+        return;
+      }
+      if (needsDeferredStream(track)) {
+        playIndex(index, playing);
+        return;
+      }
+      const src = track.url || track.previewUrl || "";
+      if (!src) return;
+      try {
+        await beginPlayback(src, 0);
+        if (!playing) pauseOutput();
+      } catch {
+        usePlayer.getState().flash("Could not start that track.");
+        usePlayer.getState().setPlaying(false);
+      }
+    };
+    void run();
+  }, [track?.id, index, playIndex, playing]);
+
+  useEffect(() => {
+    applyEq(eq);
+  }, [eq]);
+  useEffect(() => {
+    applyPreamp(preamp);
+  }, [preamp]);
+  useEffect(() => {
+    setBassLock(bassLock);
+  }, [bassLock]);
+  useEffect(() => {
+    setIsolateMode(isolate);
+  }, [isolate]);
+  useEffect(() => {
+    setSpatialMode(spatial, spatialAmount);
+  }, [spatial, spatialAmount]);
+  useEffect(() => {
+    setRemaster(remaster, remasterAmt);
+  }, [remaster, remasterAmt]);
+  useEffect(() => {
+    setBalance(balance);
+  }, [balance]);
+  useEffect(() => {
+    setMonoMode(mono);
+  }, [mono]);
+  useEffect(() => {
+    setPlaybackRate(rate);
+  }, [rate]);
+  useEffect(() => {
+    setMasterGain(muted ? 0 : volume);
+  }, [volume, muted]);
+
+  useEffect(() => {
+    if (playing) {
+      setAudioSessionPlayback();
+      void resumeEngine();
+    } else {
+      pauseOutput();
+    }
+  }, [playing]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (isYoutubePlayback(track)) {
+        setTimes(youtubeTime(), youtubeDuration());
+        return;
+      }
+      const out = outputAudio();
+      const current = out.currentTime || 0;
+      const duration = mediaDuration(out, track);
+      setTimes(current, duration);
+
+      const state = usePlayer.getState();
+      if (!state.playing) return;
+      if (Date.now() - startedAtRef.current < 1500) return;
+
+      if (duration > 3 && current > 2 && duration - current <= 0.45) {
+        autoNext();
+        return;
+      }
+      const metaDur = Number(track?.durationSec) || 0;
+      if (metaDur > 3 && current > 2 && metaDur - current <= 0.6) {
+        autoNext();
+        return;
+      }
+
+      const prog = lastProgressRef.current;
+      if (current > prog.t + 0.15) {
+        lastProgressRef.current = { t: current, at: Date.now() };
+      } else if (current > 2 && Date.now() - prog.at > 4000) {
+        lastProgressRef.current = { t: current, at: Date.now() };
+        if (out.ended || out.paused || (duration > 0 && current >= duration - 1)) {
+          autoNext();
+        } else if (out.ended || (duration > 0 && Math.abs(duration - current) < 1.5)) {
+          autoNext();
+        } else if (out.readyState >= 2 && out.paused && !out.ended && current > 1) {
+          if (duration > 0 && current >= duration * 0.92) autoNext();
+        }
+      }
+
+      if (out.ended && current > 1) {
+        autoNext();
+      }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [track?.id, track?.durationSec, setTimes, autoNext]);
+
+  const togglePlay = () => {
+    unlockEngine();
+    setPlaying(!playing);
+  };
+  const onSeek = (t: number) => {
+    if (isYoutubePlayback(track)) youtubeSeek(t);
+    else seekOutput(t);
+  };
+  const onPrev = () => {
+    const p = prevIndex();
+    if (p !== null) playIndex(p, true);
+  };
+  const onNext = () => {
+    const n = nextIndex(true);
+    if (n !== null) playIndex(n, true);
+  };
+
+  return (
+    <div className="flex h-dvh flex-col bg-bg text-fg lg:flex-row">
+      <Sidebar view={view} onView={goView} />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {view === "listen" ? (
+            <ListenNow
+              onOpenAlbum={(key) => {
+                setLibraryAlbum(key);
+                goView("library");
+              }}
+            />
+          ) : null}
+          {view === "search" ? <SearchPage query={query} onQuery={setQuery} /> : null}
+          {view === "library" ? (
+            <Library
+              albumKey={libraryAlbum}
+              onAlbum={setLibraryAlbum}
+              onPlayTrack={(i) => playIndex(i, true)}
+            />
+          ) : null}
+          {view === "radio" ? <RadioPage /> : null}
+          {view === "recent" ? <RecentPage /> : null}
+          {view === "stats" ? <StatsPage /> : null}
+          {view === "eq" ? <EqPanel /> : null}
+          {view === "remaster" ? <RemasterPanel /> : null}
+          {view === "mix" ? (
+            <div className="space-y-4 p-4">
+              <ListenCard />
+              <SpatialCard />
+              <TempoPitch />
+            </div>
+          ) : null}
+          {view === "extras" ? <ExtrasPanel /> : null}
+          {view === "spotify" ? <SpotifyPanel /> : null}
+          {view === "deezer" ? <DeezerPanel /> : null}
+          {view === "ibroadcast" ? <IbroadcastPanel /> : null}
+          {view === "archive" ? <ArchivePanel /> : null}
+          {view === "bandcamp" ? <BandcampPanel /> : null}
+          {view === "rym" ? <RymPanel /> : null}
+          {view === "database" ? <DatabasePanel /> : null}
+          {view === "soundcloud" ? <SoundcloudPanel /> : null}
+          {view === "soulseek" ? <SoulseekPanel /> : null}
+          {view === "amazon" ? <AmazonPanel /> : null}
+          {view === "find" ? <FindAudioPanel /> : null}
+          {view === "youtube" ? <YoutubeMusicPanel /> : null}
+          {view === "account" ? (
+            <div className="space-y-4 p-4">
+              <AccountSync />
+              <LibraryBackup />
+              <LibraryClear />
+              <ApkCard />
+              <AddMusicCard />
+              <LastFmCard />
+              <DuplicatesCard />
+            </div>
+          ) : null}
+          {view === "youtube-stage" ? <YoutubeStage /> : null}
+        </main>
+        {notice ? (
+          <div className="border-t border-border bg-card px-4 py-2 text-center text-xs text-muted">{notice}</div>
+        ) : null}
+        <MiniPlayer
+          onTogglePlay={togglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
+          onExpand={() => setNowOpen(true)}
+          onLyrics={() => setNowOpen(true)}
+        />
+        <MobileDock view={view} onView={goView} />
+      </div>
+      {nowOpen ? (
+        <NowPlaying
+          onClose={() => setNowOpen(false)}
+          onTogglePlay={togglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
+          onParty={() => setParty(true)}
+          onCarMode={() => setCar(true)}
+          onOpenAlbum={(key) => {
+            setNowOpen(false);
+            setLibraryAlbum(key);
+            goView("library");
+          }}
+        />
+      ) : null}
+      {party ? <PartyViz onClose={() => setParty(false)} /> : null}
+      {car ? (
+        <CarMode
+          onClose={() => setCar(false)}
+          onTogglePlay={togglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
+        />
+      ) : null}
+    </div>
+  );
+}
