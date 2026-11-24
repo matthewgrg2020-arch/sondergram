@@ -35,7 +35,7 @@ function Home() {
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-bg p-6 text-fg">
         <div className="text-lg font-medium">Sondergram failed to load</div>
-        <div className="max-w-md text-center text-sm text-muted">{err}</div>
+        <div className="max-w-md text-center text-sm opacity-70">{err}</div>
         <button
           type="button"
           className="rounded-full bg-raised px-4 py-2 text-sm"
@@ -48,7 +48,11 @@ function Home() {
   }
 
   if (!App) {
-    return <main className="min-h-dvh bg-black" />;
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-bg text-fg">
+        <div className="text-sm opacity-70">Loading Sondergram…</div>
+      </main>
+    );
   }
 
   return (
