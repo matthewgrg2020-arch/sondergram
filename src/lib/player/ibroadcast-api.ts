@@ -13,7 +13,16 @@ export type IbLibraryResult =
   | { ok: false; tracks: IbTrack[]; playlists: IbPlaylist[]; total: number; error: string; debug?: string };
 
 function str(value: unknown) {
-  return value == null ? "" : String(value).trim();
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  // Never return "[object Object]"
+  try {
+    const j = JSON.stringify(value);
+    return j === "{}" || j === "null" ? "" : j.slice(0, 120);
+  } catch {
+    return "";
+  }
 }
 
 function num(value: unknown) {
@@ -21,9 +30,22 @@ function num(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function safeErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message && err.message !== "[object Object]") return err.message;
+  if (typeof err === "string" && err && err !== "[object Object]") return err;
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    for (const k of ["message", "error", "msg", "reason"]) {
+      const v = o[k];
+      if (typeof v === "string" && v.trim() && v !== "[object Object]") return v.trim();
+    }
+  }
+  return fallback;
+}
+
 async function postJson(url: string, body: Json, headers: Record<string, string> = {}): Promise<Json> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 18000);
+  const timer = setTimeout(() => controller.abort(), 22000);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -44,10 +66,10 @@ async function postJson(url: string, body: Json, headers: Record<string, string>
       throw new Error(text.slice(0, 180) || `iBroadcast ${url} did not return JSON (HTTP ${res.status}).`);
     }
     if (parsed.result === false || parsed.authenticated === false) {
-      throw new Error(str(parsed.message) || `iBroadcast rejected the request (HTTP ${res.status}).`);
+      throw new Error(str(parsed.message) || str(parsed.error) || `iBroadcast rejected the request (HTTP ${res.status}).`);
     }
     if (!res.ok && parsed.result !== true) {
-      throw new Error(str(parsed.message) || `iBroadcast HTTP ${res.status}.`);
+      throw new Error(str(parsed.message) || str(parsed.error) || `iBroadcast HTTP ${res.status}.`);
     }
     return parsed;
   } finally {
@@ -59,6 +81,17 @@ async function postJson(url: string, body: Json, headers: Record<string, string>
 function decodeMap(raw: unknown): Record<string, Json> {
   if (!raw || typeof raw !== "object") return {};
   const data = raw as Record<string, unknown>;
+
+  // Already a plain id → object map
+  if (!Array.isArray(data) && !data.map && !data.keys) {
+    const out: Record<string, Json> = {};
+    for (const [id, value] of Object.entries(data)) {
+      if (id === "length") continue;
+      if (value && typeof value === "object" && !Array.isArray(value)) out[id] = value as Json;
+    }
+    if (Object.keys(out).length) return out;
+  }
+
   const mapping = data.map;
   const keymap: Record<number, string> = {};
   if (mapping && typeof mapping === "object" && !Array.isArray(mapping)) {
@@ -83,18 +116,37 @@ function decodeMap(raw: unknown): Record<string, Json> {
   return out;
 }
 
+/** Also accept a plain array of track objects. */
+function decodeTrackArray(raw: unknown): Record<string, Json> {
+  if (!Array.isArray(raw)) return {};
+  const out: Record<string, Json> = {};
+  raw.forEach((item, i) => {
+    if (!item || typeof item !== "object") return;
+    const row = item as Json;
+    const id = str(row.id || row.track_id || row.file_id || i);
+    out[id] = row;
+  });
+  return out;
+}
+
 function pickLibrary(raw: Json): Json {
   if (raw.library && typeof raw.library === "object") return raw.library as Json;
+  if (raw.data && typeof raw.data === "object") {
+    const data = raw.data as Json;
+    if (data.library && typeof data.library === "object") return data.library as Json;
+    if (data.tracks || data.albums) return data;
+  }
   if (raw.tracks || raw.albums) return raw;
   return raw;
 }
 
 function describeRaw(raw: Json): string {
   const lib = pickLibrary(raw);
-  const trackKeys =
-    lib.tracks && typeof lib.tracks === "object"
-      ? Object.keys(lib.tracks as object).filter((k) => k !== "map" && k !== "keys" && k !== "length").length
-      : 0;
+  let trackKeys = 0;
+  if (Array.isArray(lib.tracks)) trackKeys = lib.tracks.length;
+  else if (lib.tracks && typeof lib.tracks === "object") {
+    trackKeys = Object.keys(lib.tracks as object).filter((k) => k !== "map" && k !== "keys" && k !== "length").length;
+  }
   const top = Object.keys(raw).slice(0, 10).join(",");
   const libKeys = Object.keys(lib).slice(0, 10).join(",");
   return `top=[${top}] lib=[${libKeys}] trackEntries=${trackKeys}`;
@@ -109,7 +161,14 @@ function artworkUrl(artId: string, size = 500): string {
 
 function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; total: number } {
   const library = pickLibrary(raw);
-  const tracksMap = decodeMap(library.tracks);
+  let tracksMap = decodeMap(library.tracks);
+  if (!Object.keys(tracksMap).length) {
+    tracksMap = decodeTrackArray(library.tracks);
+  }
+  // Some responses put tracks at top level as array
+  if (!Object.keys(tracksMap).length && Array.isArray(raw.tracks)) {
+    tracksMap = decodeTrackArray(raw.tracks);
+  }
   const albumsMap = decodeMap(library.albums);
   const artistsMap = decodeMap(library.artists);
   const playlistsMap = decodeMap(library.playlists);
@@ -220,6 +279,20 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
           { Authorization: `Bearer ${session.token}` },
         ),
     },
+    {
+      label: "status+library",
+      run: async () => {
+        // Refresh session context then pull library
+        await postJson("https://api.ibroadcast.com/s/JSON/status", {
+          ...authBody(session, "status"),
+          url: "//api.ibroadcast.com/s/JSON/status",
+        });
+        return postJson("https://library.ibroadcast.com/", {
+          ...authBody(session, "library"),
+          url: "//library.ibroadcast.com",
+        });
+      },
+    },
   ];
 
   for (const attempt of attempts) {
@@ -239,7 +312,7 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
       }
       errors.push(`${attempt.label}: 0 tracks (${info})`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "failed";
+      const msg = safeErrorMessage(err, "failed");
       errors.push(`${attempt.label}: ${msg}`);
       debugs.push(`${attempt.label}: error ${msg}`);
     }
@@ -304,7 +377,7 @@ export const ibLogin = createServerFn({ method: "POST" })
       };
       return session;
     } catch (err) {
-      throw new Error(err instanceof Error ? err.message : "iBroadcast sign-in failed.");
+      throw new Error(safeErrorMessage(err, "iBroadcast sign-in failed."));
     }
   });
 
@@ -342,7 +415,7 @@ export const ibLibrary = createServerFn({ method: "POST" })
         tracks: [],
         playlists: [],
         total: 0,
-        error: err instanceof Error ? err.message : "iBroadcast library request failed.",
+        error: safeErrorMessage(err, "iBroadcast library request failed."),
       };
     }
   });
@@ -369,7 +442,7 @@ export const ibSearch = createServerFn({ method: "POST" })
         tracks: [],
         playlists: [],
         total: 0,
-        error: err instanceof Error ? err.message : "iBroadcast search failed.",
+        error: safeErrorMessage(err, "iBroadcast search failed."),
       };
     }
   });
@@ -402,6 +475,6 @@ export const ibSharePlaylist = createServerFn({ method: "POST" })
         url: `https://media.ibroadcast.com/?view=container&container_id=${encodeURIComponent(playlistId)}&type=playlists`,
       };
     } catch (err) {
-      throw new Error(err instanceof Error ? err.message : "Could not share playlist.");
+      throw new Error(safeErrorMessage(err, "Could not share playlist."));
     }
   });
