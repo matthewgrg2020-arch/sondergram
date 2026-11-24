@@ -67,9 +67,27 @@ export type IbSearchResult = {
   error?: string;
 };
 
+function authPayload(session: IbSession) {
+  const uidNum = Number(session.userId);
+  const uid = Number.isFinite(uidNum) && uidNum > 0 ? uidNum : session.userId;
+  return {
+    _token: session.token,
+    _userid: uid,
+    user_id: uid,
+    token: session.token,
+    client: "Sondergram",
+    version: "1.0",
+    device_name: "Sondergram Web",
+    user_agent: "Sondergram/1.0",
+    mode: "library",
+    supported_types: false,
+    url: "//library.ibroadcast.com",
+  };
+}
+
 /**
- * Stream the iBroadcast library through our proxy and match in the browser.
- * Survives host time limits better than server-side full scans.
+ * Fetch library.ibroadcast.com DIRECTLY from the browser (CORS is open)
+ * and match as the stream arrives. Avoids Vercel/host time limits.
  */
 export async function searchIbLibraryClient(
   session: IbSession,
@@ -84,39 +102,58 @@ export async function searchIbLibraryClient(
 
   let res: Response;
   try {
-    res = await fetch("/api/ib-library-stream", {
+    res = await fetch("https://library.ibroadcast.com/", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: session.userId, token: session.token }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(authPayload(session)),
     });
   } catch (err) {
-    const aborted = err instanceof Error && /abort/i.test(err.message);
-    return {
-      ok: false,
-      tracks: [],
-      total: 0,
-      error: aborted
-        ? "Search was interrupted. Try again with a more specific name."
-        : "Could not reach the search service.",
-    };
+    // Fallback through our proxy if direct fails (rare)
+    try {
+      res = await fetch("/api/ib-library-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: session.userId, token: session.token }),
+      });
+    } catch (err2) {
+      const aborted =
+        (err instanceof Error && /abort/i.test(err.message)) ||
+        (err2 instanceof Error && /abort/i.test(err2.message));
+      return {
+        ok: false,
+        tracks: [],
+        total: 0,
+        error: aborted
+          ? "Search was interrupted. Check your connection and try again."
+          : "Could not reach iBroadcast. Check your connection.",
+      };
+    }
   }
 
-  const ctype = res.headers.get("content-type") || "";
   if (!res.ok || !res.body) {
-    let msg = `Search failed (HTTP ${res.status}).`;
+    let msg = `iBroadcast library HTTP ${res.status}`;
     try {
-      if (ctype.includes("json")) {
-        const j = (await res.json()) as { error?: string };
-        if (j?.error) msg = j.error;
+      const t = await res.text();
+      if (t && t.length < 200) msg = t;
+      else {
+        try {
+          const j = JSON.parse(t) as { message?: string; error?: string };
+          if (j.message || j.error) msg = String(j.message || j.error);
+        } catch {
+          /* ignore */
+        }
       }
     } catch {
       /* ignore */
     }
+    if (/token|auth|login|sign/i.test(msg)) {
+      msg = "iBroadcast session expired. Sign out and sign in again.";
+    }
     return { ok: false, tracks: [], total: 0, error: msg };
   }
-
-  // If the proxy returned a small JSON error despite 200, handle it
-  // (won't happen when streaming library body)
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -128,7 +165,7 @@ export async function searchIbLibraryClient(
   let artistMap: Record<string, number> = {};
   const hits: IbTrack[] = [];
   const seen = new Set<string>();
-  const MAX_BUF = 10_000_000;
+  const MAX_BUF = 12_000_000;
 
   const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
     const mapIdx = section.indexOf('"map"');
@@ -246,25 +283,19 @@ export async function searchIbLibraryClient(
     buf += decoder.decode();
     scanBuffer();
   } catch (err) {
-    // Stream cut off (host time limit) — still return whatever we found
     if (hits.length) {
-      return {
-        ok: true,
-        tracks: hits,
-        total: hits.length,
-        truncated: true,
-      };
+      return { ok: true, tracks: hits, total: hits.length, truncated: true };
     }
-    const aborted = err instanceof Error && /abort/i.test(err.message);
     return {
       ok: false,
       tracks: [],
       total: 0,
-      error: aborted
-        ? "Search timed out before finding matches in your large library. Try a more specific song or album title."
-        : err instanceof Error
-          ? err.message
-          : "Search failed.",
+      error:
+        err instanceof Error && /abort/i.test(err.message)
+          ? "Search was interrupted. Try again."
+          : err instanceof Error
+            ? err.message
+            : "Search failed while reading the library.",
     };
   }
 
@@ -273,8 +304,7 @@ export async function searchIbLibraryClient(
       ok: false,
       tracks: [],
       total: 0,
-      error:
-        "No matches found. The stream may have ended before reaching that name — try a more specific title.",
+      error: "No matches found. Try a more specific song or album title.",
     };
   }
 
