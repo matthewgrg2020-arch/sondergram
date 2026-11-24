@@ -127,29 +127,25 @@ function namesFromPath(path: string): { artist: string; album: string; title: st
   return { artist: artist.trim(), album: album.trim(), title: fileTitle };
 }
 
-/** Pick a human title from a track row — never a bare track number. */
 function pickTitle(row: unknown[], tm: Record<string, number>, pathTitle: string): string {
-  const fromMap = strAt(row, tm.title ?? tm.name ?? DEFAULT_TRACK_MAP.title);
-  // Reject pure numbers / track-style values ("1", "01", "12")
+  const fromMap = strAt(row, tm.title ?? DEFAULT_TRACK_MAP.title);
   if (fromMap && !/^\d{1,3}$/.test(fromMap) && !/^\d{4}$/.test(fromMap)) return fromMap;
-
-  // Heuristic: first non-path, non-mime, non-date string that looks like a title
   for (const cell of row) {
     if (typeof cell !== "string") continue;
     const s = cell.trim();
     if (!s || s.length < 2) continue;
     if (/^\d{1,3}$/.test(s)) continue;
-    if (/^\d{4}$/.test(s)) continue; // year
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) continue; // date
-    if (/^\d{1,2}:\d{2}/.test(s)) continue; // time
+    if (/^\d{4}$/.test(s)) continue;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) continue;
+    if (/^\d{1,2}:\d{2}/.test(s)) continue;
     if (/^audio\//i.test(s)) continue;
-    if (/^\//.test(s)) continue; // file path like /128/...
+    if (/^\//.test(s)) continue;
     if (/music\//i.test(s)) continue;
-    if (/^-?\d+(\.\d+)?$/.test(s)) continue; // replay gain etc
+    if (/^-?\d+(\.\d+)?$/.test(s)) continue;
     return s;
   }
   if (pathTitle) return pathTitle;
-  if (fromMap) return fromMap; // last resort even if numeric
+  if (fromMap) return fromMap;
   return "Untitled";
 }
 
@@ -175,6 +171,7 @@ export type IbSearchResult = {
 
 function authPayload(session: IbSession) {
   const uidNum = Number(session.userId);
+  const uid = Number.is.userId;
   const uid = Number.isFinite(uidNum) && uidNum > 0 ? uidNum : session.userId;
   return {
     _token: session.token,
@@ -198,14 +195,9 @@ function resolveHit(
 ): IbTrack {
   const fromPath = namesFromPath(hit.path);
   const artist =
-    (hit.artistId && artists.get(hit.artistId)) ||
-    fromPath.artist ||
-    "Unknown artist";
+    (hit.artistId && artists.get(hit.artistId)) || fromPath.artist || "Unknown artist";
   const album =
-    (hit.albumId && albums.get(hit.albumId)) ||
-    fromPath.album ||
-    "Unknown album";
-  // Never show "Album 12345" — prefer path / unknown
+    (hit.albumId && albums.get(hit.albumId)) || fromPath.album || "Unknown album";
   const title =
     hit.title && !/^\d{1,3}$/.test(hit.title)
       ? hit.title
@@ -222,10 +214,60 @@ function resolveHit(
   };
 }
 
+function findSectionStart(buf: string, label: string): number {
+  // Prefer top-level-ish "label": {
+  const re = new RegExp(`"${label}"\\s*:\\s*\\{`);
+  const m = re.exec(buf);
+  return m ? buf.indexOf("{", m.index) : -1;
+}
+
+function tryParseMapNear(buf: string, from: number, window = 4000): Record<string, number> {
+  const slice = buf.slice(from, from + window);
+  const mapKey = slice.search(/"map"\s*:\s*\{/);
+  if (mapKey < 0) return {};
+  const brace = slice.indexOf("{", mapKey);
+  if (brace < 0) return {};
+  const raw = extractBalanced(slice, brace);
+  if (!raw) return {};
+  return parseMap(raw);
+}
+
 /**
- * Fetch library.ibroadcast.com DIRECTLY from the browser (CORS is open)
- * and match as the stream arrives.
+ * Scan buffer for "id": [ ...row... ] entries starting at `from`.
+ * Does NOT require the parent object to be complete — works on partial streams.
  */
+function scanEntries(
+  buf: string,
+  from: number,
+  onRow: (id: string, row: unknown[]) => void,
+): number {
+  // Return how far we can safely discard (before last incomplete entry)
+  const re = /"(\d+)"\s*:\s*\[/g;
+  re.lastIndex = Math.max(0, from);
+  let lastComplete = from;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(buf))) {
+    const id = m[1]!;
+    const arrStart = buf.indexOf("[", m.index);
+    if (arrStart < 0) break;
+    const arrRaw = extractBalanced(buf, arrStart);
+    if (!arrRaw) {
+      // Incomplete entry — stop and keep buffer from here
+      return m.index;
+    }
+    let row: unknown[];
+    try {
+      row = JSON.parse(arrRaw) as unknown[];
+    } catch {
+      lastComplete = arrStart + arrRaw.length;
+      continue;
+    }
+    if (Array.isArray(row) && row.length >= 3) onRow(id, row);
+    lastComplete = arrStart + arrRaw.length;
+  }
+  return lastComplete;
+}
+
 export async function searchIbLibraryClient(
   session: IbSession,
   query: string,
@@ -301,150 +343,152 @@ export async function searchIbLibraryClient(
   let artistMap: Record<string, number> = { ...DEFAULT_ARTIST_MAP };
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
-  let sawArtists = false;
-  let sawAlbums = false;
-  const MAX_BUF = 12_000_000;
-  // Track which section spans we've already fully digested (by start index in a rolling way)
-  const digested = new Set<string>();
 
-  const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
-    const sig = `${label}:${section.length}:${section.slice(0, 64)}`;
-    if (digested.has(sig)) return;
-    digested.add(sig);
-    if (digested.size > 40) {
-      // prevent unbounded growth
-      const first = digested.values().next().value;
-      if (first) digested.delete(first);
-    }
+  // Scan cursors (byte offsets into buf)
+  let artistCursor = 0;
+  let albumCursor = 0;
+  let trackCursor = 0;
+  let artistsStart = -1;
+  let albumsStart = -1;
+  let tracksStart = -1;
+  let mapsReady = false;
 
-    // Prefer the section's own map object: look for "map":{
-    const mapKey = section.search(/"map"\s*:\s*\{/);
-    if (mapKey >= 0) {
-      const brace = section.indexOf("{", mapKey);
-      if (brace >= 0) {
-        const raw = extractBalanced(section, brace);
-        if (raw) {
-          const m = parseMap(raw);
-          if (label === "tracks" && m.title != null) trackMap = { ...DEFAULT_TRACK_MAP, ...m };
-          if (label === "albums" && m.name != null) albumMap = { ...DEFAULT_ALBUM_MAP, ...m };
-          if (label === "artists" && m.name != null) artistMap = { ...DEFAULT_ARTIST_MAP, ...m };
-        }
-      }
-    }
-
-    const re = /"(\d+)"\s*:\s*\[/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(section))) {
-      const id = m[1]!;
-      const arrStart = section.indexOf("[", m.index);
-      if (arrStart < 0) continue;
-      const arrRaw = extractBalanced(section, arrStart);
-      if (!arrRaw) continue;
-      let row: unknown[];
-      try {
-        row = JSON.parse(arrRaw) as unknown[];
-      } catch {
-        continue;
-      }
-      if (!Array.isArray(row) || row.length < 3) continue;
-
-      if (label === "artists") {
-        sawArtists = true;
-        const name = strAt(row, artistMap.name ?? 0);
-        // name must be a non-numeric string
-        if (name && !/^\d+$/.test(name)) artists.set(id, name);
-        continue;
-      }
-      if (label === "albums") {
-        sawAlbums = true;
-        const name = strAt(row, albumMap.name ?? 0);
-        if (name && !/^\d+$/.test(name)) albums.set(id, name);
-        continue;
-      }
-
-      // tracks
-      if (pending.length >= MAX_HITS || seen.has(id)) continue;
-
-      const tm = trackMap;
-      const path = strAt(row, tm.path ?? DEFAULT_TRACK_MAP.path);
-      let file = strAt(row, tm.file ?? DEFAULT_TRACK_MAP.file);
-      if (!file) {
-        for (const cell of row) {
-          if (typeof cell === "string" && /^\/\d+\//.test(cell)) {
-            file = cell;
-            break;
-          }
-        }
-      }
-      let pathVal = path;
-      if (!pathVal) {
-        for (const cell of row) {
-          if (typeof cell === "string" && /music\//i.test(cell)) {
-            pathVal = cell;
-            break;
-          }
-        }
-      }
-
-      const pathNames = namesFromPath(pathVal);
-      const title = pickTitle(row, tm, pathNames.title);
-      const genre = strAt(row, tm.genre ?? DEFAULT_TRACK_MAP.genre);
-      const yearRaw = strAt(row, tm.year ?? DEFAULT_TRACK_MAP.year);
-      const year = /^\d{4}$/.test(yearRaw) ? yearRaw : "";
-      const albumId = numAt(row, tm.album_id ?? DEFAULT_TRACK_MAP.album_id);
-      const artistId = numAt(row, tm.artist_id ?? DEFAULT_TRACK_MAP.artist_id);
-      const artId = numAt(row, tm.artwork_id ?? DEFAULT_TRACK_MAP.artwork_id);
-
-      const artistName = (artistId && artists.get(artistId)) || pathNames.artist || "";
-      const albumName = (albumId && albums.get(albumId)) || pathNames.album || "";
-
-      const hay = [title, artistName, albumName, pathNames.artist, pathNames.album, genre, pathVal]
-        .join(" ")
-        .toLowerCase();
-      if (!hay.includes(q)) continue;
-
-      const trashedIdx = tm.trashed ?? DEFAULT_TRACK_MAP.trashed;
-      if (trashedIdx != null) {
-        const tr = row[trashedIdx];
-        if (tr === true || tr === 1 || tr === "1" || tr === "true") continue;
-      }
-
-      seen.add(id);
-      pending.push({
-        id,
-        title,
-        genre: genre && !/^\d+$/.test(genre) ? genre : "",
-        year,
-        albumId,
-        artistId,
-        artId,
-        file,
-        path: pathVal,
-      });
-      opts?.onProgress?.(pending.length);
-    }
+  const handleArtist = (id: string, row: unknown[]) => {
+    const name = strAt(row, artistMap.name ?? 0);
+    if (name && !/^\d+$/.test(name)) artists.set(id, name);
   };
 
-  const scanBuffer = () => {
-    // Match only real section objects: "tracks": { ... }
-    for (const label of ["artists", "albums", "tracks"] as const) {
-      const re = new RegExp(`"${label}"\\s*:\\s*\\{`, "g");
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(buf))) {
-        const brace = buf.indexOf("{", m.index);
-        if (brace < 0) continue;
-        const section = extractBalanced(buf, brace);
-        if (!section) continue;
-        // Skip tiny false positives (map fragments)
-        if (section.length < 20) continue;
-        digestSection(label, section);
+  const handleAlbum = (id: string, row: unknown[]) => {
+    const name = strAt(row, albumMap.name ?? 0);
+    if (name && !/^\d+$/.test(name)) albums.set(id, name);
+  };
+
+  const handleTrack = (id: string, row: unknown[]) => {
+    if (pending.length >= MAX_HITS || seen.has(id)) return;
+
+    const tm = trackMap;
+    let pathVal = strAt(row, tm.path ?? DEFAULT_TRACK_MAP.path);
+    let file = strAt(row, tm.file ?? DEFAULT_TRACK_MAP.file);
+    if (!file) {
+      for (const cell of row) {
+        if (typeof cell === "string" && /^\/\d+\//.test(cell)) {
+          file = cell;
+          break;
+        }
       }
     }
-    if (buf.length > MAX_BUF) buf = buf.slice(-Math.floor(MAX_BUF / 2));
+    if (!pathVal) {
+      for (const cell of row) {
+        if (typeof cell === "string" && /music\//i.test(cell)) {
+          pathVal = cell;
+          break;
+        }
+      }
+    }
 
-    if (pending.length >= MAX_HITS && sawArtists && sawAlbums) return true;
-    if (pending.length >= MAX_HITS && (artists.size > 0 || albums.size > 0)) return true;
-    return false;
+    const pathNames = namesFromPath(pathVal);
+    const title = pickTitle(row, tm, pathNames.title);
+    const genre = strAt(row, tm.genre ?? DEFAULT_TRACK_MAP.genre);
+    const yearRaw = strAt(row, tm.year ?? DEFAULT_TRACK_MAP.year);
+    const year = /^\d{4}$/.test(yearRaw) ? yearRaw : "";
+    const albumId = numAt(row, tm.album_id ?? DEFAULT_TRACK_MAP.album_id);
+    const artistId = numAt(row, tm.artist_id ?? DEFAULT_TRACK_MAP.artist_id);
+    const artId = numAt(row, tm.artwork_id ?? DEFAULT_TRACK_MAP.artwork_id);
+
+    const artistName = (artistId && artists.get(artistId)) || pathNames.artist || "";
+    const albumName = (albumId && albums.get(albumId)) || pathNames.album || "";
+
+    // Match against every useful field + full row text
+    const hay = [title, artistName, albumName, genre, pathVal, JSON.stringify(row)]
+      .join(" ")
+      .toLowerCase();
+    if (!hay.includes(q)) return;
+
+    const trashedIdx = tm.trashed ?? DEFAULT_TRACK_MAP.trashed;
+    if (trashedIdx != null) {
+      const tr = row[trashedIdx];
+      if (tr === true || tr === 1 || tr === "1" || tr === "true") return;
+    }
+
+    seen.add(id);
+    pending.push({
+      id,
+      title,
+      genre: genre && !/^\d+$/.test(genre) ? genre : "",
+      year,
+      albumId,
+      artistId,
+      artId,
+      file,
+      path: pathVal,
+    });
+    opts?.onProgress?.(pending.length);
+  };
+
+  const processBuffer = () => {
+    if (artistsStart < 0) artistsStart = findSectionStart(buf, "artists");
+    if (albumsStart < 0) albumsStart = findSectionStart(buf, "albums");
+    if (tracksStart < 0) tracksStart = findSectionStart(buf, "tracks");
+
+    if (!mapsReady) {
+      if (artistsStart >= 0) {
+        const m = tryParseMapNear(buf, artistsStart);
+        if (m.name != null) artistMap = { ...DEFAULT_ARTIST_MAP, ...m };
+      }
+      if (albumsStart >= 0) {
+        const m = tryParseMapNear(buf, albumsStart);
+        if (m.name != null) albumMap = { ...DEFAULT_ALBUM_MAP, ...m };
+      }
+      if (tracksStart >= 0) {
+        const m = tryParseMapNear(buf, tracksStart);
+        if (m.title != null) {
+          trackMap = { ...DEFAULT_TRACK_MAP, ...m };
+          mapsReady = true;
+        }
+      }
+    }
+
+    if (artistsStart >= 0) {
+      artistCursor = Math.max(artistCursor, artistsStart);
+      artistCursor = scanEntries(buf, artistCursor, handleArtist);
+    }
+    if (albumsStart >= 0) {
+      albumCursor = Math.max(albumCursor, albumsStart);
+      albumCursor = scanEntries(buf, albumCursor, handleAlbum);
+    }
+    if (tracksStart >= 0) {
+      trackCursor = Math.max(trackCursor, tracksStart);
+      trackCursor = scanEntries(buf, trackCursor, handleTrack);
+    }
+
+    // Compact buffer: keep tail after earliest incomplete cursor among active sections
+    const MAX_BUF = 8_000_000;
+    if (buf.length > MAX_BUF) {
+      const keepFrom = Math.min(
+        artistsStart >= 0 ? artistCursor : buf.length,
+        albumsStart >= 0 ? albumCursor : buf.length,
+        tracksStart >= 0 ? trackCursor : buf.length,
+      );
+      // Always keep enough for incomplete JSON at the end
+      const cut = Math.max(0, Math.min(keepFrom, buf.length - 1_000_000));
+      if (cut > 0) {
+        buf = buf.slice(cut);
+        if (artistsStart >= 0) {
+          artistsStart = Math.max(0, artistsStart - cut);
+          artistCursor = Math.max(0, artistCursor - cut);
+        }
+        if (albumsStart >= 0) {
+          albumsStart = Math.max(0, albumsStart - cut);
+          albumCursor = Math.max(0, albumCursor - cut);
+        }
+        if (tracksStart >= 0) {
+          tracksStart = Math.max(0, tracksStart - cut);
+          trackCursor = Math.max(0, trackCursor - cut);
+        }
+      }
+    }
+
+    return pending.length >= MAX_HITS;
   };
 
   try {
@@ -452,7 +496,7 @@ export async function searchIbLibraryClient(
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      if (scanBuffer()) {
+      if (processBuffer()) {
         try {
           await reader.cancel();
         } catch {
@@ -462,7 +506,7 @@ export async function searchIbLibraryClient(
       }
     }
     buf += decoder.decode();
-    scanBuffer();
+    processBuffer();
   } catch (err) {
     if (pending.length) {
       const tracks = pending.map((h) => resolveHit(h, artists, albums));
@@ -486,7 +530,10 @@ export async function searchIbLibraryClient(
       ok: false,
       tracks: [],
       total: 0,
-      error: "No matches found. Try a more specific song or album title.",
+      error:
+        tracksStart < 0
+          ? "Could not read track list from iBroadcast. Sign out and sign in again, then retry."
+          : "No matches found yet in the part of the library that loaded. Try a more specific title, or wait and search again.",
     };
   }
 
