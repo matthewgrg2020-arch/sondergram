@@ -102,6 +102,16 @@ function seekEl(el: HTMLAudioElement, time: number) {
 
 export async function seekHard(url: string, time: number) {
   if (!url || !Number.isFinite(time) || time < 0) return;
+  const eng = ensureEngine();
+  const active = outputAudio();
+  const cur = active.currentSrc || active.src || lastPlayUrl || "";
+  if (cur && (cur === url || cur.includes(url.split("?")[0] || "___") || url.includes((cur.split("?")[0] || "___")))) {
+    seekOutput(time);
+    if (active.paused) {
+      try { await active.play(); } catch {}
+    }
+    return;
+  }
   try {
     await beginPlayback(url, time);
   } catch {
@@ -210,12 +220,19 @@ export function pauseOutput() {
 }
 
 export function seekOutput(t: number) {
-  const el = outputAudio();
-  seekEl(el, t);
-  const srcUrl = el.currentSrc || el.src || lastPlayUrl || "";
-  if (srcUrl.includes("/api/soulseek") && (!Number.isFinite(el.duration) || el.duration === 0 || Math.abs((el.currentTime || 0) - t) > 1.5)) {
+  const eng = ensureEngine();
+  const active = outputAudio();
+  const other = active === eng.audio ? eng.bgAudio : eng.audio;
+  if (other) {
+    try { other.pause(); } catch {}
+    other.muted = true;
+    other.volume = 0;
+  }
+  seekEl(active, t);
+  const srcUrl = active.currentSrc || active.src || lastPlayUrl || "";
+  if (srcUrl.includes("/api/soulseek") && (!Number.isFinite(active.duration) || active.duration === 0 || Math.abs((active.currentTime || 0) - t) > 1.5)) {
     window.setTimeout(() => {
-      const now = el.currentTime || 0;
+      const now = active.currentTime || 0;
       if (Math.abs(now - t) > 1.2) void seekHard(srcUrl, t);
     }, 350);
   }
@@ -243,9 +260,11 @@ export function primePlayback() {
 
 function silenceAll() {
   const eng = ensureEngine();
-  eng.audio.pause();
+  try { eng.audio.pause(); } catch {}
+  eng.audio.muted = true;
+  eng.audio.volume = 0;
   if (eng.bgAudio) {
-    eng.bgAudio.pause();
+    try { eng.bgAudio.pause(); } catch {}
     eng.bgAudio.muted = true;
     eng.bgAudio.volume = 0;
   }
@@ -335,8 +354,24 @@ async function playEl(el: HTMLAudioElement, url: string, at: number, graph: bool
     el.pause();
     return;
   }
+  try {
+    const eng = engine;
+    if (eng) {
+      const other = el === eng.audio ? eng.bgAudio : eng.audio;
+      if (other && other !== el) {
+        other.pause();
+        other.muted = true;
+        other.volume = 0;
+      }
+    }
+  } catch {}
   await el.play();
-  if (gen !== playGen) el.pause();
+  if (gen !== playGen) {
+    el.pause();
+    return;
+  }
+  el.muted = false;
+  if (!graph) el.volume = 1;
 }
 
 export async function beginPlayback(url: string, at = 0) {
@@ -563,7 +598,6 @@ export function setFadeMul(_v: number) {}
 export function setNormalizeMul(_v: number) {}
 export function setReplayGainDb(_db: number) {}
 
-/** Capture the current Web Audio graph for optional transcription. */
 export function capturePlayStream(): MediaStream | null {
   try {
     const eng = ensureEngine();
@@ -576,7 +610,6 @@ export function capturePlayStream(): MediaStream | null {
   }
 }
 
-/** Generate a short test tone as a WAV blob for the empty library state. */
 export function makeDemoTone(): { name: string; blob: Blob } {
   const sampleRate = 44100;
   const seconds = 2;
