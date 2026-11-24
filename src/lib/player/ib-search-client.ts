@@ -39,8 +39,7 @@ function parseMap(mapRaw: string): Record<string, number> {
     const obj = JSON.parse(mapRaw) as Record<string, unknown>;
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(obj)) {
-      if (typeof v === "number") out[k] = v;
-      // skip nested map objects (artists_additional_map etc.)
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 64) out[k] = v;
     }
     return out;
   } catch {
@@ -60,16 +59,56 @@ function numAt(row: unknown[], idx: number | undefined): string {
   return s && s !== "0" ? s : "";
 }
 
-/** Best-effort artist/album from iBroadcast path field. */
-function namesFromPath(path: string): { artist: string; album: string } {
+/** Official default indices from iBroadcast docs. */
+const DEFAULT_TRACK_MAP: Record<string, number> = {
+  track: 0,
+  year: 1,
+  title: 2,
+  genre: 3,
+  length: 4,
+  album_id: 5,
+  artwork_id: 6,
+  artist_id: 7,
+  enid: 8,
+  uploaded_on: 9,
+  trashed: 10,
+  size: 11,
+  path: 12,
+  uid: 13,
+  rating: 14,
+  plays: 15,
+  file: 16,
+  type: 17,
+  replay_gain: 18,
+  uploaded_time: 19,
+};
+
+const DEFAULT_ALBUM_MAP: Record<string, number> = {
+  name: 0,
+  tracks: 1,
+  artist_id: 2,
+  trashed: 3,
+  rating: 4,
+  disc: 5,
+  year: 6,
+};
+
+const DEFAULT_ARTIST_MAP: Record<string, number> = {
+  name: 0,
+  tracks: 1,
+  trashed: 2,
+  rating: 3,
+};
+
+function namesFromPath(path: string): { artist: string; album: string; title: string } {
   const p = (path || "").replace(/\\/g, "/").trim();
-  if (!p) return { artist: "", album: "" };
-  // music/Artists/Artist Name/(2007) Album Name/file.mp3
-  // music/Artist Name/Album Name/file.mp3
+  if (!p) return { artist: "", album: "", title: "" };
   const parts = p.split("/").filter(Boolean);
-  // drop filename
-  if (parts.length) parts.pop();
-  // strip leading music / Artists / Albums
+  let fileTitle = "";
+  if (parts.length) {
+    const file = parts.pop() || "";
+    fileTitle = file.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/^\d+\s*[-.]\s*/, "").trim();
+  }
   while (
     parts.length &&
     /^(music|artists|albums|compilations|tracks|audio)$/i.test(parts[0]!)
@@ -84,9 +123,34 @@ function namesFromPath(path: string): { artist: string; album: string } {
   } else if (parts.length === 1) {
     album = parts[0] || "";
   }
-  // strip year prefix on album: (2007) Name
   album = album.replace(/^\(\d{4}\)\s*/, "").trim();
-  return { artist: artist.trim(), album: album.trim() };
+  return { artist: artist.trim(), album: album.trim(), title: fileTitle };
+}
+
+/** Pick a human title from a track row — never a bare track number. */
+function pickTitle(row: unknown[], tm: Record<string, number>, pathTitle: string): string {
+  const fromMap = strAt(row, tm.title ?? tm.name ?? DEFAULT_TRACK_MAP.title);
+  // Reject pure numbers / track-style values ("1", "01", "12")
+  if (fromMap && !/^\d{1,3}$/.test(fromMap) && !/^\d{4}$/.test(fromMap)) return fromMap;
+
+  // Heuristic: first non-path, non-mime, non-date string that looks like a title
+  for (const cell of row) {
+    if (typeof cell !== "string") continue;
+    const s = cell.trim();
+    if (!s || s.length < 2) continue;
+    if (/^\d{1,3}$/.test(s)) continue;
+    if (/^\d{4}$/.test(s)) continue; // year
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) continue; // date
+    if (/^\d{1,2}:\d{2}/.test(s)) continue; // time
+    if (/^audio\//i.test(s)) continue;
+    if (/^\//.test(s)) continue; // file path like /128/...
+    if (/music\//i.test(s)) continue;
+    if (/^-?\d+(\.\d+)?$/.test(s)) continue; // replay gain etc
+    return s;
+  }
+  if (pathTitle) return pathTitle;
+  if (fromMap) return fromMap; // last resort even if numeric
+  return "Untitled";
 }
 
 type PendingHit = {
@@ -134,18 +198,21 @@ function resolveHit(
 ): IbTrack {
   const fromPath = namesFromPath(hit.path);
   const artist =
-    artists.get(hit.artistId) ||
+    (hit.artistId && artists.get(hit.artistId)) ||
     fromPath.artist ||
-    (hit.artistId ? `Artist ${hit.artistId}` : "") ||
     "Unknown artist";
   const album =
-    albums.get(hit.albumId) ||
+    (hit.albumId && albums.get(hit.albumId)) ||
     fromPath.album ||
-    (hit.albumId ? `Album ${hit.albumId}` : "") ||
     "Unknown album";
+  // Never show "Album 12345" — prefer path / unknown
+  const title =
+    hit.title && !/^\d{1,3}$/.test(hit.title)
+      ? hit.title
+      : fromPath.title || hit.title || "Untitled";
   return {
     id: hit.id,
-    name: hit.title || "Untitled",
+    name: title,
     artist,
     album,
     year: hit.year,
@@ -157,7 +224,7 @@ function resolveHit(
 
 /**
  * Fetch library.ibroadcast.com DIRECTLY from the browser (CORS is open)
- * and match as the stream arrives. Resolves artist/album after maps load.
+ * and match as the stream arrives.
  */
 export async function searchIbLibraryClient(
   session: IbSession,
@@ -229,40 +296,38 @@ export async function searchIbLibraryClient(
   let buf = "";
   const artists = new Map<string, string>();
   const albums = new Map<string, string>();
-  let trackMap: Record<string, number> = {};
-  let albumMap: Record<string, number> = {};
-  let artistMap: Record<string, number> = {};
+  let trackMap: Record<string, number> = { ...DEFAULT_TRACK_MAP };
+  let albumMap: Record<string, number> = { ...DEFAULT_ALBUM_MAP };
+  let artistMap: Record<string, number> = { ...DEFAULT_ARTIST_MAP };
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
   let sawArtists = false;
   let sawAlbums = false;
   const MAX_BUF = 12_000_000;
-
-  // Default field indices from iBroadcast docs / community clients
-  const defaultTrackMap: Record<string, number> = {
-    track: 0,
-    year: 1,
-    title: 2,
-    genre: 3,
-    length: 4,
-    album_id: 5,
-    artwork_id: 6,
-    artist_id: 7,
-    // path and file vary; filled when map is seen
-  };
+  // Track which section spans we've already fully digested (by start index in a rolling way)
+  const digested = new Set<string>();
 
   const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
-    const mapIdx = section.indexOf('"map"');
-    if (mapIdx >= 0) {
-      const colon = section.indexOf(":", mapIdx);
-      const brace = section.indexOf("{", colon);
+    const sig = `${label}:${section.length}:${section.slice(0, 64)}`;
+    if (digested.has(sig)) return;
+    digested.add(sig);
+    if (digested.size > 40) {
+      // prevent unbounded growth
+      const first = digested.values().next().value;
+      if (first) digested.delete(first);
+    }
+
+    // Prefer the section's own map object: look for "map":{
+    const mapKey = section.search(/"map"\s*:\s*\{/);
+    if (mapKey >= 0) {
+      const brace = section.indexOf("{", mapKey);
       if (brace >= 0) {
         const raw = extractBalanced(section, brace);
         if (raw) {
           const m = parseMap(raw);
-          if (label === "tracks") trackMap = { ...defaultTrackMap, ...trackMap, ...m };
-          if (label === "albums") albumMap = { ...albumMap, ...m };
-          if (label === "artists") artistMap = { ...artistMap, ...m };
+          if (label === "tracks" && m.title != null) trackMap = { ...DEFAULT_TRACK_MAP, ...m };
+          if (label === "albums" && m.name != null) albumMap = { ...DEFAULT_ALBUM_MAP, ...m };
+          if (label === "artists" && m.name != null) artistMap = { ...DEFAULT_ARTIST_MAP, ...m };
         }
       }
     }
@@ -281,51 +346,64 @@ export async function searchIbLibraryClient(
       } catch {
         continue;
       }
-      if (!Array.isArray(row)) continue;
+      if (!Array.isArray(row) || row.length < 3) continue;
 
       if (label === "artists") {
         sawArtists = true;
         const name = strAt(row, artistMap.name ?? 0);
-        if (name) artists.set(id, name);
+        // name must be a non-numeric string
+        if (name && !/^\d+$/.test(name)) artists.set(id, name);
         continue;
       }
       if (label === "albums") {
         sawAlbums = true;
         const name = strAt(row, albumMap.name ?? 0);
-        if (name) albums.set(id, name);
+        if (name && !/^\d+$/.test(name)) albums.set(id, name);
         continue;
       }
 
       // tracks
       if (pending.length >= MAX_HITS || seen.has(id)) continue;
 
-      const tm = Object.keys(trackMap).length ? trackMap : defaultTrackMap;
-      const title = strAt(row, tm.title ?? tm.name ?? 2);
-      const genre = strAt(row, tm.genre ?? 3);
-      const year = strAt(row, tm.year ?? 1).slice(0, 4);
-      const albumId = numAt(row, tm.album_id ?? 5);
-      const artistId = numAt(row, tm.artist_id ?? 7);
-      const artId = numAt(row, tm.artwork_id ?? 6);
-      // file/path indices differ across accounts — scan string fields as fallback
-      let file = strAt(row, tm.file);
-      let path = strAt(row, tm.path);
-      if (!file || !path) {
+      const tm = trackMap;
+      const path = strAt(row, tm.path ?? DEFAULT_TRACK_MAP.path);
+      let file = strAt(row, tm.file ?? DEFAULT_TRACK_MAP.file);
+      if (!file) {
         for (const cell of row) {
-          if (typeof cell !== "string") continue;
-          if (!file && /^\/\d+\//.test(cell)) file = cell;
-          if (!path && /music\//i.test(cell)) path = cell;
+          if (typeof cell === "string" && /^\/\d+\//.test(cell)) {
+            file = cell;
+            break;
+          }
+        }
+      }
+      let pathVal = path;
+      if (!pathVal) {
+        for (const cell of row) {
+          if (typeof cell === "string" && /music\//i.test(cell)) {
+            pathVal = cell;
+            break;
+          }
         }
       }
 
-      const artistName = artists.get(artistId) || "";
-      const albumName = albums.get(albumId) || "";
-      const pathNames = namesFromPath(path);
-      const hay = [title, artistName, albumName, pathNames.artist, pathNames.album, genre, path, arrRaw]
+      const pathNames = namesFromPath(pathVal);
+      const title = pickTitle(row, tm, pathNames.title);
+      const genre = strAt(row, tm.genre ?? DEFAULT_TRACK_MAP.genre);
+      const yearRaw = strAt(row, tm.year ?? DEFAULT_TRACK_MAP.year);
+      const year = /^\d{4}$/.test(yearRaw) ? yearRaw : "";
+      const albumId = numAt(row, tm.album_id ?? DEFAULT_TRACK_MAP.album_id);
+      const artistId = numAt(row, tm.artist_id ?? DEFAULT_TRACK_MAP.artist_id);
+      const artId = numAt(row, tm.artwork_id ?? DEFAULT_TRACK_MAP.artwork_id);
+
+      const artistName = (artistId && artists.get(artistId)) || pathNames.artist || "";
+      const albumName = (albumId && albums.get(albumId)) || pathNames.album || "";
+
+      const hay = [title, artistName, albumName, pathNames.artist, pathNames.album, genre, pathVal]
         .join(" ")
         .toLowerCase();
       if (!hay.includes(q)) continue;
 
-      const trashedIdx = tm.trashed;
+      const trashedIdx = tm.trashed ?? DEFAULT_TRACK_MAP.trashed;
       if (trashedIdx != null) {
         const tr = row[trashedIdx];
         if (tr === true || tr === 1 || tr === "1" || tr === "true") continue;
@@ -334,42 +412,37 @@ export async function searchIbLibraryClient(
       seen.add(id);
       pending.push({
         id,
-        title: title || "Untitled",
-        genre,
+        title,
+        genre: genre && !/^\d+$/.test(genre) ? genre : "",
         year,
         albumId,
         artistId,
         artId,
         file,
-        path,
+        path: pathVal,
       });
       opts?.onProgress?.(pending.length);
     }
   };
 
   const scanBuffer = () => {
+    // Match only real section objects: "tracks": { ... }
     for (const label of ["artists", "albums", "tracks"] as const) {
-      const key = `"${label}"`;
-      let from = 0;
-      while (true) {
-        const keyIdx = buf.indexOf(key, from);
-        if (keyIdx < 0) break;
-        const brace = buf.indexOf("{", keyIdx + key.length);
-        if (brace < 0) break;
+      const re = new RegExp(`"${label}"\\s*:\\s*\\{`, "g");
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(buf))) {
+        const brace = buf.indexOf("{", m.index);
+        if (brace < 0) continue;
         const section = extractBalanced(buf, brace);
-        if (!section) {
-          from = keyIdx + key.length;
-          continue;
-        }
+        if (!section) continue;
+        // Skip tiny false positives (map fragments)
+        if (section.length < 20) continue;
         digestSection(label, section);
-        from = brace + section.length;
       }
     }
     if (buf.length > MAX_BUF) buf = buf.slice(-Math.floor(MAX_BUF / 2));
 
-    // Only stop early once we have enough hits AND name maps (so artist/album resolve)
     if (pending.length >= MAX_HITS && sawArtists && sawAlbums) return true;
-    // Or enough hits and path-based names can fill gaps after a long scan
     if (pending.length >= MAX_HITS && (artists.size > 0 || albums.size > 0)) return true;
     return false;
   };
