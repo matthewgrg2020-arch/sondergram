@@ -100,6 +100,13 @@ function describeRaw(raw: Json): string {
   return `top=[${top}] lib=[${libKeys}] trackEntries=${trackKeys}`;
 }
 
+/** Official path is {artwork_server}/artwork/{id}-SIZE (see iBroadcast client libs). */
+function artworkUrl(artId: string, size = 500): string {
+  const id = str(artId);
+  if (!id || id === "0") return "";
+  return `https://artwork.ibroadcast.com/artwork/${id}-${size}`;
+}
+
 function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; total: number } {
   const library = pickLibrary(raw);
   const tracksMap = decodeMap(library.tracks);
@@ -115,11 +122,7 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
       const extraArtist = str(row.artist || row.artist_name);
       const artId = str(row.artwork_id || album.artwork_id || row.image_id || "");
       const file = str(row.file || row.path || row.url);
-      // iBroadcast serves art at artwork.ibroadcast.com/{id} and /{id}-SIZE variants
-      let artwork = "";
-      if (artId && artId !== "0") {
-        artwork = `https://artwork.ibroadcast.com/${artId}-500`;
-      }
+      const artwork = artworkUrl(artId, 500);
       tracks.push({
         id,
         name: str(row.title || row.name) || "Untitled",
