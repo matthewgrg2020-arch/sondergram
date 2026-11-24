@@ -14,7 +14,10 @@ import { putStoredTrack } from "@/lib/player/persist";
 import { usePlayer } from "@/lib/player/store";
 
 function albumKey(t: IbTrack) {
-  return `${(t.artist || "").toLowerCase()}::${(t.album || "Unknown album").toLowerCase()}`;
+  // Prefer album title so VA / resolved names group together
+  const album = (t.album || "Unknown album").toLowerCase().trim();
+  const artist = (t.artist || "Unknown").toLowerCase().trim();
+  return `${album}::${artist}`;
 }
 
 function errText(err: unknown, fallback: string) {
@@ -181,75 +184,109 @@ export function IbroadcastPanel() {
   const addIbTracks = async (items: IbTrack[], play: boolean) => {
     const sessionNow = loadIbSession();
     if (!sessionNow) throw new Error("Sign in first.");
-    const existing = new Set(usePlayer.getState().tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[]);
-    const toAdd = items.filter((t) => t?.id && !existing.has(t.id));
+
+    // De-dupe by iBroadcast id within this batch and against library
+    const existing = new Set(
+      usePlayer.getState().tracks.map((t) => t.ibroadcastId).filter(Boolean) as string[],
+    );
+    const unique: IbTrack[] = [];
+    const seenBatch = new Set<string>();
+    for (const t of items) {
+      if (!t?.id || seenBatch.has(t.id)) continue;
+      seenBatch.add(t.id);
+      if (existing.has(t.id)) continue;
+      unique.push(t);
+    }
+
     const playList: string[] = [];
+    // Already-in-library tracks still playable
     for (const item of items) {
       const found = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
       if (found) playList.push(found.id);
     }
-    for (let i = 0; i < toAdd.length; i++) {
-      const item = toAdd[i]!;
+
+    let added = 0;
+    for (let i = 0; i < unique.length; i++) {
+      const item = unique[i]!;
       const id = crypto.randomUUID();
       playList.push(id);
       let playUrl = `ib:${item.id}`;
       try {
-        const direct = streamUrl(sessionNow, item.file, item.id);
-        if (direct) {
-          playUrl = `/api/stream?u=${encodeURIComponent(direct)}&ref=${encodeURIComponent("https://media.ibroadcast.com/")}`;
-        }
-      } catch {
-        /* keep placeholder */
-      }
-      await putStoredTrack({
-        id,
-        name: item.name,
-        artist: item.artist,
-        album: item.album,
-        genre: item.genre || "iBroadcast",
-        tags: item.genre ? [item.genre, "iBroadcast"] : ["iBroadcast"],
-        year: item.year || "",
-        format: "IB",
-        sampleRate: null,
-        bitDepth: null,
-        bitrate: null,
-        channels: null,
-        lossless: false,
-        liked: false,
-        starred: false,
-        coverRemote: item.artwork || undefined,
-        ibroadcastId: item.id,
-        ibFile: item.file,
-        audio: new Blob([item.id], { type: "text/plain" }),
-        cover: null,
-        addedAt: Date.now() + i,
-      });
-    }
-    if (toAdd.length) await hydrate();
-    for (const item of toAdd) {
-      const row = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
-      if (row) {
-        let playUrl = row.url || `ib:${item.id}`;
-        try {
+        if (item.file) {
           const direct = streamUrl(sessionNow, item.file, item.id);
           if (direct) {
             playUrl = `/api/stream?u=${encodeURIComponent(direct)}&ref=${encodeURIComponent("https://media.ibroadcast.com/")}`;
           }
-        } catch {
-          /* keep */
         }
-        usePlayer.getState().patchTrack?.(row.id, {
-          url: playUrl,
-          ibroadcastId: item.id,
-          ibFile: item.file,
-          coverUrl: item.artwork || row.coverUrl,
+      } catch {
+        /* keep placeholder */
+      }
+      try {
+        await putStoredTrack({
+          id,
+          name: item.name || "Untitled",
+          artist: item.artist || "Unknown artist",
+          album: item.album || "Unknown album",
+          genre: item.genre || "iBroadcast",
           tags: item.genre ? [item.genre, "iBroadcast"] : ["iBroadcast"],
+          year: item.year || "",
           format: "IB",
+          sampleRate: null,
+          bitDepth: null,
+          bitrate: null,
+          channels: null,
+          lossless: false,
+          liked: false,
+          starred: false,
+          coverRemote: item.artwork || undefined,
+          ibroadcastId: item.id,
+          ibFile: item.file || "",
+          audio: new Blob([item.id], { type: "text/plain" }),
+          cover: null,
+          addedAt: Date.now() + i,
         });
+        added += 1;
+        existing.add(item.id);
+      } catch {
+        // continue with remaining tracks
+      }
+      if (i % 5 === 4) {
+        await new Promise((r) => setTimeout(r, 0));
       }
     }
+
+    if (added > 0) await hydrate();
+
+    // Patch play URLs after hydrate
+    for (const item of unique) {
+      const row = usePlayer.getState().tracks.find((t) => t.ibroadcastId === item.id);
+      if (!row) continue;
+      let playUrl = row.url || `ib:${item.id}`;
+      try {
+        if (item.file) {
+          const direct = streamUrl(sessionNow, item.file, item.id);
+          if (direct) {
+            playUrl = `/api/stream?u=${encodeURIComponent(direct)}&ref=${encodeURIComponent("https://media.ibroadcast.com/")}`;
+          }
+        }
+      } catch {
+        /* keep */
+      }
+      usePlayer.getState().patchTrack?.(row.id, {
+        url: playUrl,
+        ibroadcastId: item.id,
+        ibFile: item.file || "",
+        coverUrl: item.artwork || row.coverUrl,
+        artist: item.artist || row.artist,
+        album: item.album || row.album,
+        name: item.name || row.name,
+        tags: item.genre ? [item.genre, "iBroadcast"] : ["iBroadcast"],
+        format: "IB",
+      });
+    }
+
     if (play && playList.length) playIds(playList);
-    return toAdd.length;
+    return added;
   };
 
   const addSong = async (item: IbTrack, play: boolean) => {
@@ -269,8 +306,14 @@ export function IbroadcastPanel() {
     setAdding(label);
     try {
       const n = await addIbTracks(albumTracks, play);
-      setMessage(play ? `Playing “${label}”.` : n ? `Added album “${label}” (${n} new).` : "Album already in library.");
-      flash(play ? "Playing album." : n ? `Added album “${label}”.` : "Album already in library.");
+      setMessage(
+        play
+          ? `Playing “${label}” (${albumTracks.length} tracks).`
+          : n
+            ? `Added ${n} track${n === 1 ? "" : "s"} from “${label}”.`
+            : "Album already in library.",
+      );
+      flash(play ? "Playing album." : n ? `Added ${n} tracks.` : "Album already in library.");
     } catch (err) {
       setMessage(errText(err, "Could not add album."));
     } finally {
@@ -420,7 +463,7 @@ export function IbroadcastPanel() {
                 className="inline-flex h-8 items-center gap-1 rounded-full bg-raised px-3 text-xs font-medium hover:bg-white/10 disabled:opacity-50"
               >
                 <Plus className="size-3.5" />
-                Add
+                Add ({album.tracks.length})
               </button>
             </div>
           ))}
