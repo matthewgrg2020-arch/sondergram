@@ -4,7 +4,10 @@ import type { IbPlaylist, IbSession, IbTrack } from "./ibroadcast";
 const CLIENT = "Sondergram";
 const VERSION = "1.0";
 const DEVICE = "Sondergram Web";
-const MAX_TRACKS = 800;
+/** Cap payload size for serverless response limits. */
+const MAX_TRACKS = 400;
+/** Keep well under Vercel hobby ~10s limit. */
+const FETCH_MS = 7000;
 
 type Json = Record<string, unknown>;
 
@@ -16,7 +19,6 @@ function str(value: unknown) {
   if (value == null) return "";
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  // Never return "[object Object]"
   try {
     const j = JSON.stringify(value);
     return j === "{}" || j === "null" ? "" : j.slice(0, 120);
@@ -31,7 +33,10 @@ function num(value: unknown) {
 }
 
 function safeErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof Error && err.message && err.message !== "[object Object]") return err.message;
+  if (err instanceof Error && err.message && err.message !== "[object Object]") {
+    if (/aborted|abort/i.test(err.message)) return "iBroadcast timed out. Try Load again.";
+    return err.message;
+  }
   if (typeof err === "string" && err && err !== "[object Object]") return err;
   if (err && typeof err === "object") {
     const o = err as Record<string, unknown>;
@@ -45,7 +50,7 @@ function safeErrorMessage(err: unknown, fallback: string): string {
 
 async function postJson(url: string, body: Json, headers: Record<string, string> = {}): Promise<Json> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 22000);
+  const timer = setTimeout(() => controller.abort(), FETCH_MS);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -63,7 +68,7 @@ async function postJson(url: string, body: Json, headers: Record<string, string>
     try {
       parsed = JSON.parse(text) as Json;
     } catch {
-      throw new Error(text.slice(0, 180) || `iBroadcast ${url} did not return JSON (HTTP ${res.status}).`);
+      throw new Error(text.slice(0, 180) || `iBroadcast did not return JSON (HTTP ${res.status}).`);
     }
     if (parsed.result === false || parsed.authenticated === false) {
       throw new Error(str(parsed.message) || str(parsed.error) || `iBroadcast rejected the request (HTTP ${res.status}).`);
@@ -77,12 +82,10 @@ async function postJson(url: string, body: Json, headers: Record<string, string>
   }
 }
 
-/** iBroadcast packs rows as arrays plus a sibling `map` of field → index. */
 function decodeMap(raw: unknown): Record<string, Json> {
   if (!raw || typeof raw !== "object") return {};
   const data = raw as Record<string, unknown>;
 
-  // Already a plain id → object map
   if (!Array.isArray(data) && !data.map && !data.keys) {
     const out: Record<string, Json> = {};
     for (const [id, value] of Object.entries(data)) {
@@ -116,7 +119,6 @@ function decodeMap(raw: unknown): Record<string, Json> {
   return out;
 }
 
-/** Also accept a plain array of track objects. */
 function decodeTrackArray(raw: unknown): Record<string, Json> {
   if (!Array.isArray(raw)) return {};
   const out: Record<string, Json> = {};
@@ -147,12 +149,11 @@ function describeRaw(raw: Json): string {
   else if (lib.tracks && typeof lib.tracks === "object") {
     trackKeys = Object.keys(lib.tracks as object).filter((k) => k !== "map" && k !== "keys" && k !== "length").length;
   }
-  const top = Object.keys(raw).slice(0, 10).join(",");
-  const libKeys = Object.keys(lib).slice(0, 10).join(",");
+  const top = Object.keys(raw).slice(0, 8).join(",");
+  const libKeys = Object.keys(lib).slice(0, 8).join(",");
   return `top=[${top}] lib=[${libKeys}] trackEntries=${trackKeys}`;
 }
 
-/** Official path is {artwork_server}/artwork/{id}-SIZE (see iBroadcast client libs). */
 function artworkUrl(artId: string, size = 500): string {
   const id = str(artId);
   if (!id || id === "0") return "";
@@ -162,13 +163,8 @@ function artworkUrl(artId: string, size = 500): string {
 function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; total: number } {
   const library = pickLibrary(raw);
   let tracksMap = decodeMap(library.tracks);
-  if (!Object.keys(tracksMap).length) {
-    tracksMap = decodeTrackArray(library.tracks);
-  }
-  // Some responses put tracks at top level as array
-  if (!Object.keys(tracksMap).length && Array.isArray(raw.tracks)) {
-    tracksMap = decodeTrackArray(raw.tracks);
-  }
+  if (!Object.keys(tracksMap).length) tracksMap = decodeTrackArray(library.tracks);
+  if (!Object.keys(tracksMap).length && Array.isArray(raw.tracks)) tracksMap = decodeTrackArray(raw.tracks);
   const albumsMap = decodeMap(library.albums);
   const artistsMap = decodeMap(library.artists);
   const playlistsMap = decodeMap(library.playlists);
@@ -181,7 +177,6 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
       const extraArtist = str(row.artist || row.artist_name);
       const artId = str(row.artwork_id || album.artwork_id || row.image_id || "");
       const file = str(row.file || row.path || row.url);
-      const artwork = artworkUrl(artId, 500);
       tracks.push({
         id,
         name: str(row.title || row.name) || "Untitled",
@@ -190,10 +185,10 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
         year: str(row.year || album.year || "").slice(0, 4),
         genre: str(row.genre || ""),
         file,
-        artwork,
+        artwork: artworkUrl(artId, 500),
       });
     } catch {
-      /* skip bad row */
+      /* skip */
     }
   }
   const playlists: IbPlaylist[] = Object.entries(playlistsMap).map(([id, row]) => ({
@@ -238,9 +233,10 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
   const errors: string[] = [];
   const debugs: string[] = [];
 
+  // Only two fast attempts — stay under serverless time limits
   const attempts: Array<{ label: string; run: () => Promise<Json> }> = [
     {
-      label: "library.ibroadcast.com/",
+      label: "library",
       run: () =>
         postJson("https://library.ibroadcast.com/", {
           ...authBody(session, "library"),
@@ -248,50 +244,12 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
         }),
     },
     {
-      label: "library.ibroadcast.com",
-      run: () =>
-        postJson("https://library.ibroadcast.com", {
-          ...authBody(session, "library"),
-          url: "//library.ibroadcast.com",
-        }),
-    },
-    {
-      label: "api/s/JSON/library",
+      label: "api-library",
       run: () =>
         postJson("https://api.ibroadcast.com/s/JSON/library", {
           ...authBody(session, "library"),
           url: "//api.ibroadcast.com/s/JSON/library",
         }),
-    },
-    {
-      label: "Bearer library",
-      run: () =>
-        postJson(
-          "https://library.ibroadcast.com/",
-          {
-            mode: "library",
-            client: CLIENT,
-            version: VERSION,
-            device_name: DEVICE,
-            user_agent: `${CLIENT}/${VERSION}`,
-            supported_types: 1,
-          },
-          { Authorization: `Bearer ${session.token}` },
-        ),
-    },
-    {
-      label: "status+library",
-      run: async () => {
-        // Refresh session context then pull library
-        await postJson("https://api.ibroadcast.com/s/JSON/status", {
-          ...authBody(session, "status"),
-          url: "//api.ibroadcast.com/s/JSON/status",
-        });
-        return postJson("https://library.ibroadcast.com/", {
-          ...authBody(session, "library"),
-          url: "//library.ibroadcast.com",
-        });
-      },
     },
   ];
 
@@ -306,7 +264,7 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
         return {
           ok: true,
           tracks,
-          playlists: parsed.playlists,
+          playlists: parsed.playlists.slice(0, 100),
           total: query ? tracks.length : parsed.total,
         };
       }
@@ -324,9 +282,9 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
     playlists: [],
     total: 0,
     error:
-      "Could not load iBroadcast library. Sign out, sign back in, then try Load again. " +
+      "Could not load iBroadcast library. Sign out, sign back in, then Load again. " +
       errors.slice(0, 2).join(" · "),
-    debug: debugs.slice(0, 3).join(" | "),
+    debug: debugs.slice(0, 2).join(" | "),
   };
 }
 
@@ -377,6 +335,7 @@ export const ibLogin = createServerFn({ method: "POST" })
       };
       return session;
     } catch (err) {
+      // Return-shaped errors are safer than throws on some hosts
       throw new Error(safeErrorMessage(err, "iBroadcast sign-in failed."));
     }
   });
@@ -420,7 +379,6 @@ export const ibLibrary = createServerFn({ method: "POST" })
     }
   });
 
-/** Search within the signed-in library (server-side filter after load). */
 export const ibSearch = createServerFn({ method: "POST" })
   .validator((d: any) => d)
   .handler(async ({ data }): Promise<IbLibraryResult> => {
