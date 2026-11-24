@@ -4,10 +4,9 @@ import type { IbPlaylist, IbSession, IbTrack } from "./ibroadcast";
 const CLIENT = "Sondergram";
 const VERSION = "1.0";
 const DEVICE = "Sondergram Web";
-/** Cap payload size for serverless response limits. */
-const MAX_TRACKS = 400;
-/** Keep well under Vercel hobby ~10s limit. */
-const FETCH_MS = 7000;
+/** Soft cap only for extreme libraries; full library is returned below this. */
+const MAX_TRACKS = 12000;
+const FETCH_MS = 12000;
 
 type Json = Record<string, unknown>;
 
@@ -86,24 +85,19 @@ function decodeMap(raw: unknown): Record<string, Json> {
   if (!raw || typeof raw !== "object") return {};
   const data = raw as Record<string, unknown>;
 
-  if (!Array.isArray(data) && !data.map && !data.keys) {
-    const out: Record<string, Json> = {};
-    for (const [id, value] of Object.entries(data)) {
-      if (id === "length") continue;
-      if (value && typeof value === "object" && !Array.isArray(value)) out[id] = value as Json;
-    }
-    if (Object.keys(out).length) return out;
-  }
-
   const mapping = data.map;
   const keymap: Record<number, string> = {};
   if (mapping && typeof mapping === "object" && !Array.isArray(mapping)) {
     for (const [name, index] of Object.entries(mapping as Record<string, unknown>)) {
+      // Skip nested map objects (e.g. artists_additional_map)
       if (typeof index === "number") keymap[index] = name;
       else if (typeof index === "string" && /^\d+$/.test(index)) keymap[Number(index)] = name;
     }
   }
+
+  const hasMap = Object.keys(keymap).length > 0;
   const out: Record<string, Json> = {};
+
   for (const [id, value] of Object.entries(data)) {
     if (id === "map" || id === "keys" || id === "length") continue;
     if (Array.isArray(value)) {
@@ -114,8 +108,20 @@ function decodeMap(raw: unknown): Record<string, Json> {
       out[id] = row;
       continue;
     }
-    if (value && typeof value === "object") out[id] = value as Json;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      // Already expanded object form
+      out[id] = value as Json;
+    }
   }
+
+  // If there was no map and we got nothing useful, try treating as plain id→object map
+  if (!hasMap && !Object.keys(out).length) {
+    for (const [id, value] of Object.entries(data)) {
+      if (id === "map" || id === "keys" || id === "length") continue;
+      if (value && typeof value === "object" && !Array.isArray(value)) out[id] = value as Json;
+    }
+  }
+
   return out;
 }
 
@@ -171,7 +177,9 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
   const tracks: IbTrack[] = [];
   for (const [id, row] of Object.entries(tracksMap)) {
     try {
-      if (row.trashed) continue;
+      // Skip trashed; treat truthy/1/"true" as trashed
+      const trashed = row.trashed;
+      if (trashed === true || trashed === 1 || trashed === "1" || trashed === "true") continue;
       const album = albumsMap[str(row.album_id)] || {};
       const artist = artistsMap[str(row.artist_id)] || {};
       const extraArtist = str(row.artist || row.artist_name);
@@ -196,7 +204,8 @@ function parseLibrary(raw: Json): { tracks: IbTrack[]; playlists: IbPlaylist[]; 
     name: str(row.name) || "Playlist",
     trackIds: Array.isArray(row.tracks) ? row.tracks.map((t) => str(t)).filter(Boolean) : [],
   }));
-  return { tracks: tracks.slice(0, MAX_TRACKS), playlists, total: tracks.length };
+  const total = tracks.length;
+  return { tracks: tracks.slice(0, MAX_TRACKS), playlists, total };
 }
 
 function authBody(session: IbSession, mode: string, extra: Json = {}): Json {
@@ -212,7 +221,8 @@ function authBody(session: IbSession, mode: string, extra: Json = {}): Json {
     device_name: DEVICE,
     user_agent: `${CLIENT}/${VERSION}`,
     mode,
-    supported_types: 1,
+    // Match common clients; false can return more file types
+    supported_types: false,
     ...extra,
   };
 }
@@ -233,7 +243,6 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
   const errors: string[] = [];
   const debugs: string[] = [];
 
-  // Only two fast attempts — stay under serverless time limits
   const attempts: Array<{ label: string; run: () => Promise<Json> }> = [
     {
       label: "library",
@@ -264,7 +273,7 @@ async function fetchLibraryOnce(session: IbSession, query = ""): Promise<IbLibra
         return {
           ok: true,
           tracks,
-          playlists: parsed.playlists.slice(0, 100),
+          playlists: parsed.playlists.slice(0, 200),
           total: query ? tracks.length : parsed.total,
         };
       }
@@ -303,7 +312,7 @@ export const ibLogin = createServerFn({ method: "POST" })
         client: CLIENT,
         device_name: DEVICE,
         user_agent: `${CLIENT}/${VERSION}`,
-        supported_types: 1,
+        supported_types: false,
       });
       const user = (status.user as Json | undefined) || {};
       const token = str(
@@ -335,7 +344,6 @@ export const ibLogin = createServerFn({ method: "POST" })
       };
       return session;
     } catch (err) {
-      // Return-shaped errors are safer than throws on some hosts
       throw new Error(safeErrorMessage(err, "iBroadcast sign-in failed."));
     }
   });
