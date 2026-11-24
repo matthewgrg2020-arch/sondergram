@@ -370,9 +370,19 @@ export const usePlayer = create((set, get) => ({
     try { url = URL.createObjectURL(file); } catch {}
     set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl: url || t.coverUrl } : t)) }));
   },
-  setCoverUrl: (ids, coverUrl) => {
+  setCoverUrl: async (ids, coverUrl) => {
     const hold = new Set(ids || []);
     set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl } : t)) }));
+    for (const id of hold) {
+      try {
+        const rows = await listStoredTracks();
+        const row = rows.find((r) => r.id === id);
+        if (row) {
+          await putStoredTrack({ ...row, coverRemote: coverUrl || undefined, audio: row.audio || new Blob([]), cover: row.cover || null });
+        }
+      } catch {}
+    }
+    return true;
   },
   nextIndex: (force) => {
     const { tracks, index, shuffle, repeat, upNext } = get();
