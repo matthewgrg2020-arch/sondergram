@@ -22,14 +22,25 @@ function buildStreamUrl(opts: {
   userId: string;
   token: string;
   base?: string;
+  capital?: boolean;
 }) {
   let path = String(opts.file || "").trim();
   path = path.replace(/\{bitrate\}/gi, "128");
-  path = path.replace(/^\//, "");
-  if (!path) return "";
+  if (!path.startsWith("/")) path = `/${path}`;
+  if (!path || path === "/") return "";
   const base = (opts.base || "https://streaming.ibroadcast.com").replace(/\/$/, "");
+  // Working clients (ibroadcastaio) use capital Signature, no Expires
+  if (opts.capital !== false) {
+    const qs =
+      `Signature=${encodeURIComponent(opts.token)}` +
+      `&file_id=${encodeURIComponent(opts.fileId)}` +
+      `&user_id=${encodeURIComponent(opts.userId)}` +
+      `&platform=${encodeURIComponent("Sondergram")}` +
+      `&version=1.0`;
+    return `${base}${path}?${qs}`;
+  }
+  // Fallback: lowercase + expires (older LMS style)
   const expires = Math.floor(Date.now() / 1000);
-  // Match LMS / music-assistant query param names (lowercase)
   const qs =
     `expires=${expires}` +
     `&signature=${encodeURIComponent(opts.token)}` +
@@ -37,7 +48,7 @@ function buildStreamUrl(opts: {
     `&file_id=${encodeURIComponent(opts.fileId)}` +
     `&platform=${encodeURIComponent("Sondergram")}` +
     `&version=1.0`;
-  return `${base}/${path}?${qs}`;
+  return `${base}${path}?${qs}`;
 }
 
 function fixContentType(ct: string | null): string {
@@ -54,22 +65,24 @@ function fixContentType(ct: string | null): string {
 
 async function handle(request: Request) {
   const params = new URL(request.url).searchParams;
+  // Support both styles: ?u=fullUrl OR ?file=&file_id=&user_id=&token=
+  const directU = params.get("u") || "";
   const file = params.get("file") || params.get("f") || "";
   const fileId = params.get("file_id") || params.get("id") || "";
   const userId = params.get("user_id") || params.get("userId") || "";
   const token = params.get("token") || params.get("signature") || "";
   const base = params.get("base") || "https://streaming.ibroadcast.com";
 
-  if (!file || !fileId || !userId || !token) {
-    return new Response("Missing file, file_id, user_id, or token", {
+  let target = "";
+  if (directU.startsWith("https://")) {
+    target = directU;
+  } else if (file && fileId && userId && token) {
+    target = buildStreamUrl({ file, fileId, userId, token, base, capital: true });
+  } else {
+    return new Response("Missing stream params", {
       status: 400,
       headers: corsHeaders(),
     });
-  }
-
-  const target = buildStreamUrl({ file, fileId, userId, token, base });
-  if (!target) {
-    return new Response("Bad file path", { status: 400, headers: corsHeaders() });
   }
 
   const headers: Record<string, string> = {
@@ -92,16 +105,10 @@ async function handle(request: Request) {
     return new Response("Upstream fetch failed", { status: 502, headers: corsHeaders() });
   }
 
-  // Retry once with capitalized CloudFront-style params if unauthorized
-  if (upstream.status === 403 || upstream.status === 401) {
+  // Retry alternate param style if unauthorized
+  if ((upstream.status === 403 || upstream.status === 401) && file && fileId && userId && token) {
     try {
-      const path = String(file).replace(/\{bitrate\}/gi, "128").replace(/^\//, "");
-      const expires = Math.floor(Date.now() / 1000);
-      const alt =
-        `${base.replace(/\/$/, "")}/${path}` +
-        `?Expires=${expires}&Signature=${encodeURIComponent(token)}` +
-        `&file_id=${encodeURIComponent(fileId)}&user_id=${encodeURIComponent(userId)}` +
-        `&platform=Sondergram&version=1.0`;
+      const alt = buildStreamUrl({ file, fileId, userId, token, base, capital: false });
       upstream = await fetch(alt, {
         method: request.method === "HEAD" ? "HEAD" : "GET",
         headers,
