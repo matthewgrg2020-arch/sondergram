@@ -171,7 +171,6 @@ export type IbSearchResult = {
 
 function authPayload(session: IbSession) {
   const uidNum = Number(session.userId);
-  const uid = Number.is.userId;
   const uid = Number.isFinite(uidNum) && uidNum > 0 ? uidNum : session.userId;
   return {
     _token: session.token,
@@ -215,7 +214,6 @@ function resolveHit(
 }
 
 function findSectionStart(buf: string, label: string): number {
-  // Prefer top-level-ish "label": {
   const re = new RegExp(`"${label}"\\s*:\\s*\\{`);
   const m = re.exec(buf);
   return m ? buf.indexOf("{", m.index) : -1;
@@ -232,16 +230,11 @@ function tryParseMapNear(buf: string, from: number, window = 4000): Record<strin
   return parseMap(raw);
 }
 
-/**
- * Scan buffer for "id": [ ...row... ] entries starting at `from`.
- * Does NOT require the parent object to be complete — works on partial streams.
- */
 function scanEntries(
   buf: string,
   from: number,
   onRow: (id: string, row: unknown[]) => void,
 ): number {
-  // Return how far we can safely discard (before last incomplete entry)
   const re = /"(\d+)"\s*:\s*\[/g;
   re.lastIndex = Math.max(0, from);
   let lastComplete = from;
@@ -252,7 +245,6 @@ function scanEntries(
     if (arrStart < 0) break;
     const arrRaw = extractBalanced(buf, arrStart);
     if (!arrRaw) {
-      // Incomplete entry — stop and keep buffer from here
       return m.index;
     }
     let row: unknown[];
@@ -344,7 +336,6 @@ export async function searchIbLibraryClient(
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
 
-  // Scan cursors (byte offsets into buf)
   let artistCursor = 0;
   let albumCursor = 0;
   let trackCursor = 0;
@@ -398,7 +389,6 @@ export async function searchIbLibraryClient(
     const artistName = (artistId && artists.get(artistId)) || pathNames.artist || "";
     const albumName = (albumId && albums.get(albumId)) || pathNames.album || "";
 
-    // Match against every useful field + full row text
     const hay = [title, artistName, albumName, genre, pathVal, JSON.stringify(row)]
       .join(" ")
       .toLowerCase();
@@ -461,7 +451,6 @@ export async function searchIbLibraryClient(
       trackCursor = scanEntries(buf, trackCursor, handleTrack);
     }
 
-    // Compact buffer: keep tail after earliest incomplete cursor among active sections
     const MAX_BUF = 8_000_000;
     if (buf.length > MAX_BUF) {
       const keepFrom = Math.min(
@@ -469,7 +458,6 @@ export async function searchIbLibraryClient(
         albumsStart >= 0 ? albumCursor : buf.length,
         tracksStart >= 0 ? trackCursor : buf.length,
       );
-      // Always keep enough for incomplete JSON at the end
       const cut = Math.max(0, Math.min(keepFrom, buf.length - 1_000_000));
       if (cut > 0) {
         buf = buf.slice(cut);
