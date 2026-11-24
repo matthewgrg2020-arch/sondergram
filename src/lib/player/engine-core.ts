@@ -57,8 +57,10 @@ function dspActive() {
 function isIbUrl(url: string) {
   return Boolean(url && (url.includes("/api/ib-stream") || url.includes("streaming.ibroadcast.com")));
 }
+/** Direct path only when DSP is off. When EQ/spatial/remaster is on, allow graph even for IB on Apple. */
 function forceDirectIbApple(url?: string) {
   if (!engine?.apple) return false;
+  if (dspActive()) return false;
   const u = url || lastPlayUrl || "";
   if (isIbUrl(u)) return true;
   try {
@@ -245,9 +247,9 @@ export async function beginPlayback(url: string, at = 0) {
   eng.ctx.resume().catch(() => {});
   if (gen !== playGen) return;
 
-  // Apple + iBroadcast: always plain HTMLAudioElement (duration + seek work).
-  // EQ does not route through Web Audio for IB on iPhone by design.
-  const preferDirect = isIbUrl(url) && (!dspActive() || eng.apple);
+  // iBroadcast: use plain HTMLAudio when DSP is off (best duration/seek).
+  // When EQ / spatial / remaster is on, route through Web Audio graph (including Apple).
+  const preferDirect = isIbUrl(url) && !dspActive();
   eng.graphActive = !preferDirect && dspActive();
   applyOutputGain();
 
@@ -278,7 +280,7 @@ export function setBackgroundOutput(on: boolean) {
     if (!on) eng.ctx.resume().catch(() => {});
     return;
   }
-  // Never force Web Audio graph for iBroadcast on iPhone
+  // Only stay direct for IB on Apple when DSP is off
   if (forceDirectIbApple()) {
     eng.graphActive = false;
     applyOutputGain();
