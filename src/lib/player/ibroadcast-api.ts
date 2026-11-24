@@ -266,11 +266,25 @@ export const ibLogin = createServerFn({ method: "POST" })
         user_agent: `${CLIENT}/${VERSION}`,
         supported_types: 1,
       });
-      const user = status.user as Json | undefined;
-      const token = str(user?.token || user?.login_token || status.token);
-      const userId = str(user?.id || user?.user_id || status.user_id);
+      const user = (status.user as Json | undefined) || {};
+      const token = str(
+        user.token ||
+          user.login_token ||
+          status.token ||
+          status.login_token ||
+          (status.user_info as Json | undefined)?.token,
+      );
+      const userId = str(
+        user.id ||
+          user.user_id ||
+          user.userid ||
+          status.user_id ||
+          status.userid ||
+          (status.user_info as Json | undefined)?.id,
+      );
       if (!userId || !token) {
-        throw new Error(str(status.message) || "Could not sign in to iBroadcast.");
+        const hint = str(status.message) || str(status.error) || "";
+        throw new Error(hint || "Could not sign in to iBroadcast. Check email/password.");
       }
       const settings = (status.settings as Json) || {};
       const streaming = str(settings.streaming_server) || "https://streaming.ibroadcast.com";
@@ -286,11 +300,25 @@ export const ibLogin = createServerFn({ method: "POST" })
     }
   });
 
+function sessionFromData(data: any): IbSession | null {
+  const nested = data?.session && typeof data.session === "object" ? data.session : null;
+  const userId = str(nested?.userId || data?.userId);
+  const token = str(nested?.token || data?.token);
+  if (!userId || !token) return null;
+  return {
+    userId,
+    token,
+    streaming: str(nested?.streaming || data?.streaming) || "https://streaming.ibroadcast.com",
+    email: str(nested?.email || data?.email),
+  };
+}
+
 export const ibLibrary = createServerFn({ method: "POST" })
-  .validator((d: IbSession & { q?: string }) => d)
+  .validator((d: any) => d)
   .handler(async ({ data }): Promise<IbLibraryResult> => {
     try {
-      if (!data?.token || !data?.userId) {
+      const session = sessionFromData(data);
+      if (!session) {
         return {
           ok: false,
           tracks: [],
@@ -299,15 +327,7 @@ export const ibLibrary = createServerFn({ method: "POST" })
           error: "Missing iBroadcast session. Sign out and sign in again.",
         };
       }
-      return await fetchLibraryOnce(
-        {
-          userId: str(data.userId),
-          token: str(data.token),
-          streaming: str(data.streaming) || "https://streaming.ibroadcast.com",
-          email: str(data.email),
-        },
-        str(data.q),
-      );
+      return await fetchLibraryOnce(session, str(data?.q || data?.session?.q));
     } catch (err) {
       return {
         ok: false,
@@ -321,11 +341,11 @@ export const ibLibrary = createServerFn({ method: "POST" })
 
 /** Search within the signed-in library (server-side filter after load). */
 export const ibSearch = createServerFn({ method: "POST" })
-  .validator((d: { session: IbSession; q?: string }) => d)
+  .validator((d: any) => d)
   .handler(async ({ data }): Promise<IbLibraryResult> => {
     try {
-      const session = data?.session;
-      if (!session?.token || !session?.userId) {
+      const session = sessionFromData(data);
+      if (!session) {
         return {
           ok: false,
           tracks: [],
@@ -334,7 +354,7 @@ export const ibSearch = createServerFn({ method: "POST" })
           error: "Sign in to iBroadcast first.",
         };
       }
-      return await fetchLibraryOnce(session, str(data.q));
+      return await fetchLibraryOnce(session, str(data?.q));
     } catch (err) {
       return {
         ok: false,
