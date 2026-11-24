@@ -72,11 +72,20 @@ export function IbroadcastPanel() {
   }, [albums, query]);
 
   const refreshLibrary = async (sess: IbSession, q = "") => {
+    // Send session both nested and flat — server accepts either shape.
+    const payload = {
+      session: sess,
+      userId: sess.userId,
+      token: sess.token,
+      streaming: sess.streaming,
+      email: sess.email,
+      q: q.trim() || undefined,
+    };
     const lib = q.trim()
-      ? await ibSearch({ data: { session: sess, q: q.trim() } })
-      : await ibLibrary({ data: { session: sess } });
+      ? await ibSearch({ data: payload as any })
+      : await ibLibrary({ data: payload as any });
     if (!lib.ok && !(lib.tracks && lib.tracks.length)) {
-      throw new Error(lib.error || "Could not load library.");
+      throw new Error(lib.error || lib.debug || "Could not load library.");
     }
     setLibTracks(lib.tracks || []);
     setPlaylists(lib.playlists || []);
@@ -109,12 +118,21 @@ export function IbroadcastPanel() {
     setMessage(null);
     try {
       const next = await ibLogin({ data: { email, password } });
-      saveIbSession(next);
-      setSession(next);
+      if (!next?.userId || !next?.token) {
+        throw new Error("Sign-in did not return a session. Check email/password.");
+      }
+      const sess: IbSession = {
+        userId: String(next.userId),
+        token: String(next.token),
+        streaming: next.streaming || "https://streaming.ibroadcast.com",
+        email: next.email || email,
+      };
+      saveIbSession(sess);
+      setSession(sess);
       setPassword("");
       setLoadingLib(true);
       try {
-        const lib = await refreshLibrary(next);
+        const lib = await refreshLibrary(sess);
         const total = "total" in lib ? lib.total : 0;
         setMessage(`Signed in. ${total} tracks in your iBroadcast library — search or add below.`);
       } catch (err) {
