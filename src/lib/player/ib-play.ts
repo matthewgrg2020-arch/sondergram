@@ -1,4 +1,4 @@
-import { loadIbSession, streamUrl as ibStreamUrl } from "./ibroadcast";
+import { loadIbSession } from "./ibroadcast";
 
 export function resolveIbUrl(track: {
   ibroadcastId?: string;
@@ -12,21 +12,21 @@ export function resolveIbUrl(track: {
     (typeof track.url === "string" && track.url.startsWith("ib:") ? track.url.slice(3) : "");
 
   // Recover file path from a previously baked stream URL if ibFile was lost
-  if (!file && typeof track.url === "string" && track.url.includes("streaming.ibroadcast.com")) {
+  if (!file && typeof track.url === "string") {
     try {
-      const u = new URL(track.url.includes("/api/stream") ? new URL(track.url, "https://x").searchParams.get("u") || "" : track.url);
-      const path = u.pathname.replace(/^\//, "");
-      if (path) file = path.startsWith("/") ? path : `/${path}`;
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!file && typeof track.url === "string" && track.url.includes("/api/stream")) {
-    try {
-      const outer = new URL(track.url, "https://local");
-      const inner = outer.searchParams.get("u") || "";
-      if (inner) {
-        const u = new URL(inner);
+      if (track.url.includes("/api/ib-stream")) {
+        const u = new URL(track.url, "https://local");
+        file = u.searchParams.get("file") || "";
+      } else if (track.url.includes("/api/stream")) {
+        const outer = new URL(track.url, "https://local");
+        const inner = outer.searchParams.get("u") || "";
+        if (inner) {
+          const u = new URL(inner);
+          const path = u.pathname;
+          if (path && path !== "/") file = path;
+        }
+      } else if (track.url.includes("streaming.ibroadcast.com")) {
+        const u = new URL(track.url);
         const path = u.pathname;
         if (path && path !== "/") file = path;
       }
@@ -36,12 +36,14 @@ export function resolveIbUrl(track: {
   }
 
   if (!session || !id || !file) return "";
-  try {
-    const direct = ibStreamUrl(session, file, id);
-    if (!direct) return "";
-    // Always rebuild so expires/signature stay valid
-    return `/api/stream?u=${encodeURIComponent(direct)}&ref=${encodeURIComponent("https://media.ibroadcast.com/")}`;
-  } catch {
-    return "";
-  }
+
+  const params = new URLSearchParams({
+    file,
+    file_id: String(id),
+    user_id: String(session.userId),
+    token: String(session.token),
+    base: session.streaming || "https://streaming.ibroadcast.com",
+  });
+  // Dedicated proxy fixes content-type and signing for iOS
+  return `/api/ib-stream?${params.toString()}`;
 }
