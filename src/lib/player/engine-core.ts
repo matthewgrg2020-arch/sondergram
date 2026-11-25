@@ -247,8 +247,6 @@ export async function beginPlayback(url: string, at = 0) {
   eng.ctx.resume().catch(() => {});
   if (gen !== playGen) return;
 
-  // iBroadcast: use plain HTMLAudio when DSP is off (best duration/seek).
-  // When EQ / spatial / remaster is on, route through Web Audio graph (including Apple).
   const preferDirect = isIbUrl(url) && !dspActive();
   eng.graphActive = !preferDirect && dspActive();
   applyOutputGain();
@@ -267,20 +265,38 @@ export async function beginPlayback(url: string, at = 0) {
       applyOutputGain();
     }
   } catch {
-    // fallback to the other element
     const other = el === bg ? eng.audio : bg;
     await playEl(other, url, at, other === eng.audio, gen);
   }
 }
 
-export function setBackgroundOutput(on: boolean) {
+async function handoffAudio(from, to, graph) {
+  const url = from.currentSrc || from.src || lastPlayUrl || "";
+  const time = Number.isFinite(from.currentTime) ? from.currentTime : 0;
+  const rate = Number.isFinite(from.playbackRate) ? from.playbackRate : 1;
+  if (!url) return;
+  prepareAudioElement(to, graph);
+  if (to.src !== url && to.currentSrc !== url) {
+    to.src = url;
+    to.load();
+  }
+  seekEl(to, time);
+  try { to.playbackRate = rate; } catch {}
+  await new Promise((resolve) => {
+    if (to.readyState >= 2) { resolve(); return; }
+    const done = () => { to.removeEventListener("canplay", done); resolve(); };
+    to.addEventListener("canplay", done, { once: true });
+    window.setTimeout(done, 800);
+  });
+}
+
+export function setBackgroundOutput(on) {
   const eng = ensureEngine();
   setAudioSessionPlayback();
   if (!eng.apple || !eng.bgAudio) {
     if (!on) eng.ctx.resume().catch(() => {});
     return;
   }
-  // Only stay direct for IB on Apple when DSP is off
   if (forceDirectIbApple()) {
     eng.graphActive = false;
     applyOutputGain();
@@ -293,22 +309,52 @@ export function setBackgroundOutput(on: boolean) {
   if (!on) {
     eng.ctx.resume().catch(() => {});
     eng.graphActive = true;
-    applyOutputGain();
-    eng.audio.play().catch(() => {});
-    eng.bgAudio.muted = true; eng.bgAudio.volume = 0; eng.bgAudio.pause();
+    void (async () => {
+      try {
+        await handoffAudio(eng.bgAudio, eng.audio, true);
+        applyOutputGain();
+        await eng.audio.play().catch(() => {});
+        eng.bgAudio.pause();
+        eng.bgAudio.muted = true;
+        eng.bgAudio.volume = 0;
+      } catch {
+        applyOutputGain();
+        eng.audio.play().catch(() => {});
+        eng.bgAudio.pause();
+      }
+    })();
     return;
   }
   if (dspActive()) {
     eng.graphActive = true;
-    applyOutputGain();
-    eng.audio.play().catch(() => {});
-    eng.bgAudio.pause(); eng.bgAudio.muted = true; eng.bgAudio.volume = 0;
+    void (async () => {
+      try {
+        await handoffAudio(eng.bgAudio, eng.audio, true);
+        applyOutputGain();
+        await eng.audio.play().catch(() => {});
+      } catch {
+        applyOutputGain();
+        eng.audio.play().catch(() => {});
+      }
+      eng.bgAudio.pause();
+      eng.bgAudio.muted = true;
+      eng.bgAudio.volume = 0;
+    })();
     return;
   }
   eng.graphActive = false;
-  applyOutputGain();
-  eng.bgAudio.play().catch(() => {});
-  eng.audio.pause();
+  void (async () => {
+    try {
+      await handoffAudio(eng.audio, eng.bgAudio, false);
+      applyOutputGain();
+      await eng.bgAudio.play().catch(() => {});
+      eng.audio.pause();
+    } catch {
+      applyOutputGain();
+      eng.bgAudio.play().catch(() => {});
+      eng.audio.pause();
+    }
+  })();
 }
 
 export function applyEq(gains: number[]) {
