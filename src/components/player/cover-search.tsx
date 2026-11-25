@@ -48,7 +48,7 @@ export function ArtworkPanel({
   album: string;
   trackIds: string[];
   onFile: (file: File) => void;
-  onRemoveAlbumAlbum?: () => void;
+  onRemoveAlbum?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const setCoverUrl = usePlayer((s) => s.setCoverUrl);
