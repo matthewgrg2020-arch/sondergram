@@ -60,6 +60,8 @@ export const usePlayer = create((set, get) => ({
   autoEq: false, playlists: [], loopA: null, loopB: null, bookmarks: true, bookmarkPrompt: true,
   skipLowRated: false, skipSeconds: 30, playRecordPercent: 50, restrictData: false, autoFullScreen: false,
   rate: 1,
+  pitch: 0,
+  isolate: "mix",
   flash: (notice) => { set({ notice }); setTimeout(() => set({ notice: null }), 3200); },
   hydrate: async () => {
     try {
@@ -242,6 +244,28 @@ export const usePlayer = create((set, get) => ({
   setGapless: (gapless) => set({ gapless }),
   setCrossfade: (crossfade) => set({ crossfade }),
   setRate: (rate) => set({ rate }),
+  setPitch: (pitch) => set({ pitch }),
+  setIsolate: (isolate) => set({ isolate }),
+  setEqBand: (i, value) => set((s) => {
+    const eq = Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ];
+    if (i >= 0 && i < eq.length) eq[i] = value;
+    return { eq, presetId: "custom" };
+  }),
+  applyPreset: (presetId, gains, preamp) => set({
+    presetId: presetId || "custom",
+    eq: Array.isArray(gains) ? gains.slice() : [...FLAT_EQ],
+    preamp: typeof preamp === "number" ? preamp : 0,
+  }),
+  saveCustomPreset: (label) => set((s) => {
+    const id = `custom-${Date.now()}`;
+    const row = { id, label: label || "Custom", gains: (s.eq || []).slice(), preamp: s.preamp || 0 };
+    return { customPresets: [...(s.customPresets || []), row], presetId: id };
+  }),
+  deleteCustomPreset: (id) => set((s) => ({
+    customPresets: (s.customPresets || []).filter((p) => p.id !== id),
+    presetId: s.presetId === id ? "flat" : s.presetId,
+  })),
+  toggleRadio: () => set((s) => ({ radio: !s.radio })),
   setBalance: (balance) => set({ balance }),
   setViz: (viz) => set({ viz }),
   setFocus: (focus) => set({ focus }),
