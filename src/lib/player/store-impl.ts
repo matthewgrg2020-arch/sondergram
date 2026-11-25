@@ -71,7 +71,7 @@ export const usePlayer = create((set, get) => ({
       set({ ready: true });
     }
   },
-  playIndex: async (index) => {
+  playIndex: async (index, _user) => {
     const track = get().tracks[index];
     if (!track) return;
     set({ index, playing: true, currentTime: 0 });
@@ -100,6 +100,50 @@ export const usePlayer = create((set, get) => ({
   queueNextMany: (ids) => set((s) => ({ upNext: [...ids, ...s.upNext.filter((x) => !ids.includes(x))] })),
   queueLast: (id) => set((s) => ({ upNext: [...s.upNext.filter((x) => x !== id), id] })),
   setTimes: (currentTime, duration) => set({ currentTime, duration }),
+  setPlaying: (playing) => {
+    set({ playing: Boolean(playing) });
+    if (!playing) {
+      void import("./engine").then((m) => m.pauseOutput()).catch(() => {});
+    } else {
+      void import("./engine").then((m) => m.resumeEngine()).catch(() => {});
+    }
+  },
+  nextIndex: (_user) => {
+    let s = get();
+    if (!s.tracks.length) return null;
+    while ((s.upNext || []).length) {
+      const id = s.upNext[0];
+      set({ upNext: s.upNext.slice(1) });
+      s = get();
+      const i = s.tracks.findIndex((t) => t.id === id);
+      if (i >= 0) return i;
+    }
+    if (s.repeat === "one" && s.index >= 0) return s.index;
+    if (s.shuffle && s.tracks.length > 1) {
+      let n = Math.floor(Math.random() * s.tracks.length);
+      if (n === s.index) n = (n + 1) % s.tracks.length;
+      return n;
+    }
+    let n = s.index < 0 ? 0 : s.index + 1;
+    if (n >= s.tracks.length) {
+      if (s.repeat === "all") return 0;
+      return null;
+    }
+    return n;
+  },
+  prevIndex: () => {
+    const s = get();
+    if (!s.tracks.length) return null;
+    if ((s.currentTime || 0) > 3 && s.index >= 0) return s.index;
+    if (s.shuffle && s.tracks.length > 1) {
+      let n = Math.floor(Math.random() * s.tracks.length);
+      if (n === s.index) n = (n + 1) % s.tracks.length;
+      return n;
+    }
+    if (s.index > 0) return s.index - 1;
+    if (s.repeat === "all") return s.tracks.length - 1;
+    return s.index >= 0 ? s.index : 0;
+  },
   toggle: async () => {
     const { playing } = get();
     if (playing) {
@@ -115,17 +159,17 @@ export const usePlayer = create((set, get) => ({
     try { (await import("./engine")).seekOutput(t); } catch {}
   },
   next: () => {
-    const { tracks, index, repeat } = get();
-    if (!tracks.length) return;
-    let n = index + 1;
-    if (n >= tracks.length) n = repeat === "all" ? 0 : -1;
-    if (n >= 0) get().playIndex(n);
+    const n = get().nextIndex(true);
+    if (n !== null) get().playIndex(n, true);
   },
   prev: () => {
-    const { tracks, index, currentTime } = get();
-    if (!tracks.length) return;
-    if (currentTime > 3) { get().seek(0); return; }
-    get().playIndex(index > 0 ? index - 1 : tracks.length - 1);
+    const s = get();
+    if ((s.currentTime || 0) > 3 && s.index >= 0) {
+      get().seek(0);
+      return;
+    }
+    const p = get().prevIndex();
+    if (p !== null) get().playIndex(p, true);
   },
   patchTrack: (id, patch) => set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   updateMeta: (id, patch) => {
