@@ -159,7 +159,18 @@ export const usePlayer = create((set, get) => ({
   },
   importFiles: async (files) => get().addFiles(files),
   exportBackup: async () => exportLibraryBackup(),
-  importBackup: async (file) => { await importLibraryBackup(file); await get().hydrate(); },
+  importBackup: async (file) => {
+    try {
+      await importLibraryBackup(file);
+      await get().hydrate();
+      get().flash("Library restored");
+      return true;
+    } catch (e) {
+      get().flash((e && e.message) || "Could not restore zip");
+      return false;
+    }
+  },
+  importLibrary: async (file) => get().importBackup(file),
   setCover: async (ids, file) => {
     const hold = new Set(ids || []);
     let url = "";
