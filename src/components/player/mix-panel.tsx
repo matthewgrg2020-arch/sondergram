@@ -45,10 +45,18 @@ function Chip({
 }
 
 export function TempoPitch() {
-  const rate = usePlayer((s) => s.rate);
-  const pitch = usePlayer((s) => s.pitch);
+  const rateRaw = usePlayer((s) => s.rate);
+  const pitchRaw = usePlayer((s) => s.pitch);
   const setRate = usePlayer((s) => s.setRate);
   const setPitch = usePlayer((s) => s.setPitch);
+  const rate = typeof rateRaw === "number" && Number.isFinite(rateRaw) ? rateRaw : 1;
+  const pitch = typeof pitchRaw === "number" && Number.isFinite(pitchRaw) ? pitchRaw : 0;
+  const safeSetRate = (value: number) => {
+    if (typeof setRate === "function") setRate(value);
+  };
+  const safeSetPitch = (value: number) => {
+    if (typeof setPitch === "function") setPitch(value);
+  };
   return (
     <section className="panel p-4">
       <div className="mb-3 flex items-baseline justify-between">
@@ -61,7 +69,7 @@ export function TempoPitch() {
       <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Speed</p>
       <div className="mb-4 flex flex-wrap gap-1.5">
         {SPEEDS.map((value) => (
-          <Chip key={value} active={rate === value} onClick={() => setRate(value)}>
+          <Chip key={value} active={rate === value} onClick={() => safeSetRate(value)}>
             {value}×
           </Chip>
         ))}
@@ -74,12 +82,12 @@ export function TempoPitch() {
         step={0.05}
         value={rate}
         aria-label="Playback speed"
-        onChange={(e) => setRate(Number(e.target.value))}
+        onChange={(e) => safeSetRate(Number(e.target.value))}
       />
       <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Pitch</p>
       <div className="mb-3 flex flex-wrap gap-1.5">
         {PITCHES.map((value) => (
-          <Chip key={value} active={pitch === value} onClick={() => setPitch(value)}>
+          <Chip key={value} active={pitch === value} onClick={() => safeSetPitch(value)}>
             {value > 0 ? `+${value}` : String(value)}
           </Chip>
         ))}
@@ -92,7 +100,7 @@ export function TempoPitch() {
         step={0.5}
         value={pitch}
         aria-label="Pitch"
-        onChange={(e) => setPitch(Number(e.target.value))}
+        onChange={(e) => safeSetPitch(Number(e.target.value))}
       />
       <p className="mt-2 text-xs leading-relaxed text-subtle">
         Speed stays key-locked at 0. Off zero, pitch and speed move together like a deck.
@@ -102,10 +110,16 @@ export function TempoPitch() {
 }
 
 export function ListenCard() {
-  const isolate = usePlayer((s) => s.isolate);
+  const isolateRaw = usePlayer((s) => s.isolate);
   const setIsolate = usePlayer((s) => s.setIsolate);
   const radio = usePlayer((s) => s.radio);
   const toggleRadio = usePlayer((s) => s.toggleRadio);
+  const setRadio = usePlayer((s) => s.setRadio);
+  const isolate = isolateRaw || "mix";
+  const onToggleRadio = () => {
+    if (typeof toggleRadio === "function") toggleRadio();
+    else if (typeof setRadio === "function") setRadio(!radio);
+  };
   return (
     <section className="panel p-4">
       <h2 className="mb-3 text-xs uppercase tracking-[0.18em] text-subtle">Listen</h2>
@@ -121,7 +135,9 @@ export function ListenCard() {
               step={1}
               value={isolate === mode.id ? 1 : 0}
               aria-label={mode.label}
-              onChange={() => setIsolate(mode.id)}
+              onChange={() => {
+                if (typeof setIsolate === "function") setIsolate(mode.id);
+              }}
             />
           </label>
         ))}
@@ -131,7 +147,7 @@ export function ListenCard() {
       </p>
       <button
         type="button"
-        onClick={toggleRadio}
+        onClick={onToggleRadio}
         className={cn(
           "mt-3 flex h-10 w-full items-center justify-between rounded-full px-3 text-sm",
           radio ? "bg-raised text-accent" : "bg-raised text-muted",
@@ -145,10 +161,12 @@ export function ListenCard() {
 }
 
 export function SpatialCard() {
-  const spatial = usePlayer((s) => s.spatial);
-  const spatialAmount = usePlayer((s) => s.spatialAmount);
+  const spatial = usePlayer((s) => s.spatial) || "off";
+  const spatialAmountRaw = usePlayer((s) => s.spatialAmount);
   const setSpatial = usePlayer((s) => s.setSpatial);
   const setSpatialAmount = usePlayer((s) => s.setSpatialAmount);
+  const spatialAmount =
+    typeof spatialAmountRaw === "number" && Number.isFinite(spatialAmountRaw) ? spatialAmountRaw : 0.7;
   return (
     <section className="panel p-4">
       <h2 className="mb-3 text-xs uppercase tracking-[0.18em] text-subtle">Spatial</h2>
@@ -157,7 +175,9 @@ export function SpatialCard() {
           <button
             key={mode.id}
             type="button"
-            onClick={() => setSpatial(mode.id)}
+            onClick={() => {
+              if (typeof setSpatial === "function") setSpatial(mode.id);
+            }}
             className={cn(
               "h-8 rounded-full text-xs",
               spatial === mode.id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg",
@@ -184,7 +204,9 @@ export function SpatialCard() {
             step={0.01}
             value={spatialAmount}
             aria-label="Spatial amount"
-            onChange={(e) => setSpatialAmount(Number(e.target.value))}
+            onChange={(e) => {
+              if (typeof setSpatialAmount === "function") setSpatialAmount(Number(e.target.value));
+            }}
           />
         </label>
       ) : null}
