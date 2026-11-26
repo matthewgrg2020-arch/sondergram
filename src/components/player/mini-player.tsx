@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Clock3,
   ListMusic,
@@ -18,6 +19,7 @@ import { coverVars, useCoverPalette } from "@/lib/player/cover-color";
 import { proxyCoverUrl } from "@/lib/player/covers";
 import { usePlayer } from "@/lib/player/store";
 import { Visualizer } from "./visualizer";
+import { QueueSheet } from "./queue-sheet";
 
 type Props = {
   onTogglePlay: () => void;
@@ -45,8 +47,10 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
   const upNext = usePlayer((s) => s.upNext);
   const track = index >= 0 ? tracks[index] : undefined;
   const palette = useCoverPalette(track?.coverUrl);
+  const [queueOpen, setQueueOpen] = useState(false);
 
   return (
+    <>
     <footer className="mini-bar mx-2 mb-2 overflow-hidden rounded-2xl px-2 py-1.5 sm:mx-3 sm:mb-3 sm:px-4 sm:py-2" style={coverVars(palette)}>
       <div className="mb-1 hidden h-6 sm:block">
         <Visualizer active={playing} className="h-6" />
@@ -83,6 +87,16 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
         </button>
 
         <div className="flex items-center justify-end gap-0.5 sm:hidden">
+          <IconBtn label="Queue" onClick={() => setQueueOpen(true)}>
+            <span className="relative">
+              <ListMusic className="size-5" strokeWidth={1.75} />
+              {upNext.length > 0 ? (
+                <span className="absolute -right-1.5 -top-1 rounded-full bg-accent px-1 text-[9px] leading-4 text-accent-fg">
+                  {upNext.length}
+                </span>
+              ) : null}
+            </span>
+          </IconBtn>
           <button
             type="button"
             aria-label={playing ? "Pause" : "Play"}
@@ -149,7 +163,7 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
         </div>
 
         <div className="hidden items-center justify-end gap-1 sm:flex">
-          <IconBtn label="Playing next" onClick={onExpand}>
+          <IconBtn label="Playing next" onClick={() => setQueueOpen(true)}>
             <span className="relative">
               <ListMusic className="size-4" strokeWidth={1.75} />
               {upNext.length > 0 ? (
@@ -183,6 +197,8 @@ export function MiniPlayer({ onTogglePlay, onPrev, onNext, onSeek, onExpand, onL
         </div>
       </div>
     </footer>
+    <QueueSheet open={queueOpen} onClose={() => setQueueOpen(false)} />
+    </>
   );
 }
 
