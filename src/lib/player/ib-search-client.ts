@@ -68,15 +68,12 @@ function textMatches(text: string, q: string): boolean {
   return toks.length > 0 && toks.every((tok) => t.includes(tok) || nt.includes(tok));
 }
 
-function rowLooksMatch(row: unknown[], q: string): boolean {
-  for (const cell of row) {
-    if (typeof cell !== "string") continue;
-    const s = cell.trim();
-    if (s.length < 2 || s.length > 180) continue;
-    if (/^\d+$/.test(s) || /^\/\d+\//.test(s) || /^audio\//i.test(s)) continue;
-    if (textMatches(s, q)) return true;
-  }
-  return false;
+const JUNK_NAME = /^(music|artists|albums|compilations|tracks|audio|downloads?|complete|incoming|import|itunes|media|songs?|various|unknown|untitled|new folder|temp|tmp)$/i;
+
+function cleanName(s: string): string {
+  const t = (s || "").trim();
+  if (!t || JUNK_NAME.test(t)) return "";
+  return t;
 }
 
 const DEFAULT_TRACK_MAP: Record<string, number> = {
@@ -100,17 +97,18 @@ function namesFromPath(path: string): { artist: string; album: string; title: st
     const file = parts.pop() || "";
     fileTitle = file.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/^\d+\s*[-.]\s*/, "").trim();
   }
-  while (parts.length && /^(music|artists|albums|compilations|tracks|audio)$/i.test(parts[0]!)) parts.shift();
+  while (parts.length && JUNK_NAME.test(parts[0]!)) parts.shift();
+  while (parts.length && JUNK_NAME.test(parts[parts.length - 1]!)) parts.pop();
   let artist = "", album = "";
   if (parts.length >= 2) { artist = parts[0] || ""; album = parts[1] || ""; }
   else if (parts.length === 1) album = parts[0] || "";
   album = album.replace(/^\(\d{4}\)\s*/, "").trim();
-  return { artist: artist.trim(), album: album.trim(), title: fileTitle };
+  return { artist: cleanName(artist), album: cleanName(album), title: cleanName(fileTitle) || fileTitle };
 }
 
 function pickTitle(row: unknown[], tm: Record<string, number>, pathTitle: string): string {
   const fromMap = strAt(row, tm.title ?? DEFAULT_TRACK_MAP.title);
-  if (fromMap && !/^\d{1,3}$/.test(fromMap) && !/^\d{4}$/.test(fromMap)) return fromMap;
+  if (fromMap && !/^\d{1,3}$/.test(fromMap) && !/^\d{4}$/.test(fromMap) && !JUNK_NAME.test(fromMap)) return fromMap;
   for (const cell of row) {
     if (typeof cell !== "string") continue;
     const s = cell.trim();
@@ -118,6 +116,7 @@ function pickTitle(row: unknown[], tm: Record<string, number>, pathTitle: string
     if (/^\d{1,3}$/.test(s) || /^\d{4}$/.test(s) || /^\d{4}-\d{2}-\d{2}/.test(s)) continue;
     if (/^\d{1,2}:\d{2}/.test(s) || /^audio\//i.test(s) || /^\//.test(s)) continue;
     if (/music\//i.test(s) || /^-?\d+(\.\d+)?$/.test(s)) continue;
+    if (JUNK_NAME.test(s)) continue;
     return s;
   }
   return pathTitle || fromMap || "Untitled";
@@ -146,10 +145,11 @@ function authPayload(session: IbSession) {
 function resolveHit(hit: PendingHit, artists: Map<string, string>, albums: Map<string, string>): IbTrack {
   const fromPath = namesFromPath(hit.path);
   let artist = hit.artistId ? (artists.get(String(hit.artistId)) || artists.get(hit.artistId) || "") : "";
-  if (!artist) artist = fromPath.artist || "";
+  artist = cleanName(artist) || fromPath.artist || "";
   let album = hit.albumId ? (albums.get(String(hit.albumId)) || albums.get(hit.albumId) || "") : "";
-  if (!album) album = fromPath.album || "";
-  const title = hit.title && !/^\d{1,3}$/.test(hit.title) ? hit.title : fromPath.title || hit.title || "Untitled";
+  album = cleanName(album) || fromPath.album || "";
+  let title = hit.title && !/^\d{1,3}$/.test(hit.title) && !JUNK_NAME.test(hit.title) ? hit.title : fromPath.title || hit.title || "Untitled";
+  if (JUNK_NAME.test(title)) title = fromPath.title || "Untitled";
   return {
     id: hit.id, name: title,
     artist: artist || "Unknown artist",
@@ -250,7 +250,7 @@ export async function searchIbLibraryClient(
   let mapsReady = false;
 
   const addPending = (hit: PendingHit) => {
-    if (pending.length >= MAX_HITS || seen.has(hit.id)) return;
+    if (pending.length >= Math.min(MAX_HITS * 2, 400) || seen.has(hit.id)) return;
     seen.add(hit.id);
     pending.push(hit);
     opts?.onProgress?.(pending.length);
@@ -271,7 +271,7 @@ export async function searchIbLibraryClient(
   };
 
   const handleArtist = (id: string, row: unknown[]) => {
-    const name = strAt(row, artistMap.name ?? 0);
+    const name = cleanName(strAt(row, artistMap.name ?? 0));
     if (name && !/^\d+$/.test(name)) {
       artists.set(String(id), name);
       artists.set(id, name);
@@ -280,7 +280,7 @@ export async function searchIbLibraryClient(
   };
 
   const handleAlbum = (id: string, row: unknown[]) => {
-    const name = strAt(row, albumMap.name ?? 0);
+    const name = cleanName(strAt(row, albumMap.name ?? 0));
     if (name && !/^\d+$/.test(name)) {
       albums.set(String(id), name);
       albums.set(id, name);
@@ -319,15 +319,15 @@ export async function searchIbLibraryClient(
       const n = typeof row[lenIdx] === "number" ? (row[lenIdx] as number) : Number(row[lenIdx]);
       if (Number.isFinite(n) && n > 0 && n < 36000) lengthSec = Math.round(n);
     }
-    const artistName = (artistId && (artists.get(String(artistId)) || artists.get(artistId))) || pathNames.artist || "";
-    const albumName = (albumId && (albums.get(String(albumId)) || albums.get(albumId))) || pathNames.album || "";
+    const artistName = cleanName((artistId && (artists.get(String(artistId)) || artists.get(artistId))) || "") || pathNames.artist || "";
+    const albumName = cleanName((albumId && (albums.get(String(albumId)) || albums.get(albumId))) || "") || pathNames.album || "";
     const trashedIdx = tm.trashed ?? DEFAULT_TRACK_MAP.trashed;
     if (trashedIdx != null) {
       const tr = row[trashedIdx];
       if (tr === true || tr === 1 || tr === "1" || tr === "true") return;
     }
     const hit: PendingHit = {
-      id, title, genre: genre && !/^\d+$/.test(genre) ? genre : "", year,
+      id, title, genre: genre && !/^\d+$/.test(genre) && !JUNK_NAME.test(genre) ? genre : "", year,
       albumId, artistId, artId, file, path: pathVal, length: lengthSec,
     };
     if (albumId) {
@@ -342,12 +342,10 @@ export async function searchIbLibraryClient(
       addPending(hit);
       return;
     }
-    const titleMatch = textMatches(title, q);
-    const artistMatch = textMatches(artistName, q);
-    const albumMatch = textMatches(albumName, q);
-    const pathMatch = Boolean(pathVal && textMatches(pathVal, q));
-    const cellMatch = !titleMatch && !artistMatch && !albumMatch && !pathMatch && rowLooksMatch(row, q);
-    if (!titleMatch && !artistMatch && !albumMatch && !pathMatch && !cellMatch) return;
+    const titleMatch = textMatches(title, q) && !JUNK_NAME.test(title);
+    const artistMatch = textMatches(artistName, q) && !JUNK_NAME.test(artistName);
+    const albumMatch = textMatches(albumName, q) && !JUNK_NAME.test(albumName);
+    if (!titleMatch && !artistMatch && !albumMatch) return;
     if (albumId && albumMatch) noteAlbum(albumId);
     if (artistId && artistMatch) noteArtist(artistId);
     addPending(hit);
@@ -430,7 +428,16 @@ export async function searchIbLibraryClient(
     };
   }
 
-  const tracks = pending.map((h) => resolveHit(h, artists, albums));
+  let tracks = pending.map((h) => resolveHit(h, artists, albums));
+  tracks = tracks.filter((t) => {
+    return (
+      textMatches(t.name || "", q) ||
+      textMatches(t.artist || "", q) ||
+      textMatches(t.album || "", q)
+    );
+  });
+  const artistHits = tracks.filter((t) => textMatches(t.artist || "", q));
+  if (artistHits.length >= 3) tracks = artistHits;
   tracks.sort((a, b) => {
     const aa = (a.artist || "").localeCompare(b.artist || "");
     if (aa) return aa;
@@ -438,6 +445,12 @@ export async function searchIbLibraryClient(
     if (ab) return ab;
     return (a.name || "").localeCompare(b.name || "");
   });
+  if (!tracks.length) {
+    return {
+      ok: false, tracks: [], total: 0,
+      error: "No clean matches for that search. Try the exact artist or album name.",
+    };
+  }
   return { ok: true, tracks, total: tracks.length, truncated: tracks.length >= MAX_HITS };
 }
 
