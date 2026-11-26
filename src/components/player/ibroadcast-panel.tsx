@@ -14,6 +14,7 @@ import { putStoredTrack } from "@/lib/player/persist";
 import { usePlayer } from "@/lib/player/store";
 
 function albumKey(t: IbTrack) {
+  if (t.albumId) return `id:${t.albumId}`;
   const album = (t.album || "Unknown album").toLowerCase().trim();
   const artist = (t.artist || "Unknown").toLowerCase().trim();
   return `${album}::${artist}`;
