@@ -289,7 +289,7 @@ export async function searchIbLibraryClient(
   };
 
   const handleTrack = (id: string, row: unknown[]) => {
-    if (pending.length >= MAX_HITS || seen.has(id)) return;
+    if (pending.length >= Math.min(MAX_HITS * 2, 400) || seen.has(id)) return;
     const tm = trackMap;
     let pathVal = strAt(row, tm.path ?? DEFAULT_TRACK_MAP.path);
     let file = strAt(row, tm.file ?? DEFAULT_TRACK_MAP.file);
@@ -332,11 +332,11 @@ export async function searchIbLibraryClient(
     };
     if (albumId) {
       const bucket = albumBuckets.get(albumId) || [];
-      if (bucket.length < 80) { bucket.push(hit); albumBuckets.set(albumId, bucket); }
+      if (bucket.length < 200) { bucket.push(hit); albumBuckets.set(albumId, bucket); }
     }
     if (artistId) {
       const bucket = artistBuckets.get(artistId) || [];
-      if (bucket.length < 120) { bucket.push(hit); artistBuckets.set(artistId, bucket); }
+      if (bucket.length < 250) { bucket.push(hit); artistBuckets.set(artistId, bucket); }
     }
     if ((albumId && matchedAlbumIds.has(albumId)) || (artistId && matchedArtistIds.has(artistId))) {
       addPending(hit);
@@ -391,7 +391,11 @@ export async function searchIbLibraryClient(
         if (tracksStart >= 0) { tracksStart = Math.max(0, tracksStart - cut); trackCursor = Math.max(0, trackCursor - cut); }
       }
     }
-    return pending.length >= MAX_HITS;
+    if (pending.length < MAX_HITS) return false;
+    if (matchedAlbumIds.size || matchedArtistIds.size) {
+      return pending.length >= Math.min(MAX_HITS * 2, 400);
+    }
+    return true;
   };
 
   try {
@@ -436,3 +440,5 @@ export async function searchIbLibraryClient(
   });
   return { ok: true, tracks, total: tracks.length, truncated: tracks.length >= MAX_HITS };
 }
+
+export { fetchIbAlbumTracks } from "./ib-album-fetch";
