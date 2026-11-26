@@ -22,10 +22,22 @@ const asyncNoop = async () => 0;
 
 const EQ_SETTINGS_KEY = "sondergram-eq-settings";
 
-function loadEqSettings() {
-  if (typeof localStorage === "undefined") return null;
+function canUseStorage() {
   try {
-    const raw = localStorage.getItem(EQ_SETTINGS_KEY);
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const k = "__sg_eq_probe__";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadEqSettings() {
+  if (!canUseStorage()) return null;
+  try {
+    const raw = window.localStorage.getItem(EQ_SETTINGS_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data || typeof data !== "object") return null;
@@ -36,15 +48,27 @@ function loadEqSettings() {
 }
 
 function persistEqSettings(partial) {
-  if (typeof localStorage === "undefined") return;
+  if (!canUseStorage()) return;
   try {
     const prev = loadEqSettings() || {};
     const next = { ...prev, ...partial, savedAt: Date.now() };
-    localStorage.setItem(EQ_SETTINGS_KEY, JSON.stringify(next));
+    window.localStorage.setItem(EQ_SETTINGS_KEY, JSON.stringify(next));
   } catch {}
 }
 
-const savedEq = loadEqSettings();
+function snapshotSound(s) {
+  return {
+    eq: Array.isArray(s.eq) ? s.eq.slice() : undefined,
+    preamp: s.preamp,
+    presetId: s.presetId,
+    customPresets: Array.isArray(s.customPresets) ? s.customPresets : [],
+    bassLock: Boolean(s.bassLock),
+    spatial: s.spatial,
+    spatialAmount: s.spatialAmount,
+    remaster: s.remaster,
+    remasterAmt: s.remasterAmt,
+  };
+}
 
 function storedToTrack(row) {
   let url = "";
@@ -77,10 +101,10 @@ function storedToTrack(row) {
 export const usePlayer = create((set, get) => ({
   tracks: [], index: -1, ready: false, playing: false, currentTime: 0, duration: 0,
   volume: 0.85, muted: false, shuffle: false, repeat: "off",
-  eq: Array.isArray(savedEq?.eq) && savedEq.eq.length ? savedEq.eq.slice() : [...FLAT_EQ],
-  preamp: typeof savedEq?.preamp === "number" ? savedEq.preamp : 0,
-  presetId: typeof savedEq?.presetId === "string" ? savedEq.presetId : "flat",
-  customPresets: Array.isArray(savedEq?.customPresets) ? savedEq.customPresets : [],
+  eq: [...FLAT_EQ],
+  preamp: 0,
+  presetId: "flat",
+  customPresets: [],
   bassLock: false, remaster: "off", remasterAmt: 0.7, spatial: "off", spatialAmount: 0.7,
   radio: false, radioRecent: [], upNext: [], notice: null, crossfade: 4,
   sleep: null, sleepUntil: null, stopAfter: "off", recent: [], plays: {}, positions: {},
@@ -93,6 +117,23 @@ export const usePlayer = create((set, get) => ({
   isolate: "mix",
   flash: (notice) => { set({ notice }); setTimeout(() => set({ notice: null }), 3200); },
   hydrate: async () => {
+    // Restore EQ / sound settings on the client (not at module init — SSR has no localStorage).
+    try {
+      const saved = loadEqSettings();
+      if (saved) {
+        const patch = {};
+        if (Array.isArray(saved.eq) && saved.eq.length) patch.eq = saved.eq.slice();
+        if (typeof saved.preamp === "number") patch.preamp = saved.preamp;
+        if (typeof saved.presetId === "string") patch.presetId = saved.presetId;
+        if (Array.isArray(saved.customPresets)) patch.customPresets = saved.customPresets;
+        if (typeof saved.bassLock === "boolean") patch.bassLock = saved.bassLock;
+        if (typeof saved.spatial === "string") patch.spatial = saved.spatial;
+        if (typeof saved.spatialAmount === "number") patch.spatialAmount = saved.spatialAmount;
+        if (typeof saved.remaster === "string") patch.remaster = saved.remaster;
+        if (typeof saved.remasterAmt === "number") patch.remasterAmt = saved.remasterAmt;
+        if (Object.keys(patch).length) set(patch);
+      }
+    } catch {}
     try {
       const rows = await listStoredTracks();
       set({ tracks: (rows || []).map(storedToTrack), ready: true });
@@ -319,11 +360,11 @@ export const usePlayer = create((set, get) => ({
   setEq: (eq) => { set({ eq }); persistEqSettings({ eq }); },
   setPreamp: (preamp) => { set({ preamp }); persistEqSettings({ preamp }); },
   setPresetId: (presetId) => { set({ presetId }); persistEqSettings({ presetId }); },
-  setSpatial: (spatial) => set({ spatial }),
-  setSpatialAmount: (spatialAmount) => set({ spatialAmount }),
-  setRemaster: (remaster) => set({ remaster }),
-  setRemasterAmt: (remasterAmt) => set({ remasterAmt }),
-  setBassLock: (bassLock) => set({ bassLock }),
+  setSpatial: (spatial) => { set({ spatial }); persistEqSettings({ spatial }); },
+  setSpatialAmount: (spatialAmount) => { set({ spatialAmount }); persistEqSettings({ spatialAmount }); },
+  setRemaster: (remaster) => { set({ remaster }); persistEqSettings({ remaster }); },
+  setRemasterAmt: (remasterAmt) => { set({ remasterAmt }); persistEqSettings({ remasterAmt }); },
+  setBassLock: (bassLock) => { set({ bassLock }); persistEqSettings({ bassLock: Boolean(bassLock) }); },
   setNormalize: (normalize) => set({ normalize }),
   setGapless: (gapless) => set({ gapless }),
   setCrossfade: (crossfade) => set({ crossfade }),
@@ -357,9 +398,8 @@ export const usePlayer = create((set, get) => ({
       preamp: typeof s.preamp === "number" ? s.preamp : 0,
     };
     const customPresets = [...(s.customPresets || []), row];
-    const next = { customPresets, presetId: id };
-    set(next);
-    persistEqSettings({ customPresets, presetId: id, eq: row.gains, preamp: row.preamp });
+    set({ customPresets, presetId: id });
+    persistEqSettings(snapshotSound({ ...get(), customPresets, presetId: id }));
     get().flash(`Saved preset "${name}"`);
     return id;
   },
