@@ -214,7 +214,7 @@ export async function searchIbLibraryClient(
 ): Promise<IbSearchResult> {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return { ok: false, tracks: [], total: 0, error: "Type at least 2 characters to search." };
-  const MAX_HITS = opts?.maxHits ?? 80;
+  const MAX_HITS = opts?.maxHits ?? 200;
 
   let res: Response;
   try {
@@ -269,9 +269,11 @@ export async function searchIbLibraryClient(
   let artistMap: Record<string, number> = { ...DEFAULT_ARTIST_MAP };
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
-  // Album expansion only when the *album name* matches the query.
+  // Expand full album when album name matches; expand artist discography when artist matches.
   const matchedAlbumIds = new Set<string>();
+  const matchedArtistIds = new Set<string>();
   const albumBuckets = new Map<string, PendingHit[]>();
+  const artistBuckets = new Map<string, PendingHit[]>();
 
   let artistCursor = 0, albumCursor = 0, trackCursor = 0;
   let artistsStart = -1, albumsStart = -1, tracksStart = -1;
@@ -293,11 +295,22 @@ export async function searchIbLibraryClient(
     }
   };
 
+  const noteArtist = (artistId: string) => {
+    if (!artistId || matchedArtistIds.has(artistId)) return;
+    matchedArtistIds.add(artistId);
+    const bucket = artistBuckets.get(artistId);
+    if (bucket) {
+      for (const h of bucket) addPending(h);
+    }
+  };
+
   const handleArtist = (id: string, row: unknown[]) => {
     const name = strAt(row, artistMap.name ?? 0);
     if (name && !/^\d+$/.test(name)) {
       artists.set(String(id), name);
       artists.set(id, name);
+      // Artist name matches query → pull tracks across their albums.
+      if (q && textMatches(name, q)) noteArtist(String(id));
     }
   };
   const handleAlbum = (id: string, row: unknown[]) => {
@@ -352,20 +365,31 @@ export async function searchIbLibraryClient(
       id, title, genre: genre && !/^\d+$/.test(genre) ? genre : "", year,
       albumId, artistId, artId, file, path: pathVal, length: lengthSec,
     };
-    // Buffer tracks per album so album-name matches can expand tracks seen earlier in the stream.
+    // Buffer by album/artist so matches discovered later can still expand earlier tracks.
     if (albumId) {
       const bucket = albumBuckets.get(albumId) || [];
-      if (bucket.length < 60) {
+      if (bucket.length < 80) {
         bucket.push(hit);
         albumBuckets.set(albumId, bucket);
       }
-      if (albumBuckets.size > 400) {
+      if (albumBuckets.size > 500) {
         const first = albumBuckets.keys().next().value;
         if (first && !matchedAlbumIds.has(first)) albumBuckets.delete(first);
       }
     }
-    // Already expanding this album (album name matched the query)
-    if (albumId && matchedAlbumIds.has(albumId)) {
+    if (artistId) {
+      const bucket = artistBuckets.get(artistId) || [];
+      if (bucket.length < 120) {
+        bucket.push(hit);
+        artistBuckets.set(artistId, bucket);
+      }
+      if (artistBuckets.size > 500) {
+        const first = artistBuckets.keys().next().value;
+        if (first && !matchedArtistIds.has(first)) artistBuckets.delete(first);
+      }
+    }
+    // Expanding album or artist discography
+    if ((albumId && matchedAlbumIds.has(albumId)) || (artistId && matchedArtistIds.has(artistId))) {
       addPending(hit);
       return;
     }
@@ -374,8 +398,10 @@ export async function searchIbLibraryClient(
     const artistMatch = textMatches(artistName, q);
     const albumMatch = textMatches(albumName, q);
     if (!titleMatch && !artistMatch && !albumMatch) return;
-    // Expand full album only when album name matches — not for a single song title hit.
+    // Expand full album when album name matches.
     if (albumId && albumMatch) noteAlbum(albumId);
+    // Expand artist discography when artist name matches (gives multiple albums).
+    if (artistId && artistMatch) noteArtist(artistId);
     addPending(hit);
   };
 
@@ -452,5 +478,13 @@ export async function searchIbLibraryClient(
     };
   }
   const tracks = pending.map((h) => resolveHit(h, artists, albums));
+  // Group by artist/album so Albums tab shows multiple albums from an artist search.
+  tracks.sort((a, b) => {
+    const aa = (a.artist || "").localeCompare(b.artist || "");
+    if (aa) return aa;
+    const ab = (a.album || "").localeCompare(b.album || "");
+    if (ab) return ab;
+    return (a.name || "").localeCompare(b.name || "");
+  });
   return { ok: true, tracks, total: tracks.length, truncated: tracks.length >= MAX_HITS };
 }
