@@ -81,13 +81,38 @@ export function IbroadcastPanel() {
   }, [libTracks]);
 
   const searchLibrary = async (sess: IbSession, q: string) => {
-    const data = await searchIbLibraryClient(sess, q, {
+    let data = await searchIbLibraryClient(sess, q, {
       maxHits: 200,
       onProgress: (n) => {
         setFoundCount(n);
         setMessage(`Found ${n} so far for “${q.trim()}”…`);
       },
     });
+    if (!data.ok || !data.tracks?.length) {
+      setMessage(`Deep search on server for “${q.trim()}”…`);
+      try {
+        const res = await fetch("/api/ib-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: sess.userId, token: sess.token, q }),
+        });
+        const server = (await res.json()) as {
+          ok?: boolean; tracks?: IbTrack[]; total?: number; truncated?: boolean; error?: string;
+        };
+        if (server?.tracks?.length) {
+          data = {
+            ok: true,
+            tracks: server.tracks,
+            total: server.total ?? server.tracks.length,
+            truncated: server.truncated,
+          };
+        } else if (!data.ok && server?.error) {
+          data = { ok: false, tracks: [], total: 0, error: server.error };
+        }
+      } catch {
+        /* keep client result */
+      }
+    }
     if (!data.ok) throw new Error(data.error || "Search failed.");
     setLibTracks(data.tracks);
     setPlaylists([]);
@@ -116,7 +141,6 @@ export function IbroadcastPanel() {
         const total = data.total;
         const extra = data.truncated ? " (first matches)" : "";
         setMessage(`Found ${total.toLocaleString()} match${total === 1 ? "" : "es"} for “${q}”${extra}.`);
-        // Prefer Albums tab when the result spans more than one album (artist searches).
         const albumIds = new Set((data.tracks || []).map((t) => t.albumId || `${t.album}::${t.artist}`));
         setTab(albumIds.size > 1 ? "albums" : "tracks");
       })
@@ -332,7 +356,7 @@ export function IbroadcastPanel() {
           Search
         </button>
       </div>
-      <p className="text-xs text-subtle">Search runs in your browser while the library streams. Artist names pull multiple albums; song titles stay specific.</p>
+      <p className="text-xs text-subtle">Search streams your library, then falls back to a deeper server scan if needed.</p>
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["tracks", "albums"] as const).map((id) => (
           <button key={id} type="button" onClick={() => setTab(id)} className={"h-8 flex-1 rounded-full text-xs capitalize " + (tab === id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>
