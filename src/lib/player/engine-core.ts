@@ -57,7 +57,6 @@ function dspActive() {
 function isIbUrl(url: string) {
   return Boolean(url && (url.includes("/api/ib-stream") || url.includes("streaming.ibroadcast.com")));
 }
-/** Direct path only when DSP is off. When EQ/spatial/remaster is on, allow graph even for IB on Apple. */
 function forceDirectIbApple(url?: string) {
   if (!engine?.apple) return false;
   if (dspActive()) return false;
@@ -191,7 +190,14 @@ export async function resumeEngine() {
     await eng.ctx.resume().catch(() => {});
   }
   const out = outputAudio();
-  if (out.paused) await out.play().catch(() => {});
+  const other = out === eng.audio ? eng.bgAudio : eng.audio;
+  if (other) {
+    try { other.pause(); } catch {}
+    other.muted = true;
+    other.volume = 0;
+  }
+  applyOutputGain();
+  if (out && out.paused) await out.play().catch(() => {});
 }
 
 export function unlockEngine() {
@@ -299,11 +305,28 @@ export function setBackgroundOutput(on) {
   }
   if (forceDirectIbApple()) {
     eng.graphActive = false;
-    applyOutputGain();
-    if (eng.bgAudio && eng.bgAudio.paused && !eng.bgAudio.ended) {
-      eng.bgAudio.play().catch(() => {});
+    const bg = eng.bgAudio;
+    const graph = eng.audio;
+    const bgSrc = (bg && (bg.currentSrc || bg.src)) || "";
+    const needHandoff = Boolean(lastPlayUrl) && (!bgSrc || (bgSrc !== lastPlayUrl && !bgSrc.includes((lastPlayUrl || "").split("?")[0] || "___")));
+    if (needHandoff && graph) {
+      void (async () => {
+        try {
+          await handoffAudio(graph, bg, false);
+          applyOutputGain();
+          await bg.play().catch(() => {});
+          graph.pause();
+        } catch {
+          applyOutputGain();
+          if (bg && bg.paused) bg.play().catch(() => {});
+          graph.pause();
+        }
+      })();
+      return;
     }
-    eng.audio.pause();
+    applyOutputGain();
+    if (bg && bg.paused && !bg.ended) bg.play().catch(() => {});
+    graph.pause();
     return;
   }
   if (!on) {
