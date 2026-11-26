@@ -14,6 +14,9 @@ export type IbTrack = {
   genre: string;
   file: string;
   artwork: string;
+  length?: number;
+  albumId?: string;
+  artistId?: string;
 };
 
 export type IbPlaylist = {
