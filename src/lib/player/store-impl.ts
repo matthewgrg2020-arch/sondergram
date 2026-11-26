@@ -8,6 +8,7 @@ import { resolveIbUrl } from "./ib-play";
 import { importLocalFiles } from "./import-local-files";
 import { exportLibraryBackup, importLibraryBackup } from "./backup";
 import { loadSlskSession, parseSlskTrackId, slskStreamUrl } from "./soulseek";
+import { bindMediaSessionHandlers, syncMediaSession } from "./media-session";
 
 export type Track = {
   id: string; name: string; artist: string; album: string; genre: string; tags: string[];
@@ -98,6 +99,22 @@ function storedToTrack(row) {
   };
 }
 
+function pushMediaSession(state) {
+  try {
+    const idx = state.index;
+    const track = idx >= 0 ? state.tracks[idx] : null;
+    syncMediaSession({
+      track: track
+        ? { name: track.name, artist: track.artist, album: track.album, coverUrl: track.coverUrl }
+        : null,
+      playing: Boolean(state.playing),
+      duration: Number(state.duration) || (track && track.durationSec) || 0,
+      position: Number(state.currentTime) || 0,
+      playbackRate: Number(state.rate) || 1,
+    });
+  } catch {}
+}
+
 export const usePlayer = create((set, get) => ({
   tracks: [], index: -1, ready: false, playing: false, currentTime: 0, duration: 0,
   volume: 0.85, muted: false, shuffle: false, repeat: "off",
@@ -117,7 +134,6 @@ export const usePlayer = create((set, get) => ({
   isolate: "mix",
   flash: (notice) => { set({ notice }); setTimeout(() => set({ notice: null }), 3200); },
   hydrate: async () => {
-    // Restore EQ / sound settings on the client (not at module init — SSR has no localStorage).
     try {
       const saved = loadEqSettings();
       if (saved) {
@@ -145,6 +161,7 @@ export const usePlayer = create((set, get) => ({
     const track = get().tracks[index];
     if (!track) return;
     set({ index, playing: true, currentTime: 0 });
+    pushMediaSession({ ...get(), index, playing: true, currentTime: 0 });
     try {
       const { beginPlayback } = await import("./engine");
       let url = track.url;
@@ -153,6 +170,7 @@ export const usePlayer = create((set, get) => ({
         if (ib) url = ib;
       }
       await beginPlayback(url || "", 0);
+      pushMediaSession(get());
     } catch (e) { console.warn(e); }
   },
   playIds: (ids) => {
@@ -169,9 +187,18 @@ export const usePlayer = create((set, get) => ({
   queueNext: (id) => set((s) => ({ upNext: [id, ...s.upNext.filter((x) => x !== id)] })),
   queueNextMany: (ids) => set((s) => ({ upNext: [...ids, ...s.upNext.filter((x) => !ids.includes(x))] })),
   queueLast: (id) => set((s) => ({ upNext: [...s.upNext.filter((x) => x !== id), id] })),
-  setTimes: (currentTime, duration) => set({ currentTime, duration }),
+  setTimes: (currentTime, duration) => {
+    set({ currentTime, duration });
+    const s = get();
+    const sec = Math.floor(Number(currentTime) || 0);
+    if (s._msPosSec !== sec) {
+      s._msPosSec = sec;
+      pushMediaSession({ ...s, currentTime, duration });
+    }
+  },
   setPlaying: (playing) => {
     set({ playing: Boolean(playing) });
+    pushMediaSession({ ...get(), playing: Boolean(playing) });
     if (!playing) {
       void import("./engine").then((m) => m.pauseOutput()).catch(() => {});
     } else {
@@ -218,15 +245,18 @@ export const usePlayer = create((set, get) => ({
     const { playing } = get();
     if (playing) {
       set({ playing: false });
+      pushMediaSession({ ...get(), playing: false });
       try { (await import("./engine")).pauseOutput(); } catch {}
     } else {
       set({ playing: true });
+      pushMediaSession({ ...get(), playing: true });
       try { const { resumeEngine } = await import("./engine"); await resumeEngine(); } catch {}
     }
   },
   seek: async (t) => {
     set({ currentTime: t });
     try { (await import("./engine")).seekOutput(t); } catch {}
+    pushMediaSession({ ...get(), currentTime: t });
   },
   next: () => {
     const n = get().nextIndex(true);
@@ -438,3 +468,34 @@ export const usePlayer = create((set, get) => ({
   importSlskFiles: asyncNoop,
   importIbPlaylist: asyncNoop,
 }));
+
+// Lock Screen / Apple Watch controls
+if (typeof window !== "undefined") {
+  bindMediaSessionHandlers({
+    play: () => usePlayer.getState().setPlaying(true),
+    pause: () => usePlayer.getState().setPlaying(false),
+    stop: () => usePlayer.getState().setPlaying(false),
+    nexttrack: () => {
+      const s = usePlayer.getState();
+      if (typeof s.next === "function") s.next();
+    },
+    previoustrack: () => {
+      const s = usePlayer.getState();
+      if (typeof s.prev === "function") s.prev();
+    },
+    seekto: (time) => {
+      const s = usePlayer.getState();
+      if (typeof s.seek === "function") s.seek(time);
+    },
+    seekbackward: (offset) => {
+      const s = usePlayer.getState();
+      const t = Math.max(0, (s.currentTime || 0) - (offset || 10));
+      if (typeof s.seek === "function") s.seek(t);
+    },
+    seekforward: (offset) => {
+      const s = usePlayer.getState();
+      const t = (s.currentTime || 0) + (offset || 10);
+      if (typeof s.seek === "function") s.seek(t);
+    },
+  });
+}
