@@ -82,7 +82,7 @@ export function IbroadcastPanel() {
 
   const searchLibrary = async (sess: IbSession, q: string) => {
     const data = await searchIbLibraryClient(sess, q, {
-      maxHits: 80,
+      maxHits: 200,
       onProgress: (n) => {
         setFoundCount(n);
         setMessage(`Found ${n} so far for “${q.trim()}”…`);
@@ -116,7 +116,9 @@ export function IbroadcastPanel() {
         const total = data.total;
         const extra = data.truncated ? " (first matches)" : "";
         setMessage(`Found ${total.toLocaleString()} match${total === 1 ? "" : "es"} for “${q}”${extra}.`);
-        setTab("tracks");
+        // Prefer Albums tab when the result spans more than one album (artist searches).
+        const albumIds = new Set((data.tracks || []).map((t) => t.albumId || `${t.album}::${t.artist}`));
+        setTab(albumIds.size > 1 ? "albums" : "tracks");
       })
       .catch((err) => setMessage(errText(err, "Search failed.")))
       .finally(() => setLoadingLib(false));
@@ -330,7 +332,7 @@ export function IbroadcastPanel() {
           Search
         </button>
       </div>
-      <p className="text-xs text-subtle">Search runs in your browser while the library streams. Specific song titles work best on a 600k+ library.</p>
+      <p className="text-xs text-subtle">Search runs in your browser while the library streams. Artist names pull multiple albums; song titles stay specific.</p>
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["tracks", "albums"] as const).map((id) => (
           <button key={id} type="button" onClick={() => setTab(id)} className={"h-8 flex-1 rounded-full text-xs capitalize " + (tab === id ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>
