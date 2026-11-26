@@ -166,7 +166,7 @@ async function handleSearch(request: Request) {
     let artistMap: Record<string, number> = {};
     const hits: Hit[] = [];
     const seen = new Set<string>();
-    const MAX_HITS = 80;
+    const MAX_HITS = 200;
     const MAX_BUF = 8_000_000;
 
     const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
@@ -213,19 +213,20 @@ async function handleSearch(request: Request) {
         }
 
         if (hits.length >= MAX_HITS || seen.has(id)) continue;
-        const title = strAt(row, trackMap.title ?? trackMap.name ?? 2);
-        const genre = strAt(row, trackMap.genre ?? 3);
-        const year = strAt(row, trackMap.year ?? 1).slice(0, 4);
-        const albumId = numAt(row, trackMap.album_id ?? 5);
-        const artistId = numAt(row, trackMap.artist_id ?? 7);
-        const artId = numAt(row, trackMap.artwork_id ?? 6);
-        const file = strAt(row, trackMap.file ?? 16);
-        const path = strAt(row, trackMap.path ?? 12);
+        const tm = Object.keys(trackMap).length ? trackMap : { title: 2, genre: 3, year: 1, album_id: 5, artwork_id: 6, artist_id: 7, path: 12, file: 16, trashed: 10, length: 4, name: 2 };
+        const title = strAt(row, tm.title ?? tm.name ?? 2);
+        const genre = strAt(row, tm.genre ?? 3);
+        const year = strAt(row, tm.year ?? 1).slice(0, 4);
+        const albumId = numAt(row, tm.album_id ?? 5);
+        const artistId = numAt(row, tm.artist_id ?? 7);
+        const artId = numAt(row, tm.artwork_id ?? 6);
+        const file = strAt(row, tm.file ?? 16);
+        const path = strAt(row, tm.path ?? 12);
         const albumName = albums.get(albumId) || "";
         const artistName = artists.get(artistId) || "";
         const hay = [title, artistName, albumName, genre, path, arrRaw].join(" ").toLowerCase();
         if (!hay.includes(q)) continue;
-        const trashedIdx = trackMap.trashed;
+        const trashedIdx = tm.trashed;
         if (trashedIdx != null) {
           const tr = row[trashedIdx];
           if (tr === true || tr === 1 || tr === "1" || tr === "true") continue;
