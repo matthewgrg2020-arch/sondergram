@@ -124,13 +124,31 @@ function authPayload(session: IbSession) {
 
 function resolveHit(hit: PendingHit, artists: Map<string, string>, albums: Map<string, string>): IbTrack {
   const fromPath = namesFromPath(hit.path);
-  const artist = (hit.artistId && artists.get(hit.artistId)) || fromPath.artist || "Unknown artist";
-  const album = (hit.albumId && albums.get(hit.albumId)) || fromPath.album || "Unknown album";
+  let artist = "";
+  if (hit.artistId) {
+    artist = artists.get(String(hit.artistId)) || artists.get(hit.artistId) || "";
+  }
+  if (!artist) artist = fromPath.artist || "";
+  let album = "";
+  if (hit.albumId) {
+    album = albums.get(String(hit.albumId)) || albums.get(hit.albumId) || "";
+  }
+  if (!album) album = fromPath.album || "";
   const title = hit.title && !/^\d{1,3}$/.test(hit.title) ? hit.title : fromPath.title || hit.title || "Untitled";
+  if (!artist && title && fromPath.artist) artist = fromPath.artist;
+  if (!album && title && fromPath.album) album = fromPath.album;
   return {
-    id: hit.id, name: title, artist, album, year: hit.year, genre: hit.genre,
-    file: hit.file, artwork: artworkUrl(hit.artId),
+    id: hit.id,
+    name: title,
+    artist: artist || "Unknown artist",
+    album: album || "Unknown album",
+    year: hit.year,
+    genre: hit.genre,
+    file: hit.file,
+    artwork: artworkUrl(hit.artId),
     length: hit.length > 0 ? hit.length : undefined,
+    albumId: hit.albumId || undefined,
+    artistId: hit.artistId || undefined,
   };
 }
 
@@ -233,18 +251,45 @@ export async function searchIbLibraryClient(
   let artistMap: Record<string, number> = { ...DEFAULT_ARTIST_MAP };
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
+  // Album expansion: when a track/album name matches, include the rest of that album.
+  const matchedAlbumIds = new Set<string>();
+  const albumBuckets = new Map<string, PendingHit[]>();
 
   let artistCursor = 0, albumCursor = 0, trackCursor = 0;
   let artistsStart = -1, albumsStart = -1, tracksStart = -1;
   let mapsReady = false;
 
+  const addPending = (hit: PendingHit) => {
+    if (pending.length >= MAX_HITS || seen.has(hit.id)) return;
+    seen.add(hit.id);
+    pending.push(hit);
+    opts?.onProgress?.(pending.length);
+  };
+
+  const noteAlbum = (albumId: string) => {
+    if (!albumId || matchedAlbumIds.has(albumId)) return;
+    matchedAlbumIds.add(albumId);
+    const bucket = albumBuckets.get(albumId);
+    if (bucket) {
+      for (const h of bucket) addPending(h);
+    }
+  };
+
   const handleArtist = (id: string, row: unknown[]) => {
     const name = strAt(row, artistMap.name ?? 0);
-    if (name && !/^\d+$/.test(name)) artists.set(id, name);
+    if (name && !/^\d+$/.test(name)) {
+      artists.set(String(id), name);
+      artists.set(id, name);
+    }
   };
   const handleAlbum = (id: string, row: unknown[]) => {
     const name = strAt(row, albumMap.name ?? 0);
-    if (name && !/^\d+$/.test(name)) albums.set(id, name);
+    if (name && !/^\d+$/.test(name)) {
+      albums.set(String(id), name);
+      albums.set(id, name);
+      // Album title matches query → expand all of its tracks
+      if (q && name.toLowerCase().includes(q)) noteAlbum(String(id));
+    }
   };
   const handleTrack = (id: string, row: unknown[]) => {
     if (pending.length >= MAX_HITS || seen.has(id)) return;
@@ -258,7 +303,9 @@ export async function searchIbLibraryClient(
     }
     if (!pathVal) {
       for (const cell of row) {
-        if (typeof cell === "string" && /music\//i.test(cell)) { pathVal = cell; break; }
+        if (typeof cell === "string" && (/music\//i.test(cell) || cell.includes("/"))) {
+          if (cell.length > 3 && !/^\/\d+\//.test(cell)) { pathVal = cell; break; }
+        }
       }
     }
     const pathNames = namesFromPath(pathVal);
@@ -276,21 +323,40 @@ export async function searchIbLibraryClient(
       const n = typeof lv === "number" ? lv : Number(lv);
       if (Number.isFinite(n) && n > 0 && n < 36000) lengthSec = Math.round(n);
     }
-    const artistName = (artistId && artists.get(artistId)) || pathNames.artist || "";
-    const albumName = (albumId && albums.get(albumId)) || pathNames.album || "";
-    const hay = [title, artistName, albumName, genre, pathVal, JSON.stringify(row)].join(" ").toLowerCase();
-    if (!hay.includes(q)) return;
+    const artistName = (artistId && (artists.get(String(artistId)) || artists.get(artistId))) || pathNames.artist || "";
+    const albumName = (albumId && (albums.get(String(albumId)) || albums.get(albumId))) || pathNames.album || "";
     const trashedIdx = tm.trashed ?? DEFAULT_TRACK_MAP.trashed;
     if (trashedIdx != null) {
       const tr = row[trashedIdx];
       if (tr === true || tr === 1 || tr === "1" || tr === "true") return;
     }
-    seen.add(id);
-    pending.push({
+    const hit: PendingHit = {
       id, title, genre: genre && !/^\d+$/.test(genre) ? genre : "", year,
       albumId, artistId, artId, file, path: pathVal, length: lengthSec,
-    });
-    opts?.onProgress?.(pending.length);
+    };
+    // Keep a small per-album buffer so tracks seen *before* the album matched still expand.
+    if (albumId) {
+      const bucket = albumBuckets.get(albumId) || [];
+      if (bucket.length < 60) {
+        bucket.push(hit);
+        albumBuckets.set(albumId, bucket);
+      }
+      // Cap total buffered albums to limit memory on huge libraries
+      if (albumBuckets.size > 400) {
+        const first = albumBuckets.keys().next().value;
+        if (first && !matchedAlbumIds.has(first)) albumBuckets.delete(first);
+      }
+    }
+    if (albumId && matchedAlbumIds.has(albumId)) {
+      addPending(hit);
+      return;
+    }
+    const hay = [title, artistName, albumName, genre, pathVal].join(" ").toLowerCase();
+    const titleMatch = hay.includes(q);
+    const albumMatch = Boolean(albumName && albumName.toLowerCase().includes(q));
+    if (!titleMatch && !albumMatch) return;
+    if (albumId && (albumMatch || titleMatch)) noteAlbum(albumId);
+    addPending(hit);
   };
 
   const processBuffer = () => {
