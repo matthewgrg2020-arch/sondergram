@@ -20,6 +20,32 @@ export type Track = {
 const playUrls = new Map();
 const asyncNoop = async () => 0;
 
+const EQ_SETTINGS_KEY = "sondergram-eq-settings";
+
+function loadEqSettings() {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(EQ_SETTINGS_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function persistEqSettings(partial) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const prev = loadEqSettings() || {};
+    const next = { ...prev, ...partial, savedAt: Date.now() };
+    localStorage.setItem(EQ_SETTINGS_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+const savedEq = loadEqSettings();
+
 function storedToTrack(row) {
   let url = "";
   if (row.soulseekId) {
@@ -51,7 +77,10 @@ function storedToTrack(row) {
 export const usePlayer = create((set, get) => ({
   tracks: [], index: -1, ready: false, playing: false, currentTime: 0, duration: 0,
   volume: 0.85, muted: false, shuffle: false, repeat: "off",
-  eq: [...FLAT_EQ], preamp: 0, presetId: "flat", customPresets: [],
+  eq: Array.isArray(savedEq?.eq) && savedEq.eq.length ? savedEq.eq.slice() : [...FLAT_EQ],
+  preamp: typeof savedEq?.preamp === "number" ? savedEq.preamp : 0,
+  presetId: typeof savedEq?.presetId === "string" ? savedEq.presetId : "flat",
+  customPresets: Array.isArray(savedEq?.customPresets) ? savedEq.customPresets : [],
   bassLock: false, remaster: "off", remasterAmt: 0.7, spatial: "off", spatialAmount: 0.7,
   radio: false, radioRecent: [], upNext: [], notice: null, crossfade: 4,
   sleep: null, sleepUntil: null, stopAfter: "off", recent: [], plays: {}, positions: {},
@@ -287,9 +316,9 @@ export const usePlayer = create((set, get) => ({
   setMuted: (muted) => set({ muted }),
   setShuffle: (shuffle) => set({ shuffle }),
   setRepeat: (repeat) => set({ repeat }),
-  setEq: (eq) => set({ eq }),
-  setPreamp: (preamp) => set({ preamp }),
-  setPresetId: (presetId) => set({ presetId }),
+  setEq: (eq) => { set({ eq }); persistEqSettings({ eq }); },
+  setPreamp: (preamp) => { set({ preamp }); persistEqSettings({ preamp }); },
+  setPresetId: (presetId) => { set({ presetId }); persistEqSettings({ presetId }); },
   setSpatial: (spatial) => set({ spatial }),
   setSpatialAmount: (spatialAmount) => set({ spatialAmount }),
   setRemaster: (remaster) => set({ remaster }),
@@ -304,22 +333,43 @@ export const usePlayer = create((set, get) => ({
   setEqBand: (i, value) => set((s) => {
     const eq = Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ];
     if (i >= 0 && i < eq.length) eq[i] = value;
-    return { eq, presetId: "custom" };
+    const next = { eq, presetId: "custom" };
+    persistEqSettings(next);
+    return next;
   }),
-  applyPreset: (presetId, gains, preamp) => set({
-    presetId: presetId || "custom",
-    eq: Array.isArray(gains) ? gains.slice() : [...FLAT_EQ],
-    preamp: typeof preamp === "number" ? preamp : 0,
-  }),
-  saveCustomPreset: (label) => set((s) => {
+  applyPreset: (presetId, gains, preamp) => {
+    const next = {
+      presetId: presetId || "custom",
+      eq: Array.isArray(gains) ? gains.slice() : [...FLAT_EQ],
+      preamp: typeof preamp === "number" ? preamp : 0,
+    };
+    set(next);
+    persistEqSettings(next);
+  },
+  saveCustomPreset: (label) => {
+    const s = get();
+    const name = String(label || "").trim() || "Custom";
     const id = `custom-${Date.now()}`;
-    const row = { id, label: label || "Custom", gains: (s.eq || []).slice(), preamp: s.preamp || 0 };
-    return { customPresets: [...(s.customPresets || []), row], presetId: id };
-  }),
-  deleteCustomPreset: (id) => set((s) => ({
-    customPresets: (s.customPresets || []).filter((p) => p.id !== id),
-    presetId: s.presetId === id ? "flat" : s.presetId,
-  })),
+    const row = {
+      id,
+      label: name,
+      gains: Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ],
+      preamp: typeof s.preamp === "number" ? s.preamp : 0,
+    };
+    const customPresets = [...(s.customPresets || []), row];
+    const next = { customPresets, presetId: id };
+    set(next);
+    persistEqSettings({ customPresets, presetId: id, eq: row.gains, preamp: row.preamp });
+    get().flash(`Saved preset "${name}"`);
+    return id;
+  },
+  deleteCustomPreset: (id) => {
+    const s = get();
+    const customPresets = (s.customPresets || []).filter((p) => p.id !== id);
+    const presetId = s.presetId === id ? "flat" : s.presetId;
+    set({ customPresets, presetId });
+    persistEqSettings({ customPresets, presetId });
+  },
   toggleRadio: () => set((s) => ({ radio: !s.radio })),
   setBalance: (balance) => set({ balance }),
   setViz: (viz) => set({ viz }),
