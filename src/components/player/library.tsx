@@ -28,6 +28,40 @@ function shuffleList(ids: string[]) {
   return list;
 }
 
+function similarAlbums(album: { key: string; title: string; artist: string; genre: string; tags: string[] }, all: ReturnType<typeof groupAlbums>, limit = 8) {
+  const genreParts = new Set(
+    String(album.genre || "")
+      .split(/[/|,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const tags = new Set((album.tags || []).map((t) => String(t).toLowerCase()).filter(Boolean));
+  const artistKey = (album.artist || "").trim().toLowerCase();
+  const titleKey = (album.title || "").trim().toLowerCase();
+  const scored = all
+    .filter((a) => a.key !== album.key)
+    .map((a) => {
+      let score = 0;
+      const aGenre = new Set(
+        String(a.genre || "")
+          .split(/[/|,;]+/)
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
+      );
+      const aTags = new Set((a.tags || []).map((t) => String(t).toLowerCase()).filter(Boolean));
+      for (const g of genreParts) if (aGenre.has(g)) score += 3;
+      for (const t of tags) if (aTags.has(t)) score += 2;
+      if (artistKey && (a.artist || "").trim().toLowerCase() === artistKey) score += 4;
+      const tokens = titleKey.split(/\s+/).filter((w) => w.length > 3);
+      const aTitle = (a.title || "").toLowerCase();
+      for (const w of tokens) if (aTitle.includes(w)) score += 1;
+      return { a, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((x, y) => y.score - x.score || x.a.title.localeCompare(y.a.title));
+  return scored.slice(0, limit).map((x) => x.a);
+}
+
 export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?: string | null } = {}) {
   const tracks = usePlayer((s) => s.tracks);
   const playIds = usePlayer((s) => s.playIds);
@@ -42,6 +76,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const removeTracks = usePlayer((s) => s.removeTracks);
   const searchAlbumOnline = usePlayer((s) => s.searchAlbumOnline);
   const applyAlbumHit = usePlayer((s) => s.applyAlbumHit);
+  const flash = usePlayer((s) => s.flash);
   const inputRef = useRef<HTMLInputElement>(null);
   const view = useLibraryView();
   const [tab, setTab] = useState<Tab>(startTab ?? view.tab);
@@ -123,8 +158,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
 
   const songMenu = (id: string) => [
     { label: "Play", onClick: () => playRest(id) },
-    { label: "Play next", onClick: () => queueNext(id) },
-    { label: "Add to queue", onClick: () => queueLast(id) },
+    { label: "Play next", onClick: () => { queueNext(id); flash?.("Playing next"); } },
+    { label: "Add to queue", onClick: () => { queueLast(id); flash?.("Added to queue"); } },
     { label: "Add to playlist", onClick: () => setPlaylistIds([id]) },
     { label: "Remove", onClick: () => removeTracks([id]), danger: true },
   ];
@@ -234,18 +269,38 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">Tracks</h3>
           <div className="divide-y divide-border">
             {songsOf(album.trackIds).map((t) => (
-              <button key={t.id} type="button" onClick={() => playRest(t.id)} className="flex w-full items-center gap-3 py-2 text-left hover:opacity-90">
-                <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
-                  {t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}
-                </div>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{t.name}</span>
-                  <span className="block truncate text-xs text-muted">{t.artist}</span>
-                </span>
-                {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
-              </button>
+              <div key={t.id} className="flex items-center gap-1 py-1.5">
+                <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left hover:opacity-90">
+                  <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
+                    {t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{t.name}</span>
+                    <span className="block truncate text-xs text-muted">{t.artist}</span>
+                  </span>
+                  {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
+                </button>
+                <MoreMenu label="Song options" tone="plain" items={songMenu(t.id)} />
+              </div>
             ))}
           </div>
+
+          {similarAlbums(album, albums).length ? (
+            <div className="mt-8">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-subtle">Similar albums</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                {similarAlbums(album, albums).map((item) => (
+                  <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
+                    <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">
+                      {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
+                    </div>
+                    <p className="mt-1.5 truncate text-sm font-medium">{item.title}</p>
+                    <p className="truncate text-xs text-muted">{item.artist}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {albumHits !== null ? (
             <OnlineMatchesSheet
@@ -286,10 +341,13 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       ) : tab === "songs" || tab === "liked" || tab === "added" ? (
         <div className="divide-y divide-border">
           {(tab === "liked" ? tracks.filter((t) => t.liked) : tab === "added" ? [...tracks].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)) : tracks).map((t) => (
-            <button key={t.id} type="button" onClick={() => playRest(t.id)} className="flex w-full items-center gap-3 py-2 text-left">
-              <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
-              <span className="min-w-0 flex-1"><span className="block truncate text-sm">{t.name}</span><span className="block truncate text-xs text-muted">{t.artist}</span></span>
-            </button>
+            <div key={t.id} className="flex items-center gap-1 py-1.5">
+              <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left">
+                <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm">{t.name}</span><span className="block truncate text-xs text-muted">{t.artist}</span></span>
+              </button>
+              <MoreMenu label="Song options" tone="plain" items={songMenu(t.id)} />
+            </div>
           ))}
         </div>
       ) : (
