@@ -186,12 +186,20 @@ export function PlayerApp() {
     }
     const onVis = () => {
       setAudioSessionPlayback();
-      const hidden = document.visibilityState === "hidden";
       const state = usePlayer.getState();
       if (!state.playing || isYoutubePlayback(state.tracks[state.index])) return;
-      if (hidden) { setBackgroundOutput(true); void getEngine().ctx.resume().catch(() => undefined); return; }
-      setBackgroundOutput(false);
-      void resumeEngine();
+      // Do not swap graph ↔ direct on background/foreground.
+      // That was restarting the *previous* track still loaded on the other element.
+      const eng = getEngine();
+      void eng.ctx.resume().catch(() => undefined);
+      const out = outputAudio();
+      const other = out === eng.audio ? eng.bgAudio : eng.audio;
+      if (other) {
+        try { other.pause(); } catch {}
+        other.muted = true;
+        other.volume = 0;
+      }
+      if (out && out.paused) void out.play().catch(() => undefined);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
