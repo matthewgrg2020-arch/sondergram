@@ -56,6 +56,24 @@ function numAt(row: unknown[], idx: number | undefined): string {
   return s && s !== "0" ? s : "";
 }
 
+function queryTokens(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/[\s\-_./+,]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+}
+
+/** True if every query token appears in text, or the full query is a substring. */
+function textMatches(text: string, q: string): boolean {
+  const t = (text || "").toLowerCase().trim();
+  if (!t || !q) return false;
+  if (t.includes(q)) return true;
+  const toks = queryTokens(q);
+  if (!toks.length) return false;
+  return toks.every((tok) => t.includes(tok));
+}
+
 const DEFAULT_TRACK_MAP: Record<string, number> = {
   track: 0, year: 1, title: 2, genre: 3, length: 4, album_id: 5, artwork_id: 6,
   artist_id: 7, enid: 8, uploaded_on: 9, trashed: 10, size: 11, path: 12, uid: 13,
@@ -251,7 +269,7 @@ export async function searchIbLibraryClient(
   let artistMap: Record<string, number> = { ...DEFAULT_ARTIST_MAP };
   const pending: PendingHit[] = [];
   const seen = new Set<string>();
-  // Album expansion: when a track/album name matches, include the rest of that album.
+  // Album expansion only when the *album name* matches the query.
   const matchedAlbumIds = new Set<string>();
   const albumBuckets = new Map<string, PendingHit[]>();
 
@@ -287,8 +305,8 @@ export async function searchIbLibraryClient(
     if (name && !/^\d+$/.test(name)) {
       albums.set(String(id), name);
       albums.set(id, name);
-      // Album title matches query → expand all of its tracks
-      if (q && name.toLowerCase().includes(q)) noteAlbum(String(id));
+      // Only expand whole album when the *album name* itself matches the query.
+      if (q && textMatches(name, q)) noteAlbum(String(id));
     }
   };
   const handleTrack = (id: string, row: unknown[]) => {
@@ -334,28 +352,30 @@ export async function searchIbLibraryClient(
       id, title, genre: genre && !/^\d+$/.test(genre) ? genre : "", year,
       albumId, artistId, artId, file, path: pathVal, length: lengthSec,
     };
-    // Keep a small per-album buffer so tracks seen *before* the album matched still expand.
+    // Buffer tracks per album so album-name matches can expand tracks seen earlier in the stream.
     if (albumId) {
       const bucket = albumBuckets.get(albumId) || [];
       if (bucket.length < 60) {
         bucket.push(hit);
         albumBuckets.set(albumId, bucket);
       }
-      // Cap total buffered albums to limit memory on huge libraries
       if (albumBuckets.size > 400) {
         const first = albumBuckets.keys().next().value;
         if (first && !matchedAlbumIds.has(first)) albumBuckets.delete(first);
       }
     }
+    // Already expanding this album (album name matched the query)
     if (albumId && matchedAlbumIds.has(albumId)) {
       addPending(hit);
       return;
     }
-    const hay = [title, artistName, albumName, genre, pathVal].join(" ").toLowerCase();
-    const titleMatch = hay.includes(q);
-    const albumMatch = Boolean(albumName && albumName.toLowerCase().includes(q));
-    if (!titleMatch && !albumMatch) return;
-    if (albumId && (albumMatch || titleMatch)) noteAlbum(albumId);
+    // Match only against title / artist / album — never path or raw row (too noisy).
+    const titleMatch = textMatches(title, q);
+    const artistMatch = textMatches(artistName, q);
+    const albumMatch = textMatches(albumName, q);
+    if (!titleMatch && !artistMatch && !albumMatch) return;
+    // Expand full album only when album name matches — not for a single song title hit.
+    if (albumId && albumMatch) noteAlbum(albumId);
     addPending(hit);
   };
 
