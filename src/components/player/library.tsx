@@ -208,7 +208,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
         {list.map((item) => (
           <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
             <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">{item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
-            {titles === "on" ? (<><p className="mt-2 truncate text-sm">{item.title}</p><p className="truncate text-xs text-muted">{item.artist}{item.discCount > 1 ? ` · ${item.discCount} discs` : ""}</p></>) : null}
+            {titles === "on" ? (<><p className="mt-2 truncate text-sm">{item.title}</p><p className="truncate text-xs text-muted">{item.artist} · {item.trackIds.length}{item.discCount > 1 ? ` · ${item.discCount} discs` : ""}</p></>) : null}
           </button>
         ))}
       </div>
@@ -267,26 +267,6 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                   try { const hits = await searchAlbumOnline(album.artist, album.title); if (mine !== lookGen.current) return; setAlbumHits(Array.isArray(hits) ? hits : []); }
                   finally { if (mine === lookGen.current) setLooking(false); }
                 }} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><Globe className="size-4" strokeWidth={1.75} />{looking ? "Cancel" : "Look up online"}</button>
-                <button type="button" onClick={async () => {
-                  if (lookingGenre) { setLookingGenre(false); return; }
-                  setLookingGenre(true);
-                  try {
-                    const hits = await searchAlbumOnline(album.artist, album.title);
-                    const list = Array.isArray(hits) ? hits : [];
-                    const best = list.find((h) => h && h.genre) || list[0];
-                    const genre = refineGenre(best?.genre || "", album.artist, album.title, best?.description || "");
-                    if (genre) {
-                      patchAlbumMeta(album.trackIds, { genre });
-                      flash?.(`Genre set to ${genre}`);
-                    } else {
-                      flash?.("No genre found online");
-                    }
-                  } catch {
-                    flash?.("Could not look up genre");
-                  } finally {
-                    setLookingGenre(false);
-                  }
-                }} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><Globe className="size-4" strokeWidth={1.75} />{lookingGenre ? "Looking…" : "Look up genre"}</button>
                 <button type="button" onClick={() => setAlbumEdit((v) => !v)} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><Pencil className="size-4" strokeWidth={1.75} />{albumEdit ? "Close edit" : "Edit album"}</button>
                 <button type="button" onClick={() => { setAlbumEdit(true); setTimeout(() => document.getElementById("merge-albums")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><GitMerge className="size-4" strokeWidth={1.75} />Merge albums</button>
                 <button type="button" onClick={() => {
@@ -328,17 +308,6 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     const next = e.target.value.trim(); if (next === (album.year || "")) return;
                     patchAlbumMeta(album.trackIds, { year: next }); flash?.("Year updated");
                   }} /></label>
-                <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs uppercase tracking-widest text-subtle">Genre</span>
-                  <input key={`genre-${album.key}-${album.genre || ""}`} type="text" defaultValue={album.genre || ""} placeholder="Death Metal, Synth Funk…" className="h-10 w-full rounded-xl bg-surface px-3 text-sm outline-none ring-1 ring-border focus:ring-accent" onBlur={(e) => {
-                    const next = e.target.value.trim(); if (next === (album.genre || "")) return;
-                    patchAlbumMeta(album.trackIds, { genre: next }); flash?.("Genre updated");
-                  }} />
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {["Death Metal", "Black Metal", "Doom Metal", "Synth Funk", "G-Funk", "Boom Bap", "Neo-Soul", "Chopped & Screwed", "Trip Hop", "Industrial"].map((g) => (
-                      <button key={g} type="button" onClick={() => { patchAlbumMeta(album.trackIds, { genre: g }); flash?.(`Genre set to ${g}`); }} className="rounded-full bg-surface px-2.5 py-1 text-[11px] text-muted hover:text-fg">{g}</button>
-                    ))}
-                  </div>
-                </label>
               </div>
               <div id="merge-albums" className="border-t border-border pt-4">
                 <p className="mb-1 text-sm font-semibold">Merge albums</p>
@@ -380,11 +349,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <div key={`disc-${disc}`}>
                 {album.discCount > 1 ? <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">Disc {disc}</p> : null}
                 <div className="divide-y divide-border">
-                  {discTracks.map((t) => (
+                  {discTracks.map((t, i) => (
                     <div key={t.id} className="flex items-center gap-1 py-1.5">
                       <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left hover:opacity-90">
                         <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
-                        <span className="min-w-0 flex-1"><span className="block truncate text-sm">{t.trackNo ? <span className="mr-2 tabular-nums text-subtle">{t.trackNo}</span> : null}{t.name}</span><span className="block truncate text-xs text-muted">{t.artist}</span></span>
+                        <span className="w-7 shrink-0 text-right text-xs tabular-nums text-subtle">{t.trackNo && t.trackNo > 0 ? t.trackNo : i + 1}</span>
+                        <span className="min-w-0 flex-1"><span className="block truncate text-sm">{t.name}</span><span className="block truncate text-xs text-muted">{t.artist}</span></span>
                         {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
                       </button>
                       <button type="button" aria-label={t.liked ? "Unlike" : "Like"} onClick={() => toggleLike(t.id)} className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-white/10"><Heart className={cn("size-4", t.liked && "fill-hot text-hot")} strokeWidth={1.75} /></button>
