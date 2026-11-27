@@ -5,12 +5,14 @@ export type AccentId = "apple" | "violet" | "ocean" | "mint" | "amber" | "rose" 
 export type BgId =
   | "default"
   | "midnight"
+  | "charcoal"
   | "slate"
+  | "navy"
   | "forest"
-  | "plum"
-  | "espresso"
-  | "sand"
-  | "ice";
+  | "wine"
+  | "cream"
+  | "paper"
+  | "lavender";
 
 export type AccentPreset = {
   id: AccentId;
@@ -18,22 +20,19 @@ export type AccentPreset = {
   color: string;
 };
 
-type BgTone = {
-  bg: string;
-  surface: string;
-  raised: string;
-  fg: string;
-  muted: string;
-  subtle: string;
-};
-
 export type BgPreset = {
   id: BgId;
   label: string;
-  /** Swatch color shown in the picker */
   swatch: string;
-  dark: BgTone;
-  light: BgTone;
+  /** When set, overrides page surfaces for the whole app */
+  tokens?: {
+    bg: string;
+    surface: string;
+    raised: string;
+    fg: string;
+    muted: string;
+    subtle: string;
+  };
 };
 
 export const ACCENT_PRESETS: AccentPreset[] = [
@@ -47,67 +46,131 @@ export const ACCENT_PRESETS: AccentPreset[] = [
 ];
 
 export const BG_PRESETS: BgPreset[] = [
-  {
-    id: "default",
-    label: "Default",
-    swatch: "#1c1c1e",
-    dark: { bg: "#121212", surface: "#1c1c1e", raised: "#2c2c2e", fg: "#f5f5f7", muted: "#a1a1a6", subtle: "#6e6e73" },
-    light: { bg: "#f5f5f7", surface: "#ffffff", raised: "#e8e8ed", fg: "#1d1d1f", muted: "#6e6e73", subtle: "#86868b" },
-  },
+  { id: "default", label: "Default", swatch: "#121212" },
   {
     id: "midnight",
     label: "Midnight",
-    swatch: "#0b1220",
-    dark: { bg: "#070b14", surface: "#0f172a", raised: "#1e293b", fg: "#e2e8f0", muted: "#94a3b8", subtle: "#64748b" },
-    light: { bg: "#e8eef8", surface: "#f4f7fc", raised: "#d5e0f0", fg: "#0f172a", muted: "#475569", subtle: "#64748b" },
+    swatch: "#000000",
+    tokens: {
+      bg: "#000000",
+      surface: "#0a0a0a",
+      raised: "#1a1a1a",
+      fg: "#f5f5f7",
+      muted: "#a1a1a6",
+      subtle: "#6e6e73",
+    },
+  },
+  {
+    id: "charcoal",
+    label: "Charcoal",
+    swatch: "#1c1c1e",
+    tokens: {
+      bg: "#1c1c1e",
+      surface: "#2c2c2e",
+      raised: "#3a3a3c",
+      fg: "#f5f5f7",
+      muted: "#a1a1a6",
+      subtle: "#8e8e93",
+    },
   },
   {
     id: "slate",
     label: "Slate",
     swatch: "#1e293b",
-    dark: { bg: "#0f1419", surface: "#1a222c", raised: "#2a3441", fg: "#e8eef4", muted: "#9aa8b5", subtle: "#6b7a88" },
-    light: { bg: "#eef1f4", surface: "#ffffff", raised: "#dde3ea", fg: "#15202b", muted: "#5b6b79", subtle: "#7a8a98" },
+    tokens: {
+      bg: "#0f172a",
+      surface: "#1e293b",
+      raised: "#334155",
+      fg: "#f8fafc",
+      muted: "#94a3b8",
+      subtle: "#64748b",
+    },
+  },
+  {
+    id: "navy",
+    label: "Navy",
+    swatch: "#0b1c2d",
+    tokens: {
+      bg: "#07131f",
+      surface: "#0b1c2d",
+      raised: "#132a40",
+      fg: "#e8f1fa",
+      muted: "#8eaccd",
+      subtle: "#5c7a99",
+    },
   },
   {
     id: "forest",
     label: "Forest",
-    swatch: "#0f2419",
-    dark: { bg: "#0a1610", surface: "#12241a", raised: "#1c3326", fg: "#e6f2ea", muted: "#95b5a3", subtle: "#678f78" },
-    light: { bg: "#e9f2ec", surface: "#f5faf7", raised: "#d4e6da", fg: "#13241a", muted: "#4d6b59", subtle: "#6b8a75" },
+    swatch: "#0f1f17",
+    tokens: {
+      bg: "#0a1610",
+      surface: "#0f1f17",
+      raised: "#1a2e24",
+      fg: "#e8f5ee",
+      muted: "#8fbc9f",
+      subtle: "#5d8a6c",
+    },
   },
   {
-    id: "plum",
-    label: "Plum",
-    swatch: "#1f1430",
-    dark: { bg: "#120c1c", surface: "#1c1428", raised: "#2c213d", fg: "#f0eaf8", muted: "#b0a0c4", subtle: "#7d6e92" },
-    light: { bg: "#f1ebf7", surface: "#faf7fd", raised: "#e2d8ef", fg: "#1a1226", muted: "#65567a", subtle: "#85769a" },
+    id: "wine",
+    label: "Wine",
+    swatch: "#1a0f14",
+    tokens: {
+      bg: "#120a0e",
+      surface: "#1a0f14",
+      raised: "#2a1820",
+      fg: "#f8eef2",
+      muted: "#c49aad",
+      subtle: "#8a6474",
+    },
   },
   {
-    id: "espresso",
-    label: "Espresso",
-    swatch: "#2a1d14",
-    dark: { bg: "#14100c", surface: "#221a14", raised: "#33281f", fg: "#f3ece4", muted: "#b5a594", subtle: "#847566" },
-    light: { bg: "#f4efe9", surface: "#fbf8f4", raised: "#e8ddd2", fg: "#1f1710", muted: "#6e5f52", subtle: "#8c7c6d" },
+    id: "cream",
+    label: "Cream",
+    swatch: "#f5f0e8",
+    tokens: {
+      bg: "#f5f0e8",
+      surface: "#fffdf8",
+      raised: "#ebe4d8",
+      fg: "#1d1d1f",
+      muted: "#6e6e73",
+      subtle: "#86868b",
+    },
   },
   {
-    id: "sand",
-    label: "Sand",
-    swatch: "#c4b5a0",
-    dark: { bg: "#1a1712", surface: "#262119", raised: "#3a3228", fg: "#f5f0e6", muted: "#b8ae9c", subtle: "#8a8070" },
-    light: { bg: "#f3efe6", surface: "#faf7f1", raised: "#e6ded0", fg: "#2a241c", muted: "#6e6558", subtle: "#8c8272" },
+    id: "paper",
+    label: "Paper",
+    swatch: "#f7f7f5",
+    tokens: {
+      bg: "#f7f7f5",
+      surface: "#ffffff",
+      raised: "#ebebe8",
+      fg: "#1d1d1f",
+      muted: "#6e6e73",
+      subtle: "#86868b",
+    },
   },
   {
-    id: "ice",
-    label: "Ice",
-    swatch: "#c8d9e6",
-    dark: { bg: "#0c1218", surface: "#141c24", raised: "#222e3a", fg: "#e8f0f6", muted: "#9db0c0", subtle: "#6d8294" },
-    light: { bg: "#eaf2f7", surface: "#f6fafc", raised: "#d5e4ee", fg: "#12202a", muted: "#4f6678", subtle: "#70899c" },
+    id: "lavender",
+    label: "Lavender",
+    swatch: "#f0eef6",
+    tokens: {
+      bg: "#efeaf8",
+      surface: "#f7f5fc",
+      raised: "#e2dcf0",
+      fg: "#1d1d1f",
+      muted: "#6e6e73",
+      subtle: "#86868b",
+    },
   },
 ];
 
 const THEME_KEY = "sondergram:theme";
 const ACCENT_KEY = "sondergram:accent";
 const BG_KEY = "sondergram:bg";
+
+const SURFACE_VARS = ["--sg-bg", "--sg-surface", "--sg-raised", "--sg-fg", "--sg-muted", "--sg-subtle"] as const;
 
 export function loadTheme(): Theme {
   if (typeof window === "undefined") return "dark";
@@ -168,26 +231,36 @@ export function applyAccent(id: AccentId) {
   }
 }
 
-/** Applies background palette to the whole page (html/body/sidebar/panels). */
-export function applyBg(id: BgId, theme?: Theme) {
+export function applyBackground(id: BgId) {
   if (typeof document === "undefined") return;
-  const mode = theme ?? loadTheme();
-  const tone = bgPreset(id)[mode];
   const root = document.documentElement;
+  const preset = bgPreset(id);
   root.dataset.bg = id;
-  root.style.setProperty("--sg-bg", tone.bg);
-  root.style.setProperty("--sg-surface", tone.surface);
-  root.style.setProperty("--sg-raised", tone.raised);
-  root.style.setProperty("--sg-fg", tone.fg);
-  root.style.setProperty("--sg-muted", tone.muted);
-  root.style.setProperty("--sg-subtle", tone.subtle);
+
+  if (!preset.tokens) {
+    // Default: clear overrides so CSS theme (dark/light) owns the page
+    for (const key of SURFACE_VARS) root.style.removeProperty(key);
+  } else {
+    const t = preset.tokens;
+    root.style.setProperty("--sg-bg", t.bg);
+    root.style.setProperty("--sg-surface", t.surface);
+    root.style.setProperty("--sg-raised", t.raised);
+    root.style.setProperty("--sg-fg", t.fg);
+    root.style.setProperty("--sg-muted", t.muted);
+    root.style.setProperty("--sg-subtle", t.subtle);
+  }
+
   try {
     localStorage.setItem(BG_KEY, id);
   } catch {
     /* quota */
   }
+
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tone.bg);
+  if (meta) {
+    const color = preset.tokens?.bg || (loadTheme() === "light" ? "#f5f5f7" : "#000000");
+    meta.setAttribute("content", color);
+  }
 }
 
 export function applyTheme(theme: Theme) {
@@ -199,12 +272,8 @@ export function applyTheme(theme: Theme) {
     /* quota */
   }
   try {
-    applyBg(loadBg(), theme);
-  } catch {
-    /* ignore */
-  }
-  try {
     applyAccent(loadAccent());
+    applyBackground(loadBg());
   } catch {
     /* ignore */
   }
