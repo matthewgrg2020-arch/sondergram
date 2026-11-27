@@ -127,6 +127,25 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
     return list;
   }, [albums]);
 
+  const years = useMemo(() => {
+    const map = new Map<string, { name: string; albums: typeof albums; trackCount: number }>();
+    for (const a of albums) {
+      const name = (a.year || "").trim() || "Unknown";
+      const row = map.get(name);
+      if (row) {
+        row.albums.push(a);
+        row.trackCount += a.trackIds.length;
+      } else {
+        map.set(name, { name, albums: [a], trackCount: a.trackIds.length });
+      }
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.name === "Unknown") return 1;
+      if (b.name === "Unknown") return -1;
+      return b.name.localeCompare(a.name);
+    });
+  }, [albums]);
+
   const songsOf = (ids: string[]) =>
     ids.map((id) => tracks.find((t) => t.id === id)).filter(Boolean) as Track[];
 
@@ -173,29 +192,29 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
 
   if (tracks.length === 0) {
     return (
-      <section className="panel flex min-h-0 flex-1 flex-col p-4 sm:p-5">
-        <h2 className="text-3xl font-semibold tracking-tight">Library</h2>
-        <p className="mt-2 text-sm text-muted">Add music from your phone or computer to get started.</p>
-        <label className="relative mt-4 inline-flex h-10 w-fit cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-accent px-4 text-sm font-medium text-accent-fg">
-          <Plus className="size-4" strokeWidth={1.75} />
-          Add files
-          <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} multiple className="absolute inset-0 cursor-pointer opacity-0" onChange={(e) => { if (e.target.files) addFiles(Array.from(e.target.files)); e.target.value = ""; }} />
-        </label>
+      <section className="panel flex min-h-0 flex-1 flex-col items-center justify-center p-6 text-center">
+        <h2 className="text-2xl font-semibold tracking-tight">Library</h2>
+        <p className="mt-2 max-w-sm text-sm text-muted">Add files or import from iBroadcast to build your library.</p>
+        <button type="button" onClick={() => inputRef.current?.click()} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg">
+          <Plus className="size-4" /> Add music
+        </button>
+        <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) void addFiles(Array.from(files)); e.target.value = ""; }} />
       </section>
     );
   }
 
-  const album = albums.find((a) => a.key === openAlbum) ?? null;
+  const album = openAlbum ? albums.find((a) => a.key === openAlbum) : null;
   const artist = openArtist ? artists.find((a) => a.name === openArtist) : null;
 
   const AlbumGrid = ({ list }: { list: typeof albums }) => (
-    <div className={cn("grid gap-3", size === "s" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-6" : size === "m" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3")}>
-      {list.map((item) => (
-        <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
-          <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">
-            {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
+    <div className={cn("grid gap-3", size === "sm" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-5" : size === "lg" ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4")}>
+      {list.map((a) => (
+        <button key={a.key} type="button" onClick={() => setOpenAlbum(a.key)} className="group text-left">
+          <div className="aspect-square overflow-hidden rounded-xl bg-raised ring-1 ring-border">
+            {a.coverUrl ? <img src={proxyCoverUrl(a.coverUrl)} alt="" className="size-full object-cover transition group-hover:scale-[1.02]" /> : <div className="flex size-full items-center justify-center text-xs text-subtle">No art</div>}
           </div>
-          {titles === "on" ? (<><p className="mt-2 truncate text-sm">{item.title}</p><p className="truncate text-xs text-muted">{item.artist}</p></>) : null}
+          <p className="mt-2 truncate text-sm font-medium">{a.title}</p>
+          <p className="truncate text-xs text-muted">{titles === "artist" ? a.artist : a.genre || a.artist}</p>
         </button>
       ))}
     </div>
@@ -232,11 +251,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               album={album.title}
               trackIds={album.trackIds}
               onFile={(file) => setCover(album.trackIds, file)}
-              onRemoveAlbum={() => { removeTracks(album.trackIds); setOpenAlbum(null); }}
             />
-            <div className="min-w-0 space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => playIds(album.trackIds)} className="h-10 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg">Play</button>
+            <div className="flex flex-col justify-between gap-4">
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => playIds(album.trackIds)} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-semibold text-accent-fg">
+                  Play
+                </button>
                 <ShuffleBtn ids={album.trackIds} />
                 <button
                   type="button"
@@ -261,7 +281,37 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <div>
                 <h3 className="text-2xl font-semibold tracking-tight">{album.title}</h3>
                 <p className="text-sm text-muted">{album.artist}</p>
-                <p className="mt-1 text-xs text-subtle">{[album.year, `${album.trackIds.length} songs`, formatDuration(albumDuration(album.trackIds))].filter(Boolean).join(" · ")}</p>
+                <p className="mt-1 text-xs text-subtle">{[album.year, album.genre, `${album.trackIds.length} songs`, formatDuration(albumDuration(album.trackIds))].filter(Boolean).join(" · ")}</p>
+                <div className="mt-3 max-w-md space-y-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs uppercase tracking-widest text-subtle">Genre</span>
+                    <input
+                      key={`genre-${album.key}-${album.genre || ""}`}
+                      type="text"
+                      defaultValue={album.genre || ""}
+                      placeholder="Soul, Jazz, R&B…"
+                      className="h-10 w-full rounded-xl bg-raised px-3 text-sm outline-none ring-1 ring-border focus:ring-accent"
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (next !== (album.genre || "").trim()) {
+                          patchAlbumMeta(album.trackIds, { genre: next });
+                          flash?.("Genre updated");
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </label>
+                  <TagEditor
+                    tags={album.tags || []}
+                    onChange={(tags) => {
+                      patchAlbumMeta(album.trackIds, { tags });
+                      flash?.("Tags updated");
+                    }}
+                    placeholder="Add a tag"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -288,21 +338,11 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           {similarAlbums(album, albums).length ? (
             <div className="mt-8">
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-subtle">Similar albums</h3>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                {similarAlbums(album, albums).map((item) => (
-                  <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
-                    <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">
-                      {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
-                    </div>
-                    <p className="mt-1.5 truncate text-sm font-medium">{item.title}</p>
-                    <p className="truncate text-xs text-muted">{item.artist}</p>
-                  </button>
-                ))}
-              </div>
+              <AlbumGrid list={similarAlbums(album, albums)} />
             </div>
           ) : null}
 
-          {albumHits !== null ? (
+          {albumHits ? (
             <OnlineMatchesSheet
               hits={albumHits}
               applying={applying}
@@ -327,6 +367,22 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           <h3 className="mb-4 text-2xl font-semibold tracking-tight">{artist.name}</h3>
           <AlbumGrid list={artist.albums} />
         </div>
+      ) : openGenre ? (
+        <div>
+          <button type="button" onClick={() => setOpenGenre(null)} className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+            <ChevronLeft className="size-4" strokeWidth={1.75} /> Back
+          </button>
+          <h3 className="mb-4 text-2xl font-semibold tracking-tight">{openGenre}</h3>
+          <AlbumGrid list={(genres.find((g) => g.name === openGenre)?.albums) || []} />
+        </div>
+      ) : openYear ? (
+        <div>
+          <button type="button" onClick={() => setOpenYear(null)} className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+            <ChevronLeft className="size-4" strokeWidth={1.75} /> Back
+          </button>
+          <h3 className="mb-4 text-2xl font-semibold tracking-tight">{openYear}</h3>
+          <AlbumGrid list={(years.find((y) => y.name === openYear)?.albums) || []} />
+        </div>
       ) : tab === "albums" ? (
         <AlbumGrid list={sortedAlbums} />
       ) : tab === "artists" ? (
@@ -337,6 +393,42 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <span className="text-xs text-muted">{a.albums.length} albums</span>
             </button>
           ))}
+        </div>
+      ) : tab === "genres" ? (
+        <div className="space-y-2">
+          {genres.length === 0 ? (
+            <p className="text-sm text-muted">No genres yet. Open an album and set a genre.</p>
+          ) : (
+            genres.map((g) => (
+              <button
+                key={g.name}
+                type="button"
+                onClick={() => setOpenGenre(g.name)}
+                className="flex w-full items-center justify-between rounded-xl bg-raised px-4 py-3 text-left hover:bg-white/10"
+              >
+                <span className="truncate text-sm font-medium">{g.name}</span>
+                <span className="text-xs text-muted">{g.albums.length} albums · {g.trackCount} tracks</span>
+              </button>
+            ))
+          )}
+        </div>
+      ) : tab === "years" ? (
+        <div className="space-y-2">
+          {years.length === 0 ? (
+            <p className="text-sm text-muted">No year tags on your albums yet.</p>
+          ) : (
+            years.map((y) => (
+              <button
+                key={y.name}
+                type="button"
+                onClick={() => setOpenYear(y.name)}
+                className="flex w-full items-center justify-between rounded-xl bg-raised px-4 py-3 text-left hover:bg-white/10"
+              >
+                <span className="truncate text-sm font-medium">{y.name}</span>
+                <span className="text-xs text-muted">{y.albums.length} albums · {y.trackCount} tracks</span>
+              </button>
+            ))
+          )}
         </div>
       ) : tab === "songs" || tab === "liked" || tab === "added" ? (
         <div className="divide-y divide-border">
