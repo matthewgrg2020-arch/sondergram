@@ -5,18 +5,13 @@ import {
   applyEq,
   applyPreamp,
   beginPlayback,
-  getEngine,
-  outputAudio,
   pauseOutput,
-  primePlayback,
   resumeEngine,
   seekOutput,
   setAudioSessionPlayback,
-  setBackgroundOutput,
   setBalance,
   setBassLock,
   setIsolateMode,
-  setMasterGain,
   setMonoMode,
   setRemaster,
   setPlaybackRate,
@@ -46,10 +41,14 @@ import { YoutubeStage } from "./youtube-stage";
 import { IbroadcastPanel } from "./ibroadcast-panel";
 import { DeezerPanel } from "./deezer-panel";
 import { SpotifyPanel } from "./spotify-panel";
+import { AmazonPanel } from "./amazon-panel";
+import { FindAudioPanel } from "./find-audio-panel";
+import { ArchivePanel } from "./archive-panel";
+import { BandcampPanel } from "./bandcamp-panel";
 import { EqPanel } from "./eq-panel";
 import { MixPanel } from "./mix-panel";
 import { RemasterPanel } from "./remaster-panel";
-import { SettingsPage } from "./settings-page";
+import { PartyViz } from "./party-viz";
 
 export function PlayerApp() {
   const tracks = usePlayer((s) => s.tracks);
@@ -76,6 +75,7 @@ export function PlayerApp() {
 
   const [view, setView] = useState<AppView>("home");
   const [query, setQuery] = useState("");
+  const [party, setParty] = useState(false);
   const hydrated = useRef(false);
 
   const current = index >= 0 && index < tracks.length ? tracks[index] : null;
@@ -220,11 +220,18 @@ export function PlayerApp() {
           {view === "ibroadcast" ? <IbroadcastPanel /> : null}
           {view === "deezer" ? <DeezerPanel /> : null}
           {view === "spotify" ? <SpotifyPanel /> : null}
-          {view === "eq" ? <EqPanel /> : null}
-          {view === "mix" ? <MixPanel /> : null}
-          {view === "sound" ? <RemasterPanel /> : null}
+          {view === "amazon" ? <AmazonPanel /> : null}
+          {view === "find" ? <FindAudioPanel /> : null}
+          {view === "archive" ? <ArchivePanel /> : null}
+          {view === "bandcamp" ? <BandcampPanel /> : null}
+          {view === "eq" || view === "studio" ? (
+            <div className="space-y-4 p-4">
+              <EqPanel />
+              <MixPanel />
+              <RemasterPanel />
+            </div>
+          ) : null}
           {view === "stats" ? <StatsPage /> : null}
-          {view === "settings" ? <SettingsPage /> : null}
           {view === "now" ? (
             <NowPlaying onSeek={onSeek} onToggle={togglePlay} onPrev={onPrev} onNext={onNext} />
           ) : null}
@@ -240,6 +247,7 @@ export function PlayerApp() {
         <MobileDock view={view} onView={goView} />
         <QueueSheet />
       </div>
+      {party ? <PartyViz onClose={() => setParty(false)} /> : null}
     </div>
   );
 }
