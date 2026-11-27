@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, Flame, Globe, Pencil, Plus, Shuffle, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { albumKey, groupAlbums, groupArtists, groupGenres } from "@/lib/player/catalog";
+import { albumKey, groupAlbums, groupArtists, groupGenres, groupTracksByDisc, resolveDiskNo } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT, formatDuration, formatTrackTime } from "@/lib/player/format";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { proxyCoverUrl } from "@/lib/player/covers";
@@ -93,7 +93,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [applying, setApplying] = useState(false);
   const lookGen = useRef(0);
   const size = view.size;
-  const titles = view.titles;
+  const titles = view.
   const albumSort: "title" | "artist" | "year" | "added" =
     view.sort === "artist" ? "artist" :
     view.sort === "year" ? "year" :
@@ -222,7 +222,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           {titles === "on" ? (
             <>
               <p className="mt-2 truncate text-sm">{item.title}</p>
-              <p className="truncate text-xs text-muted">{item.artist}</p>
+              <p className="truncate text-xs text-muted">{item.artist}{item.discCount > 1 ? ` · ${item.discCount} discs` : ""}</p>
             </>
           ) : null}
         </button>
@@ -315,7 +315,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               <div>
                 <h3 className="text-2xl font-semibold tracking-tight">{album.title}</h3>
                 <p className="text-sm text-muted">{album.artist}</p>
-                <p className="mt-1 text-xs text-subtle">{[album.year, album.genre, `${album.trackIds.length} songs`, formatDuration(albumDuration(album.trackIds))].filter(Boolean).join(" · ")}</p>
+                <p className="mt-1 text-xs text-subtle">{[album.year, album.genre, album.discCount > 1 ? `${album.discCount} discs` : null, `${album.trackIds.length} songs`, formatDuration(albumDuration(album.trackIds))].filter(Boolean).join(" · ")}</p>
                 <div className="mt-3 max-w-md space-y-3">
                   <div>
                     <span className="mb-1.5 block text-xs uppercase tracking-widest text-subtle">Genre</span>
@@ -373,16 +373,36 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               </div>
             </div>
           </div>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">Tracks</h3>
-          <div className="divide-y divide-border">
-            {songsOf(album.trackIds).map((t) => (
-              <div key={t.id} className="flex items-center gap-1 py-1.5">
-                <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left hover:opacity-90">
-                  <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-sm">{t.name}</span><span className="block truncate text-xs text-muted">{t.artist}</span></span>
-                  {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
-                </button>
-                <MoreMenu label="Song options" tone="plain" items={songMenu(t.id)} />
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">
+            Tracks
+            {album.discCount > 1 ? <span className="ml-2 font-normal normal-case tracking-normal text-muted">· {album.discCount} discs</span> : null}
+          </h3>
+          <div className="space-y-5">
+            {groupTracksByDisc(songsOf(album.trackIds)).map(([disc, discTracks]) => (
+              <div key={`disc-${disc}`}>
+                {album.discCount > 1 ? (
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">Disc {disc}</p>
+                ) : null}
+                <div className="divide-y divide-border">
+                  {discTracks.map((t) => (
+                    <div key={t.id} className="flex items-center gap-1 py-1.5">
+                      <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left hover:opacity-90">
+                        <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">
+                          {t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}
+                        </div>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm">
+                            {t.trackNo ? <span className="mr-2 tabular-nums text-subtle">{t.trackNo}</span> : null}
+                            {t.name}
+                          </span>
+                          <span className="block truncate text-xs text-muted">{t.artist}</span>
+                        </span>
+                        {t.durationSec ? <span className="shrink-0 text-xs tabular-nums text-subtle">{formatTrackTime(t.durationSec)}</span> : null}
+                      </button>
+                      <MoreMenu label="Song options" tone="plain" items={songMenu(t.id)} />
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
