@@ -173,6 +173,8 @@ export function IbroadcastPanel() {
         ibFile: item.file,
         coverRemote: item.artwork,
         duration: item.length || 0,
+        trackNo: item.trackNo || undefined,
+        diskNo: item.diskNo || undefined,
         addedAt: Date.now(),
         albumArtist: item.artist || "",
       } as any);
