@@ -36,7 +36,9 @@ import { RadioPage } from "./radio-page";
 import { RecentPage } from "./recent-page";
 import { SearchPage } from "./search-page";
 import { Sidebar, MobileDock, type AppView } from "./sidebar";
+import { SettingsPage } from "./settings-page";
 import { StatsPage } from "./stats-page";
+import { CarMode } from "./car-mode";
 import { YoutubeMusicPanel } from "./youtube-music-panel";
 import { YoutubeStage } from "./youtube-stage";
 import { IbroadcastPanel } from "./ibroadcast-panel";
@@ -76,6 +78,7 @@ export function PlayerApp() {
   const [view, setView] = useState<AppView>("home");
   const [nowOpen, setNowOpen] = useState(false);
   const [party, setParty] = useState(false);
+  const [car, setCar] = useState(false);
   const [query, setQuery] = useState("");
   const hydrated = useRef(false);
 
@@ -232,6 +235,7 @@ export function PlayerApp() {
             </div>
           ) : null}
           {view === "stats" ? <StatsPage /> : null}
+          {view === "settings" ? <SettingsPage onView={goView} onCarMode={() => setCar(true)} /> : null}
           <YoutubeStage />
         </main>
         <MiniPlayer
@@ -255,6 +259,7 @@ export function PlayerApp() {
           onParty={() => { setNowOpen(false); setParty(true); }}
         />
       ) : null}
+      {car ? <CarMode onClose={() => setCar(false)} onTogglePlay={togglePlay} onPrev={onPrev} onNext={onNext} onSeek={onSeek} /> : null}
       {party ? <PartyViz onClose={() => setParty(false)} /> : null}
     </div>
   );
