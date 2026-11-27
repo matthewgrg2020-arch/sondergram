@@ -103,7 +103,7 @@ export function isVariousName(value: string) {
 }
 
 /** Group VA / compilation albums by album title alone so tracks stick together. */
-export function albumKey(track: Pick<Track, "album" | "albumArtist" | "artist" | "id">) {
+export function albumKey(track: Pick<Track, "album" | "artist" | "id"> & { albumArtist?: string }) {
   const album = normAlbum(cleanAlbumTitle(track.album));
   if (!album || album === "unknown album") return `track::${track.id}`;
   const albumArtist = (track.albumArtist || "").trim().toLowerCase();
@@ -370,4 +370,21 @@ export function similarArtistsForAlbum(album: AlbumGroup, artists: ArtistGroup[]
     .filter((x) => x.score > 0)
     .sort((x, y) => y.score - x.score || x.a.name.localeCompare(y.a.name));
   return scored.slice(0, limit).map((x) => x.a);
+}
+
+/** Group library tracks that share the same title (and artist when present). */
+export function findDuplicates(tracks: Track[]): Track[][] {
+  const map = new Map<string, Track[]>();
+  for (const t of tracks) {
+    const title = (t.name || "").trim().toLowerCase();
+    if (!title) continue;
+    const artist = (t.artist || "").trim().toLowerCase();
+    const key = artist ? `${title}::${artist}` : title;
+    const list = map.get(key);
+    if (list) list.push(t);
+    else map.set(key, [t]);
+  }
+  return [...map.values()]
+    .filter((list) => list.length > 1)
+    .sort((a, b) => b.length - a.length || a[0]!.name.localeCompare(b[0]!.name));
 }
