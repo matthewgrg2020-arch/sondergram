@@ -103,6 +103,8 @@ function namesFromPath(path: string): { artist: string; album: string; title: st
 type PendingHit = {
   id: string; title: string; genre: string; year: string;
   albumId: string; artistId: string; artId: string; file: string; path: string; length: number;
+  trackNo?: number;
+  diskNo?: number;
 };
 
 export type IbSearchResult = {
@@ -132,6 +134,8 @@ function resolveHit(hit: PendingHit, artists: Map<string, string>, albums: Map<s
     artwork: artworkUrl(hit.artId),
     file: hit.file,
     path: hit.path,
+    trackNo: hit.trackNo,
+    diskNo: hit.diskNo,
   } as IbTrack;
 }
 
@@ -260,6 +264,12 @@ export async function searchIbLibraryClient(
     const albumId = numAt(row, tm.album_id ?? DEFAULT_TRACK_MAP.album_id);
     const artistId = numAt(row, tm.artist_id ?? DEFAULT_TRACK_MAP.artist_id);
     const artId = numAt(row, tm.artwork_id ?? DEFAULT_TRACK_MAP.artwork_id);
+    let trackNo = 0;
+    const trackIdx = tm.track ?? DEFAULT_TRACK_MAP.track;
+    if (trackIdx != null && trackIdx >= 0 && trackIdx < row.length) {
+      const n = typeof row[trackIdx] === "number" ? (row[trackIdx] as number) : Number(row[trackIdx]);
+      if (Number.isFinite(n) && n > 0 && n < 500) trackNo = Math.round(n);
+    }
     let lengthSec = 0;
     const lenIdx = tm.length ?? DEFAULT_TRACK_MAP.length;
     if (lenIdx != null && lenIdx >= 0 && lenIdx < row.length) {
@@ -287,6 +297,7 @@ export async function searchIbLibraryClient(
     pending.push({
       id, title, genre: genre && !/^\d+$/.test(genre) ? genre : "", year,
       albumId, artistId, artId, file, path: pathVal, length: lengthSec,
+      trackNo: trackNo || undefined,
     });
     opts?.onProgress?.(pending.length);
   };
