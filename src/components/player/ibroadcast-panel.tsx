@@ -103,21 +103,25 @@ export function IbroadcastPanel() {
 
   const runSearch = () => {
     if (!session || query.trim().length < 2) return;
+    const q = query.trim();
     setLoadingLib(true);
     setFoundCount(0);
     setLibTracks([]);
-    setMessage(`Searching for “${query.trim()}”…`);
-    void searchIbLibraryClient(session, query.trim(), {
-      maxHits: 120,
+    setMessage(`Searching “${q}” in your iBroadcast library…`);
+    void searchIbLibraryClient(session, q, {
+      maxHits: 200,
       onProgress: (n) => {
-        setFoundCount(n);
-        setMessage(`Found ${n} so far for “${query.trim()}”…`);
+        if (n > 0) {
+          setFoundCount(n);
+          setMessage(`Found ${n} for “${q}”…`);
+        }
       },
     })
       .then((data) => {
         if (!data.ok) {
-          setMessage(data.error || "No matches.");
+          setFoundCount(0);
           setLibTracks([]);
+          setMessage(data.error || "No matches. Try a more specific artist or album name.");
           return;
         }
         const list = data.tracks || [];
@@ -295,7 +299,7 @@ export function IbroadcastPanel() {
         </button>
       </div>
 
-      <p className="text-xs text-subtle">Add Album / Add all songs loads the full set from iBroadcast, not just the search hits. Use a specific artist or album name if search times out.</p>
+      <p className="text-xs text-subtle">Search scans your library as it streams and stops once enough matches are found. Use a specific artist or album name for faster results.</p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["tracks", "albums", "artists"] as const).map((id) => (
