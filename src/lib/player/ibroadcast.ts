@@ -15,6 +15,8 @@ export type IbTrack = {
   file: string;
   artwork: string;
   length?: number;
+  trackNo?: number;
+  diskNo?: number;
   albumId?: string;
   artistId?: string;
 };
