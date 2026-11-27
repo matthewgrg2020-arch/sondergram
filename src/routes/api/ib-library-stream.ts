@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
