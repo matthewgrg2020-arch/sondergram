@@ -78,7 +78,7 @@ function storedToTrack(row) {
     const parsed = parseSlskTrackId(row.soulseekId);
     if (parsed.username && parsed.filename) url = slskStreamUrl({ username: parsed.username, filename: parsed.filename }, session);
   } else if (row.ibroadcastId && row.ibFile) {
-    url = resolveIbUrl(row.ibroadcastId, row.ibFile) || `/api/ib-stream?id=${encodeURIComponent(row.ibroadcastId)}&file=${encodeURIComponent(row.ibFile)}`;
+    url = resolveIbUrl(row) || `/api/ib-stream?id=${encodeURIComponent(row.ibroadcastId)}&file=${encodeURIComponent(row.ibFile)}`;
   } else if (row.url) {
     url = row.url;
   }
