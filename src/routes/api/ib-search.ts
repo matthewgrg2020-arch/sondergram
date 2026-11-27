@@ -1,101 +1,74 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function extractBalanced(src: string, openIdx: number): string | null {
+  if (openIdx < 0 || openIdx >= src.length || src[openIdx] !== "{") return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = openIdx; i < src.length; i++) {
+    const ch = src[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return src.slice(openIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+function parseMap(raw: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+function artworkUrl(artId: string | undefined): string | undefined {
+  if (!artId) return undefined;
+  return `https://artwork.ibroadcast.com/artwork/${artId}-300`;
+}
 
 type Hit = {
   id: string;
   name: string;
   artist: string;
   album: string;
-  year: string;
-  genre: string;
-  file: string;
-  artwork: string;
+  year?: string;
+  genre?: string;
+  file?: string;
+  artwork?: string;
 };
 
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
-function artworkUrl(artId: string) {
-  const id = String(artId || "").trim();
-  if (!id || id === "0") return "";
-  return `https://artwork.ibroadcast.com/artwork/${id}-500`;
-}
-
-function extractBalanced(text: string, start: number): string | null {
-  const open = text[start];
-  if (open !== "{" && open !== "[") return null;
-  const close = open === "{" ? "}" : "]";
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i]!;
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-      continue;
-    }
-    if (c === open) depth++;
-    else if (c === close) {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-function parseMap(mapRaw: string): Record<string, number> {
+async function handle({ request }: { request: Request }) {
   try {
-    const obj = JSON.parse(mapRaw) as Record<string, unknown>;
-    const out: Record<string, number> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      if (typeof v === "number") out[k] = v;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function strAt(row: unknown[], idx: number | undefined): string {
-  if (idx == null || idx < 0 || idx >= row.length) return "";
-  const v = row[idx];
-  if (v == null) return "";
-  return String(v).trim();
-}
-
-function numAt(row: unknown[], idx: number | undefined): string {
-  const s = strAt(row, idx);
-  return s && s !== "0" ? s : "";
-}
-
-async function handleSearch(request: Request) {
-  try {
-    let body: {
+    const body = (await request.json()) as {
       userId?: string;
       token?: string;
-      streaming?: string;
       q?: string;
-    } = {};
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      return json({ ok: false, tracks: [], total: 0, error: "Invalid JSON body." }, 400);
-    }
-
+      maxHits?: number;
+    };
     const userId = String(body.userId || "").trim();
     const token = String(body.token || "").trim();
     const q = String(body.q || "").trim().toLowerCase();
@@ -123,7 +96,7 @@ async function handleSearch(request: Request) {
     };
 
     const controller = new AbortController();
-    const kill = setTimeout(() => controller.abort(), 55000);
+    const kill = setTimeout(() => controller.abort(), 100000);
 
     let upstream: Response;
     try {
@@ -141,7 +114,7 @@ async function handleSearch(request: Request) {
       clearTimeout(kill);
       const msg =
         err instanceof Error && /abort/i.test(err.message)
-          ? "Search timed out scanning your large library. Try a more specific name."
+          ? "Search timed out scanning your large library. Try a more specific artist or album name."
           : "Could not reach iBroadcast library.";
       return json({ ok: false, tracks: [], total: 0, error: msg });
     }
@@ -166,7 +139,7 @@ async function handleSearch(request: Request) {
     let artistMap: Record<string, number> = {};
     const hits: Hit[] = [];
     const seen = new Set<string>();
-    const MAX_HITS = 200;
+    const MAX_HITS = 120;
     const MAX_BUF = 8_000_000;
 
     const digestSection = (label: "artists" | "albums" | "tracks", section: string) => {
@@ -191,41 +164,78 @@ async function handleSearch(request: Request) {
         const id = m[1]!;
         const arrStart = section.indexOf("[", m.index);
         if (arrStart < 0) continue;
-        const arrRaw = extractBalanced(section, arrStart);
-        if (!arrRaw) continue;
-        let row: unknown[];
+        let depth = 1;
+        let inStr = false;
+        let esc = false;
+        let end = -1;
+        for (let i = arrStart + 1; i < section.length; i++) {
+          const ch = section[i]!;
+          if (inStr) {
+            if (esc) esc = false;
+            else if (ch === "\\") esc = true;
+            else if (ch === '"') inStr = false;
+            continue;
+          }
+          if (ch === '"') inStr = true;
+          else if (ch === "[") depth++;
+          else if (ch === "]") {
+            depth--;
+            if (depth === 0) {
+              end = i;
+              break;
+            }
+          }
+        }
+        if (end < 0) continue;
+        let row: unknown[] = [];
         try {
-          row = JSON.parse(arrRaw) as unknown[];
+          row = JSON.parse(section.slice(arrStart, end + 1)) as unknown[];
         } catch {
           continue;
         }
         if (!Array.isArray(row)) continue;
 
         if (label === "artists") {
-          const name = strAt(row, artistMap.name ?? 0);
-          if (name) artists.set(id, name);
+          const nameIdx = artistMap.name ?? 0;
+          const name = typeof row[nameIdx] === "string" ? (row[nameIdx] as string) : "";
+          if (name && !/^\d+$/.test(name)) {
+            artists.set(id, name);
+            artists.set(String(id), name);
+          }
           continue;
         }
         if (label === "albums") {
-          const name = strAt(row, albumMap.name ?? 0);
-          if (name) albums.set(id, name);
+          const nameIdx = albumMap.name ?? 0;
+          const name = typeof row[nameIdx] === "string" ? (row[nameIdx] as string) : "";
+          if (name && !/^\d+$/.test(name)) {
+            albums.set(id, name);
+            albums.set(String(id), name);
+          }
           continue;
         }
 
+        // tracks
         if (hits.length >= MAX_HITS || seen.has(id)) continue;
-        const tm = Object.keys(trackMap).length ? trackMap : { title: 2, genre: 3, year: 1, album_id: 5, artwork_id: 6, artist_id: 7, path: 12, file: 16, trashed: 10, length: 4, name: 2 };
-        const title = strAt(row, tm.title ?? tm.name ?? 2);
-        const genre = strAt(row, tm.genre ?? 3);
-        const year = strAt(row, tm.year ?? 1).slice(0, 4);
-        const albumId = numAt(row, tm.album_id ?? 5);
-        const artistId = numAt(row, tm.artist_id ?? 7);
-        const artId = numAt(row, tm.artwork_id ?? 6);
-        const file = strAt(row, tm.file ?? 16);
-        const path = strAt(row, tm.path ?? 12);
-        const albumName = albums.get(albumId) || "";
-        const artistName = artists.get(artistId) || "";
-        const hay = [title, artistName, albumName, genre, path, arrRaw].join(" ").toLowerCase();
-        if (!hay.includes(q)) continue;
+        const tm = trackMap;
+        const titleIdx = tm.title ?? 2;
+        const artistIdx = tm.artist_id ?? 7;
+        const albumIdx = tm.album_id ?? 5;
+        const fileIdx = tm.file ?? 16;
+        const yearIdx = tm.year ?? 1;
+        const genreIdx = tm.genre ?? 3;
+        const artIdx = tm.artwork_id ?? 6;
+        const title = typeof row[titleIdx] === "string" ? (row[titleIdx] as string) : "";
+        const file = typeof row[fileIdx] === "string" ? (row[fileIdx] as string) : "";
+        const yearRaw = row[yearIdx];
+        const year = typeof yearRaw === "string" && /^\d{4}$/.test(yearRaw) ? yearRaw : "";
+        const genre = typeof row[genreIdx] === "string" ? (row[genreIdx] as string) : "";
+        const artId = row[artIdx] != null ? String(row[artIdx]) : "";
+        const artistId = row[artistIdx] != null ? String(row[artistIdx]) : "";
+        const albumId = row[albumIdx] != null ? String(row[albumIdx]) : "";
+        const artistName = (artistId && (artists.get(artistId) || artists.get(String(artistId)))) || "";
+        const albumName = (albumId && (albums.get(albumId) || albums.get(String(albumId)))) || "";
+        const blob = `${title} ${artistName} ${albumName}`.toLowerCase();
+        if (!blob.includes(q)) continue;
         const trashedIdx = tm.trashed;
         if (trashedIdx != null) {
           const tr = row[trashedIdx];
@@ -286,6 +296,17 @@ async function handleSearch(request: Request) {
       }
       buf += decoder.decode();
       scanBuffer();
+    } catch (readErr) {
+      if (!hits.length) {
+        clearTimeout(kill);
+        const msg =
+          readErr instanceof Error && /abort/i.test(readErr.message)
+            ? "Search timed out scanning your large library. Try a more specific artist or album name."
+            : readErr instanceof Error
+              ? readErr.message
+              : "Search failed while reading library.";
+        return json({ ok: false, tracks: [], total: 0, error: msg });
+      }
     } finally {
       clearTimeout(kill);
     }
@@ -318,16 +339,7 @@ async function handleSearch(request: Request) {
 export const Route = createFileRoute("/api/ib-search")({
   server: {
     handlers: {
-      POST: ({ request }) => handleSearch(request),
-      OPTIONS: () =>
-        new Response(null, {
-          status: 204,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-          },
-        }),
+      POST: handle,
     },
   },
 });
