@@ -20,7 +20,9 @@ function albumKey(t: IbTrack) {
 
 function friendlyError(err: unknown) {
   const m = err instanceof Error ? err.message : String(err || "");
-  if (/abort/i.test(m)) return "Search timed out. Try a more specific title.";
+  if (/abort|aborted/i.test(m)) {
+    return "Search timed out on this large library. Try a more specific artist or album name, then search again.";
+  }
   if (/server error/i.test(m)) return "Search hit a server limit. Try a more specific name.";
   return m || "Something went wrong.";
 }
@@ -106,7 +108,7 @@ export function IbroadcastPanel() {
     setLibTracks([]);
     setMessage(`Searching for “${query.trim()}”…`);
     void searchIbLibraryClient(session, query.trim(), {
-      maxHits: 400,
+      maxHits: 120,
       onProgress: (n) => {
         setFoundCount(n);
         setMessage(`Found ${n} so far for “${query.trim()}”…`);
@@ -293,7 +295,7 @@ export function IbroadcastPanel() {
         </button>
       </div>
 
-      <p className="text-xs text-subtle">Add Album / Add all songs loads the full set from iBroadcast, not just the search hits.</p>
+      <p className="text-xs text-subtle">Add Album / Add all songs loads the full set from iBroadcast, not just the search hits. Use a specific artist or album name if search times out.</p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["tracks", "albums", "artists"] as const).map((id) => (
