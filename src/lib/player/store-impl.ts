@@ -2,12 +2,13 @@
 import { create } from "zustand";
 import { FLAT_EQ } from "./constants";
 import { listStoredTracks, putStoredTrack, clearStoredLibrary, deleteStoredTrack, getAudioBlob, updateStoredMeta } from "./persist";
+import { fetchCoverImage, searchAlbumHits } from "./cover-search-api";
+import { searchAlbums } from "./lookup";
+import { resolveIbUrl } from "./ib-play";
 import { importLocalFiles } from "./import-local-files";
-import { searchAlbumOnline as lookupAlbumOnline } from "./lookup";
 import { exportLibraryBackup, importLibraryBackup } from "./backup";
-import { pickRadioIndex } from "./catalog";
-import { loadSlskSession, parseSlskTrackId, slskStreamUrl } from "./soulseek-live";
-import { updateMediaSession } from "./media-session";
+import { loadSlskSession, parseSlskTrackId, slskStreamUrl } from "./soulseek";
+import { bindMediaSessionHandlers, syncMediaSession } from "./media-session";
 
 export type Track = {
   id: string; name: string; artist: string; album: string; genre: string; tags: string[];
@@ -77,7 +78,7 @@ function storedToTrack(row) {
     const parsed = parseSlskTrackId(row.soulseekId);
     if (parsed.username && parsed.filename) url = slskStreamUrl({ username: parsed.username, filename: parsed.filename }, session);
   } else if (row.ibroadcastId && row.ibFile) {
-    url = `/api/ib-stream?id=${encodeURIComponent(row.ibroadcastId)}&file=${encodeURIComponent(row.ibFile)}`;
+    url = resolveIbUrl(row.ibroadcastId, row.ibFile) || `/api/ib-stream?id=${encodeURIComponent(row.ibroadcastId)}&file=${encodeURIComponent(row.ibFile)}`;
   } else if (row.url) {
     url = row.url;
   }
@@ -102,7 +103,7 @@ function storedToTrack(row) {
 function pushMediaSession(state) {
   try {
     const track = state.tracks[state.index];
-    updateMediaSession({
+    syncMediaSession({
       track: track
         ? { title: track.name, artist: track.artist, album: track.album, coverUrl: track.coverUrl }
         : null,
@@ -150,6 +151,7 @@ export const usePlayer = create((set, get) => ({
         ...(eqSaved?.remaster ? { remaster: eqSaved.remaster } : {}),
         ...(eqSaved?.remasterAmt != null ? { remasterAmt: eqSaved.remasterAmt } : {}),
       });
+      try { bindMediaSessionHandlers({ onPlay: () => get().setPlaying(true), onPause: () => get().setPlaying(false), onNext: () => get().next(), onPrev: () => get().prev() }); } catch {}
     } catch {
       set({ ready: true });
     }
@@ -190,7 +192,6 @@ export const usePlayer = create((set, get) => ({
       set({ upNext: s.upNext.slice(1) });
       return idx >= 0 ? idx : null;
     }
-    if (s.radio) return pickRadioIndex(s.tracks, s.index, s.radioRecent);
     if (s.repeat === "one") return s.index;
     if (s.shuffle) {
       if (s.tracks.length < 2) return s.index;
@@ -232,10 +233,10 @@ export const usePlayer = create((set, get) => ({
   toggleLike: (id) => {
     const track = get().tracks.find((t) => t.id === id);
     if (!track) return;
-    const liked = !track.liked;
+    const liked = !Boolean(track.liked);
     set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, liked } : t)) }));
     void updateStoredMeta(id, { liked }).catch(() => {});
-    get().flash(liked ? "Added to favorites" : "Removed from favorites");
+    try { get().flash(liked ? "Added to favorites" : "Removed from favorites"); } catch {}
   },
   updateAlbumMeta: (ids, patch) => {
     const hold = new Set(ids || []);
@@ -302,9 +303,9 @@ export const usePlayer = create((set, get) => ({
   },
   searchAlbumOnline: async (artist, album, track) => {
     try {
-      return await lookupAlbumOnline(artist, album, track);
+      return await searchAlbums(artist, album, track);
     } catch {
-      return [];
+      try { return await searchAlbumHits(artist, album); } catch { return []; }
     }
   },
   applyAlbumHit: async (ids, hit) => {
