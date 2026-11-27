@@ -109,11 +109,11 @@ export function ArtworkPanel({
         console.error("setCoverUrl missing from player store");
         return;
       }
-      const ok = await Promise.race([
+      await Promise.race([
         fn(trackIds, hit.url),
-        new Promise((resolve) => setTimeout(() => resolve(false), 15000)),
+        new Promise((resolve) => setTimeout(resolve, 16000)),
       ]);
-      if (ok) setOpen(false);
+      setOpen(false);
     } catch (err) {
       console.error("save cover failed", err);
     } finally {
