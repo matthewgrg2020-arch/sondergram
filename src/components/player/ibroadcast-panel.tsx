@@ -1,10 +1,8 @@
 import { Cloud, LoaderCircle, LogOut, Play, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  clearIbSession,
   loadIbSession,
   saveIbSession,
-  type IbPlaylist,
   type IbSession,
   type IbTrack,
 } from "@/lib/player/ibroadcast";
@@ -27,7 +25,7 @@ function friendlyError(err: unknown) {
   return m || "Something went wrong.";
 }
 
-export function IBroadcastPanel() {
+export function IbroadcastPanel() {
   const tracks = usePlayer((s) => s.tracks);
   const hydrate = usePlayer((s) => s.hydrate);
   const playIds = usePlayer((s) => s.playIds);
@@ -95,7 +93,7 @@ export function IBroadcastPanel() {
   };
 
   const signOut = () => {
-    clearIbSession();
+    saveIbSession(null);
     setSession(null);
     setLibTracks([]);
     setMessage("Signed out.");
@@ -206,7 +204,7 @@ export function IBroadcastPanel() {
           ? `Playing “${label}” (${fullTracks.length} tracks).`
           : n
             ? `Added ${n} track${n === 1 ? "" : "s"} from “${label}”.`
-            : `AllAll tracks from “${label}” are already in your library.`,
+            : `All tracks from “${label}” are already in your library.`,
       );
     } finally {
       setAdding(null);
