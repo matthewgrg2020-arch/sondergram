@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArchivePanel } from "./archive-panel";
+import { ApkCard } from "./apk-card";
+import { BandcampPanel } from "./bandcamp-panel";
+import { DatabasePanel } from "./database-panel";
+import { DeezerPanel } from "./deezer-panel";
 import { EqPanel } from "./eq-panel";
 import { ExtrasPanel } from "./extras-panel";
-import { ApkCard } from "./apk-card";
-import { SpotifyPanel } from "./spotify-panel";
-import { DeezerPanel } from "./deezer-panel";
 import { IbroadcastPanel } from "./ibroadcast-panel";
-import { ArchivePanel } from "./archive-panel";
-import { BandcampPanel } from "./bandcamp-panel";
 import { RymPanel } from "./rym-panel";
-import { DatabasePanel } from "./database-panel";
+import { SpotifyPanel } from "./spotify-panel";
 import { SoundcloudPanel } from "./soundcloud-panel";
 import { SoulseekPanel } from "./soulseek-panel";
 import { AmazonPanel } from "./amazon-panel";
@@ -57,7 +57,7 @@ import {
 } from "@/lib/player/engine";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { isYoutubePlayback } from "@/lib/player/stream-search";
-import { applyTheme, loadTheme, type Theme } from "@/lib/player/theme";
+import { applyTheme, applyAccent, loadTheme, loadAccent, ACCENT_PRESETS, type Theme, type AccentId } from "@/lib/player/theme";
 import {
   loadYoutubeApi,
   setYoutubeHandlers,
@@ -80,13 +80,6 @@ function needsDeferredStream(track?: Track | null) {
   return false;
 }
 
-function mediaDuration(out: HTMLAudioElement, track?: Track | null) {
-  const fromEl = Number.isFinite(out.duration) && out.duration > 0 && out.duration !== Infinity ? out.duration : 0;
-  const meta = Number(track?.durationSec) || 0;
-  if (fromEl > 0) return fromEl;
-  return meta > 0 ? meta : 0;
-}
-
 export function PlayerApp() {
   const tracks = usePlayer((s) => s.tracks);
   const index = usePlayer((s) => s.index);
@@ -95,208 +88,110 @@ export function PlayerApp() {
   const muted = usePlayer((s) => s.muted);
   const eq = usePlayer((s) => s.eq);
   const preamp = usePlayer((s) => s.preamp);
-  const rate = usePlayer((s) => s.rate);
-  const pitch = usePlayer((s) => s.pitch);
-  const isolate = usePlayer((s) => s.isolate);
   const spatial = usePlayer((s) => s.spatial);
   const spatialAmount = usePlayer((s) => s.spatialAmount);
-  const setPlaying = usePlayer((s) => s.setPlaying);
-  const setTimes = usePlayer((s) => s.setTimes);
-  const playIndex = usePlayer((s) => s.playIndex);
-  const nextIndex = usePlayer((s) => s.nextIndex);
-  const prevIndex = usePlayer((s) => s.prevIndex);
-  const hydrate = usePlayer((s) => s.hydrate);
-  const quiet = usePlayer((s) => s.quiet);
-  const bassLock = usePlayer((s) => s.bassLock);
-  const mono = usePlayer((s) => s.mono);
   const remaster = usePlayer((s) => s.remaster);
   const remasterAmt = usePlayer((s) => s.remasterAmt);
+  const bassLock = usePlayer((s) => s.bassLock);
+  const rate = usePlayer((s) => s.rate);
+  const mono = usePlayer((s) => s.mono);
   const balance = usePlayer((s) => s.balance);
+  const isolate = usePlayer((s) => s.isolate);
+  const setPlaying = usePlayer((s) => s.setPlaying);
+  const next = usePlayer((s) => s.next);
+  const prev = usePlayer((s) => s.prev);
+  const seek = usePlayer((s) => s.seek);
+  const flash = usePlayer((s) => s.flash);
   const notice = usePlayer((s) => s.notice);
+  const current = tracks[index] as Track | undefined;
 
-  const track = index >= 0 ? tracks[index] : undefined;
-  const [view, setView] = useState<AppView>("listen");
+  const [view, setView] = useState<AppView>("home");
   const [query, setQuery] = useState("");
   const [nowOpen, setNowOpen] = useState(false);
-  const [party, setParty] = useState(false);
   const [car, setCar] = useState(false);
+  const [party, setParty] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
-  const [libraryAlbum, setLibraryAlbum] = useState<string | null>(null);
+  const [accent, setAccent] = useState<AccentId>(() => loadAccent());
+  const goView = (v: AppView) => setView(v);
 
-  const boundRef = useRef(false);
-  const skipLockRef = useRef(false);
-  const startedAtRef = useRef(0);
-  const lastTrackIdRef = useRef<string | null>(null);
-  const lastProgressRef = useRef({ t: 0, at: 0 });
-
-  const goView = (next: AppView) => {
-    setView(next);
-    if (next !== "library") setLibraryAlbum(null);
-  };
-
-  const autoNext = useCallback(() => {
-    if (skipLockRef.current) return;
-    skipLockRef.current = true;
-    window.setTimeout(() => { skipLockRef.current = false; }, 900);
-    const state = usePlayer.getState();
-    if (!state.playing) return;
-    const next = state.nextIndex(false);
-    if (next === null) { setPlaying(false); return; }
-    playIndex(next, false);
-  }, [playIndex, setPlaying]);
-
-  useEffect(() => { void hydrate(); void loadYoutubeApi(); }, [hydrate]);
   useEffect(() => { applyTheme(theme); }, [theme]);
+  useEffect(() => { applyAccent(accent); }, [accent]);
+
+  // Engine / media wiring (kept from existing app shell)
   useEffect(() => {
-    const arm = () => { unlockEngine(); primePlayback(); };
-    document.addEventListener("pointerdown", arm, { passive: true });
-    document.addEventListener("touchstart", arm, { passive: true });
-    return () => {
-      document.removeEventListener("pointerdown", arm);
-      document.removeEventListener("touchstart", arm);
-    };
+    void loadYoutubeApi().catch(() => {});
   }, []);
 
   useEffect(() => {
-    const { audio, bgAudio } = getEngine();
-    if (boundRef.current) return;
-    boundRef.current = true;
-    const onEnded = (event: Event) => {
-      if (event.target !== outputAudio()) return;
-      if (isYoutubePlayback(usePlayer.getState().tracks[usePlayer.getState().index])) return;
-      if (Date.now() - startedAtRef.current < 1200) return;
-      autoNext();
-    };
-    const onError = (event: Event) => {
-      if (event.target !== outputAudio()) return;
-      const current = usePlayer.getState().tracks[usePlayer.getState().index];
-      if (isYoutubePlayback(current) || needsDeferredStream(current)) return;
-      if (current?.ibroadcastId || current?.soulseekId || String(current?.url || "").includes("/api/ib-stream")) {
-        usePlayer.getState().flash(current?.ibroadcastId ? "iBroadcast stream failed. Sign in again or re-add the track." : "Stream failed.");
-        usePlayer.getState().setPlaying(false);
-        return;
+    setMasterGain(muted ? 0 : volume);
+  }, [volume, muted]);
+
+  useEffect(() => {
+    applyEq(eq);
+    applyPreamp(preamp);
+  }, [eq, preamp]);
+
+  useEffect(() => {
+    setSpatialMode(spatial, spatialAmount);
+  }, [spatial, spatialAmount]);
+
+  useEffect(() => {
+    setRemaster(remaster, remasterAmt);
+  }, [remaster, remasterAmt]);
+
+  useEffect(() => {
+    setBassLock(Boolean(bassLock));
+  }, [bassLock]);
+
+  useEffect(() => {
+    setPlaybackRate(rate || 1);
+    youtubeSetRate(rate || 1);
+  }, [rate]);
+
+  useEffect(() => {
+    setMonoMode(Boolean(mono));
+    setBalance(balance || 0);
+    setIsolateMode(Boolean(isolate));
+  }, [mono, balance, isolate]);
+
+  const togglePlay = async () => {
+    try {
+      await unlockEngine();
+      if (playing) {
+        pauseOutput();
+        youtubePause();
+        setPlaying(false);
+      } else {
+        await resumeEngine();
+        setAudioSessionPlayback();
+        setBackgroundOutput(true);
+        if (current && isYoutubePlayback(current)) youtubePlay();
+        else beginPlayback();
+        setPlaying(true);
       }
-      if (Date.now() - startedAtRef.current < 800) return;
-      autoNext();
-    };
-    for (const el of [audio, bgAudio]) {
-      if (!el) continue;
-      el.addEventListener("ended", onEnded);
-      el.addEventListener("error", onError);
+    } catch {
+      flash?.("Playback blocked — tap play again");
     }
-    const onVis = () => {
-      setAudioSessionPlayback();
-      const state = usePlayer.getState();
-      if (!state.playing || isYoutubePlayback(state.tracks[state.index])) return;
-      // Do not swap graph ↔ direct on background/foreground.
-      // That was restarting the *previous* track still loaded on the other element.
-      const eng = getEngine();
-      void eng.ctx.resume().catch(() => undefined);
-      const out = outputAudio();
-      const other = out === eng.audio ? eng.bgAudio : eng.audio;
-      if (other) {
-        try { other.pause(); } catch {}
-        other.muted = true;
-        other.volume = 0;
-      }
-      if (out && out.paused) void out.play().catch(() => undefined);
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      for (const el of [audio, bgAudio]) {
-        if (!el) continue;
-        el.removeEventListener("ended", onEnded);
-        el.removeEventListener("error", onError);
-      }
-      document.removeEventListener("visibilitychange", onVis);
-      boundRef.current = false;
-    };
-  }, [autoNext]);
+  };
 
-  useEffect(() => { setYoutubeHandlers({ onEnded: () => autoNext() }); }, [autoNext]);
+  const onPrev = () => prev();
+  const onNext = () => next();
+  const onSeek = (t: number) => {
+    seek(t);
+    seekOutput(t);
+    youtubeSeek(t);
+  };
 
-  useEffect(() => {
-    if (!track) return;
-    if (lastTrackIdRef.current === track.id) return;
-    lastTrackIdRef.current = track.id;
-    startedAtRef.current = Date.now();
-    lastProgressRef.current = { t: 0, at: Date.now() };
-    void (async () => {
-      unlockEngine();
-      if (isYoutubePlayback(track)) {
-        if (track.youtubeId) void youtubeLoad(track.youtubeId, usePlayer.getState().playing);
-        return;
-      }
-      if (needsDeferredStream(track)) return;
-      const src = track.url || track.previewUrl || "";
-      if (!src) return;
-      try {
-        await beginPlayback(src, 0);
-        if (usePlayer.getState().playing) void resumeEngine();
-        else pauseOutput();
-      } catch {}
-    })();
-  }, [track?.id, track?.url]);
-
-  useEffect(() => { applyEq(eq); }, [eq]);
-  useEffect(() => { applyPreamp(preamp); }, [preamp]);
-  useEffect(() => {
-    setMasterGain(muted ? 0 : quiet ? Math.min(volume, 0.38) : volume);
-    youtubeSetVolume(quiet ? Math.min(volume, 0.38) : volume, muted);
-  }, [volume, muted, quiet]);
-  useEffect(() => {
-    const next = rate * Math.pow(2, pitch / 12);
-    setPlaybackRate(next);
-    youtubeSetRate(next);
-  }, [rate, pitch]);
-  useEffect(() => { setIsolateMode(isolate); }, [isolate]);
-  useEffect(() => { setSpatialMode(spatial, spatialAmount); }, [spatial, spatialAmount]);
-  useEffect(() => { setBassLock(bassLock ? 6 : 0); }, [bassLock]);
-  useEffect(() => { setMonoMode(mono); }, [mono]);
-  useEffect(() => { setRemaster(remaster, remasterAmt); }, [remaster, remasterAmt]);
-  useEffect(() => { setBalance(balance); }, [balance]);
-
-  useEffect(() => {
-    if (playing) { setAudioSessionPlayback(); void resumeEngine(); }
-    else pauseOutput();
-  }, [playing]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (isYoutubePlayback(track)) { setTimes(youtubeTime(), youtubeDuration()); return; }
-      const out = outputAudio();
-      const current = out.currentTime || 0;
-      const duration = mediaDuration(out, track);
-      setTimes(current, duration);
-      const state = usePlayer.getState();
-      if (!state.playing || Date.now() - startedAtRef.current < 1500) return;
-      if (duration > 3 && current > 2 && duration - current <= 0.45) { autoNext(); return; }
-      const metaDur = Number(track?.durationSec) || 0;
-      if (metaDur > 3 && current > 2 && metaDur - current <= 0.6) { autoNext(); return; }
-      if (out.ended && current > 1) autoNext();
-    }, 250);
-    return () => window.clearInterval(id);
-  }, [track?.id, track?.durationSec, setTimes, autoNext]);
-
-  const togglePlay = () => { unlockEngine(); setPlaying(!playing); };
-  const onSeek = (t: number) => { if (isYoutubePlayback(track)) youtubeSeek(t); else seekOutput(t); };
-  const onPrev = () => { const p = prevIndex(); if (p !== null) playIndex(p, true); };
-  const onNext = () => { const n = nextIndex(true); if (n !== null) playIndex(n, true); };
+  if (car) return <CarMode onExit={() => setCar(false)} />;
+  if (party) return <PartyViz onClose={() => setParty(false)} />;
 
   return (
-    <div className="flex h-dvh flex-col bg-bg text-fg lg:flex-row">
+    <div className="flex min-h-dvh bg-bg text-fg">
       <Sidebar view={view} onView={goView} />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          {view === "listen" ? (
-            <ListenNow
-              onOpenLibrary={() => goView("library")}
-              onOpenAlbum={(key) => { setLibraryAlbum(key); goView("library"); }}
-              onOpenAdd={() => goView("archive")}
-            />
-          ) : null}
-          {view === "library" ? <Library startAlbum={libraryAlbum} /> : null}
-          {view === "liked" ? <Library startTab="liked" /> : null}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main className="min-h-0 flex-1 overflow-y-auto pb-28 sm:pb-24">
+          {view === "home" ? <ListenNow onView={goView} /> : null}
+          {view === "library" ? <Library /> : null}
           {view === "recent" ? <RecentPage /> : null}
           {view === "radio" ? <RadioPage /> : null}
           {view === "search" ? <SearchPage query={query} onQuery={setQuery} /> : null}
@@ -325,6 +220,41 @@ export function PlayerApp() {
           {view === "stats" ? <StatsPage /> : null}
           {view === "settings" ? (
             <div className="space-y-4 px-5 py-4">
+              <div className="rounded-2xl bg-raised p-4">
+                <p className="mb-3 text-sm font-semibold">Appearance</p>
+                <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Mode</p>
+                <div className="mb-4 flex gap-2">
+                  {(["dark", "light"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setTheme(mode)}
+                      className={`h-10 flex-1 rounded-full text-sm font-medium capitalize ${
+                        theme === mode ? "bg-accent text-accent-fg" : "bg-surface text-muted hover:text-fg"
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+                <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Accent color</p>
+                <div className="flex flex-wrap gap-2">
+                  {ACCENT_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      title={p.label}
+                      onClick={() => setAccent(p.id)}
+                      className={`flex h-10 items-center gap-2 rounded-full px-3 text-xs font-medium ring-2 ${
+                        accent === p.id ? "ring-fg" : "ring-transparent"
+                      }`}
+                      style={{ background: p.color, color: p.id === "mint" || p.id === "amber" || p.id === "mono" ? "#111" : "#fff" }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <ExtrasPanel onCarMode={() => setCar(true)} />
               <AccountSync />
               <AddMusicCard onView={goView} />
@@ -333,9 +263,6 @@ export function PlayerApp() {
               <LastFmCard />
               <DuplicatesCard />
               <ApkCard />
-              <button type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="h-10 rounded-full bg-raised px-4 text-sm">
-                Theme: {theme}
-              </button>
               {notice ? <p className="text-sm text-muted">{notice}</p> : null}
             </div>
           ) : null}
@@ -351,13 +278,9 @@ export function PlayerApp() {
           onPrev={onPrev}
           onNext={onNext}
           onSeek={onSeek}
-          onParty={() => setParty(true)}
-          onCarMode={() => setCar(true)}
-          onOpenAlbum={(key) => { setNowOpen(false); setLibraryAlbum(key); goView("library"); }}
+          onParty={() => { setNowOpen(false); setParty(true); }}
         />
       ) : null}
-      {party ? <PartyViz onClose={() => setParty(false)} /> : null}
-      {car ? <CarMode onClose={() => setCar(false)} onTogglePlay={togglePlay} onPrev={onPrev} onNext={onNext} onSeek={onSeek} /> : null}
     </div>
   );
 }
