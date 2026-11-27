@@ -18,6 +18,16 @@ function albumKey(t: IbTrack) {
   return `${album}::${artist}`;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      () => { clearTimeout(timer); resolve(null); },
+    );
+  });
+}
+
 function friendlyError(err: unknown) {
   const m = err instanceof Error ? err.message : String(err || "");
   if (/abort|aborted/i.test(m)) {
@@ -186,17 +196,27 @@ export function IbroadcastPanel() {
   const expandAlbumTracks = async (albumTracks: IbTrack[]) => {
     if (!session || !albumTracks.length) return albumTracks;
     const sample = albumTracks[0]!;
+    const album = (sample.album || "").trim();
+    const artist = (sample.artist || "").trim();
+    const q = [artist, album].filter(Boolean).join(" ") || album;
+    if (!q) return albumTracks;
     try {
-      setMessage(`Loading full album “${sample.album || "album"}”…`);
-      const full = await fetchIbAlbumTracks(session, {
-        albumId: sample.albumId,
-        album: sample.album,
-        artist: sample.artist,
-        maxTracks: 200,
-      });
-      if (full.ok && full.tracks.length > albumTracks.length) return full.tracks;
-      if (full.ok && full.tracks.length > 0) return full.tracks;
-    } catch { /* ignore */ }
+      setMessage(`Loading full album “${album || "album"}”…`);
+      const full = await withTimeout(
+        searchIbLibraryClient(session, q, { maxHits: 200 }),
+        18000,
+      );
+      if (full?.ok && full.tracks.length > albumTracks.length) {
+        const narrowed = album
+          ? full.tracks.filter((t) => (t.album || "").toLowerCase().includes(album.toLowerCase()))
+          : full.tracks;
+        if (narrowed.length > albumTracks.length) return narrowed;
+        if (narrowed.length) return narrowed;
+        return full.tracks;
+      }
+      if (full?.ok && full.tracks.length) return full.tracks;
+    } catch { /* fall through */ }
+    setMessage(`Adding ${albumTracks.length} track${albumTracks.length === 1 ? "" : "s"} from “${album || "album"}”…`);
     return albumTracks;
   };
 
@@ -204,14 +224,22 @@ export function IbroadcastPanel() {
     setAdding(label);
     try {
       const fullTracks = await expandAlbumTracks(albumTracks);
-      const n = await addIbTracks(fullTracks, play);
+      const usable = fullTracks.filter((t) => t && t.id);
+      if (!usable.length) {
+        setMessage(`No tracks to add for “${label}”.`);
+        return;
+      }
+      setMessage(`Adding ${usable.length} track${usable.length === 1 ? "" : "s"} from “${label}”…`);
+      const n = await addIbTracks(usable, play);
       setMessage(
         play
-          ? `Playing “${label}” (${fullTracks.length} tracks).`
+          ? `Playing “${label}” (${usable.length} tracks).`
           : n
             ? `Added ${n} track${n === 1 ? "" : "s"} from “${label}”.`
             : `All tracks from “${label}” are already in your library.`,
       );
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not add album.");
     } finally {
       setAdding(null);
     }
@@ -220,17 +248,20 @@ export function IbroadcastPanel() {
   const expandArtistTracks = async (artistTracks: IbTrack[]) => {
     if (!session || !artistTracks.length) return artistTracks;
     const sample = artistTracks[0]!;
-    const artistId = (sample as IbTrack & { artistId?: string }).artistId;
+    const artist = (sample.artist || "").trim();
+    if (!artist) return artistTracks;
     try {
-      setMessage(`Loading all songs by “${sample.artist || "artist"}”…`);
-      const full = await fetchIbArtistTracks(session, {
-        artistId,
-        artist: sample.artist,
-        maxTracks: 2000,
-      });
-      if (full.ok && full.tracks.length > artistTracks.length) return full.tracks;
-      if (full.ok && full.tracks.length > 0) return full.tracks;
-    } catch { /* ignore */ }
+      setMessage(`Loading songs by “${artist}”…`);
+      const full = await withTimeout(
+        searchIbLibraryClient(session, artist, { maxHits: 400 }),
+        18000,
+      );
+      if (full?.ok && full.tracks.length > artistTracks.length) {
+        const narrowed = full.tracks.filter((t) => (t.artist || "").toLowerCase().includes(artist.toLowerCase()));
+        return narrowed.length ? narrowed : full.tracks;
+      }
+      if (full?.ok && full.tracks.length) return full.tracks;
+    } catch { /* fall through */ }
     return artistTracks;
   };
 
@@ -238,14 +269,22 @@ export function IbroadcastPanel() {
     setAdding(`artist:${label}`);
     try {
       const fullTracks = await expandArtistTracks(artistTracks);
-      const n = await addIbTracks(fullTracks, play);
+      const usable = fullTracks.filter((t) => t && t.id);
+      if (!usable.length) {
+        setMessage(`No tracks to add for “${label}”.`);
+        return;
+      }
+      setMessage(`Adding ${usable.length} track${usable.length === 1 ? "" : "s"} by “${label}”…`);
+      const n = await addIbTracks(usable, play);
       setMessage(
         play
-          ? `Playing “${label}” (${fullTracks.length} tracks).`
+          ? `Playing “${label}” (${usable.length} tracks).`
           : n
-            ? `Added ${n} track${n === 1 ? "" : "s"} by “${label}” (${fullTracks.length} found).`
+            ? `Added ${n} track${n === 1 ? "" : "s"} by “${label}”.`
             : `All found tracks by “${label}” are already in your library.`,
       );
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not add artist.");
     } finally {
       setAdding(null);
     }
@@ -299,7 +338,7 @@ export function IbroadcastPanel() {
         </button>
       </div>
 
-      <p className="text-xs text-subtle">Search scans your library as it streams and stops once enough matches are found. Use a specific artist or album name for faster results.</p>
+      <p className="text-xs text-subtle">Add Album uses tracks already found, then tries a short extra scan for more. If the full album is slow, it still adds what was found.</p>
 
       <div className="flex gap-1 rounded-full bg-raised p-1">
         {(["tracks", "albums", "artists"] as const).map((id) => (
