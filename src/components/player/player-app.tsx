@@ -30,6 +30,7 @@ import { Library } from "./library";
 import { ListenNow } from "./listen-now";
 import { MiniPlayer } from "./mini-player";
 import { NowPlaying } from "./now-playing";
+import { PartyViz } from "./party-viz";
 import { QueueSheet } from "./queue-sheet";
 import { RadioPage } from "./radio-page";
 import { RecentPage } from "./recent-page";
@@ -48,7 +49,6 @@ import { BandcampPanel } from "./bandcamp-panel";
 import { EqPanel } from "./eq-panel";
 import { MixPanel } from "./mix-panel";
 import { RemasterPanel } from "./remaster-panel";
-import { PartyViz } from "./party-viz";
 
 export function PlayerApp() {
   const tracks = usePlayer((s) => s.tracks);
@@ -74,8 +74,9 @@ export function PlayerApp() {
   const nextIndex = usePlayer((s) => s.nextIndex);
 
   const [view, setView] = useState<AppView>("home");
-  const [query, setQuery] = useState("");
+  const [nowOpen, setNowOpen] = useState(false);
   const [party, setParty] = useState(false);
+  const [query, setQuery] = useState("");
   const hydrated = useRef(false);
 
   const current = index >= 0 && index < tracks.length ? tracks[index] : null;
@@ -102,7 +103,6 @@ export function PlayerApp() {
       if (document.visibilityState === "visible") {
         try {
           setAudioSessionPlayback();
-          void resumeEngine();
         } catch {
           /* ignore */
         }
@@ -232,21 +232,29 @@ export function PlayerApp() {
             </div>
           ) : null}
           {view === "stats" ? <StatsPage /> : null}
-          {view === "now" ? (
-            <NowPlaying onSeek={onSeek} onToggle={togglePlay} onPrev={onPrev} onNext={onNext} />
-          ) : null}
           <YoutubeStage />
         </main>
         <MiniPlayer
-          onToggle={togglePlay}
+          onTogglePlay={togglePlay}
           onPrev={onPrev}
           onNext={onNext}
           onSeek={onSeek}
-          onOpenNow={() => goView("now")}
+          onExpand={() => setNowOpen(true)}
+          onLyrics={() => setNowOpen(true)}
         />
         <MobileDock view={view} onView={goView} />
         <QueueSheet />
       </div>
+      {nowOpen ? (
+        <NowPlaying
+          onClose={() => setNowOpen(false)}
+          onTogglePlay={togglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
+          onParty={() => { setNowOpen(false); setParty(true); }}
+        />
+      ) : null}
       {party ? <PartyViz onClose={() => setParty(false)} /> : null}
     </div>
   );
