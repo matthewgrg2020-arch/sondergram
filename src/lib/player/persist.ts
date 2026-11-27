@@ -51,7 +51,7 @@ export type StoredTrack = {
   amazonId?: string;
   soulseekId?: string;
   replayGain?: number;
-  audio: Blob;
+  audio?: Blob;
   audioType?: string;
   cover: Blob | null;
   addedAt: number;
@@ -110,16 +110,13 @@ async function requestPersist() {
   }
 }
 
-async function audioDir(create = false) {
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(OPFS_DIR, { create });
-}
-
 async function writeOpfs(id: string, blob: Blob) {
   try {
-    const dir = await audioDir(true);
-    const fh = await dir.getFileHandle(id, { create: true });
-    const writable = await fh.createWritable();
+    if (!navigator.storage?.getDirectory) return false;
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle(OPFS_DIR, { create: true });
+    const file = await dir.getFileHandle(id, { create: true });
+    const writable = await file.createWritable();
     await writable.write(blob);
     await writable.close();
     return true;
@@ -128,12 +125,14 @@ async function writeOpfs(id: string, blob: Blob) {
   }
 }
 
-async function readOpfs(id: string) {
+async function readOpfs(id: string): Promise<Blob | null> {
   try {
-    const dir = await audioDir(false);
-    const fh = await dir.getFileHandle(id);
-    const file = await fh.getFile();
-    return file.size > 0 ? file : null;
+    if (!navigator.storage?.getDirectory) return null;
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle(OPFS_DIR);
+    const file = await dir.getFileHandle(id);
+    const f = await file.getFile();
+    return f.size > 0 ? f : null;
   } catch {
     return null;
   }
@@ -141,44 +140,26 @@ async function readOpfs(id: string) {
 
 async function deleteOpfs(id: string) {
   try {
-    const dir = await audioDir(false);
+    if (!navigator.storage?.getDirectory) return;
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle(OPFS_DIR);
     await dir.removeEntry(id);
   } catch {
     /* missing */
   }
 }
 
-async function audioSize(value: unknown) {
-  if (value instanceof Blob) return value.size;
-  if (value instanceof ArrayBuffer) return value.byteLength;
-  if (ArrayBuffer.isView(value)) return value.byteLength;
-  return 0;
-}
-
-function yieldUi() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
-async function storeGetAll(db: IDBDatabase) {
-  return new Promise<RawRow[]>((resolve, reject) => {
+function storeGetAll(db: IDBDatabase): Promise<RawRow[]> {
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
     const req = tx.objectStore(STORE).getAll();
-    req.onsuccess = () => resolve(req.result as RawRow[]);
+    req.onsuccess = () => resolve((req.result || []) as RawRow[]);
     req.onerror = () => reject(req.error);
   });
 }
 
-async function storeGetAllKeys(db: IDBDatabase) {
-  return new Promise<IDBValidKey[]>((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).getAllKeys();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function storeGet(db: IDBDatabase, id: IDBValidKey) {
-  return new Promise<RawRow | undefined>((resolve, reject) => {
+function storeGet(db: IDBDatabase, id: string): Promise<RawRow | undefined> {
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
     const req = tx.objectStore(STORE).get(id);
     req.onsuccess = () => resolve(req.result as RawRow | undefined);
@@ -186,66 +167,49 @@ async function storeGet(db: IDBDatabase, id: IDBValidKey) {
   });
 }
 
-async function storePut(db: IDBDatabase, row: RawRow) {
-  const tx = db.transaction(STORE, "readwrite");
-  tx.objectStore(STORE).put(row);
-  await txDone(tx);
+function storePut(db: IDBDatabase, row: RawRow): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const req = tx.objectStore(STORE).put(row);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
 }
 
 function metaRow(row: RawRow): StoredTrack {
   const type = row.audioType || "audio/mpeg";
-  const coverType = row.coverType || "image/jpeg";
-  const coverBlob = row.cover ? blobFromStored(row.cover, coverType) : new Blob([]);
   return {
     ...row,
-    album: row.album ?? "",
-    tags: row.tags ?? (row.genre ? row.genre.split(/\s*[/;,]\s*/).filter(Boolean) : []),
-    liked: Boolean(row.liked),
-    audio: new Blob(),
+    audio: blobFromStored(row.audio, type),
+    cover: row.cover ? blobFromStored(row.cover, row.coverType || "image/jpeg") : null,
     audioType: type,
-    cover: coverBlob.size > 0 ? coverBlob : null,
   };
 }
 
 export async function getAudioBlob(id: string): Promise<Blob | null> {
-  const opfs = await readOpfs(id);
-  if (opfs && opfs.size > 0) return opfs;
+  const fromOpfs = await readOpfs(id);
+  if (fromOpfs) return fromOpfs;
   const db = await openDb();
   const row = await storeGet(db, id);
   if (!row) return null;
   const type = row.audioType || "audio/mpeg";
   const blob = blobFromStored(row.audio, type);
-  if (blob.size > 0) {
-    // Promote IDB audio into OPFS when possible (e.g. after zip restore)
-    void writeOpfs(id, blob);
-    return blob;
-  }
-  return null;
+  return blob.size > 0 ? blob : null;
 }
 
 async function stripLegacyAudio() {
-  const db = await openDb();
-  const keys = await storeGetAllKeys(db);
-  if (keys.length === 0) return;
-  let needs = false;
-  for (const id of keys.slice(0, 12)) {
-    const row = await storeGet(db, id);
-    if (row && (await audioSize(row.audio)) > 0) {
-      needs = true;
-      break;
-    }
-  }
-  if (!needs) return;
-  for (const id of keys) {
-    const row = await storeGet(db, id);
-    if (!row) continue;
-    if ((await audioSize(row.audio)) > 0) {
+  try {
+    const db = await openDb();
+    const rows = await storeGetAll(db);
+    for (const row of rows) {
       const blob = blobFromStored(row.audio, row.audioType || "audio/mpeg");
-      const ok = await writeOpfs(String(id), blob);
-      // Only clear IDB payload after OPFS has a copy
-      if (ok) await storePut(db, { ...row, audio: new ArrayBuffer(0) });
+      if (blob.size < 1024) continue;
+      const written = await writeOpfs(row.id, blob);
+      if (!written) continue;
+      await storePut(db, { ...row, audio: new ArrayBuffer(0) });
     }
-    await yieldUi();
+  } catch {
+    /* first run */
   }
 }
 
@@ -267,12 +231,13 @@ export async function getStoredTrack(id: string): Promise<StoredTrack | undefine
 
 export async function putStoredTrack(track: StoredTrack) {
   await requestPersist();
-  const hasRealAudio = isRealAudioBlob(track.audio);
+  const audio = track.audio || new Blob([]);
+  const hasRealAudio = isRealAudioBlob(audio);
   let opfsOk = false;
   if (hasRealAudio) {
-    opfsOk = await writeOpfs(track.id, track.audio);
+    opfsOk = await writeOpfs(track.id, audio);
   }
-  const audioType = track.audio.type || track.audioType || "audio/mpeg";
+  const audioType = audio.type || track.audioType || "audio/mpeg";
   const coverType = track.cover?.type || "image/jpeg";
   let coverPayload: ArrayBuffer | null = null;
   if (track.cover && track.cover.size > 0) {
@@ -282,11 +247,10 @@ export async function putStoredTrack(track: StoredTrack) {
       coverPayload = null;
     }
   }
-  // If OPFS write failed, keep audio bytes in IndexedDB so restore/playback still works
   let audioPayload: ArrayBuffer = new ArrayBuffer(0);
   if (hasRealAudio && !opfsOk) {
     try {
-      audioPayload = await track.audio.arrayBuffer();
+      audioPayload = await audio.arrayBuffer();
     } catch {
       audioPayload = new ArrayBuffer(0);
     }
