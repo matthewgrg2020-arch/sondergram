@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
-import { proxyCoverUrl } from "@/lib/player/covers";
 import type { AlbumHit } from "@/lib/player/lookup";
+import { proxyCoverUrl } from "@/lib/player/covers";
 
 export function OnlineMatchesSheet({
   hits,
@@ -9,16 +9,13 @@ export function OnlineMatchesSheet({
   onPick,
 }: {
   hits: AlbumHit[];
-  applying: boolean;
+  applying?: boolean;
   onClose: () => void;
-  onPick: (hit: AlbumHit) => void;
+  onPick: (hit: AlbumHit) => void | Promise<void>;
 }) {
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-3 pb-28 sm:items-center sm:pb-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Online matches"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 sm:items-center"
       onClick={() => {
         if (!applying) onClose();
       }}
@@ -59,7 +56,9 @@ export function OnlineMatchesSheet({
                     </div>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{hit.title}</span>
-                      <span className="block truncate text-xs text-muted">{hit.artist}</span>
+                      <span className="block truncate text-xs text-muted">
+                        {[hit.artist, hit.year, hit.genre].filter(Boolean).join(" · ")}
+                      </span>
                     </span>
                   </button>
                 );
