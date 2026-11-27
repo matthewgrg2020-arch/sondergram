@@ -207,7 +207,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       <section className="panel flex min-h-0 flex-1 flex-col items-center justify-center p-6 text-center">
         <h2 className="text-2xl font-semibold tracking-tight">Library</h2>
         <p className="mt-2 max-w-sm text-sm text-muted">Add files or import from iBroadcast to build your library.</p>
-        <button type="button" onClick={() => inputRef.current?.click()} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-sm font dec.semibold text-accent-fg">
+        <button type="button" onClick={() => inputRef.current?.click()} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg">
           <Plus className="size-4" /> Add music
         </button>
         <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files?.length) void addFiles(Array.from(files)); e.target.value = ""; }} />
