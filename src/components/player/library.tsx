@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, Flame, Globe, Heart, Pencil, Plus, Shuffle, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Flame, GitMerge, Globe, Heart, Pencil, Plus, Shuffle, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, cleanAlbumTitle, groupAlbums, groupArtists, groupGenres, groupTracksByDisc, resolveDiskNo } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT, formatDuration, formatTrackTime } from "@/lib/player/format";
@@ -236,6 +236,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                   finally { if (mine === lookGen.current) setLooking(false); }
                 }} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><Globe className="size-4" strokeWidth={1.75} />{looking ? "Cancel" : "Look up online"}</button>
                 <button type="button" onClick={() => setAlbumEdit((v) => !v)} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><Pencil className="size-4" strokeWidth={1.75} />{albumEdit ? "Close edit" : "Edit album"}</button>
+                <button type="button" onClick={() => { setAlbumEdit(true); setTimeout(() => document.getElementById("merge-albums")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-raised px-4 text-sm font-medium hover:bg-white/10"><GitMerge className="size-4" strokeWidth={1.75} />Merge albums</button>
                 <button type="button" onClick={() => {
                   if (!confirm(`Delete album “${album.title}” and its ${album.trackIds.length} tracks?`)) return;
                   void removeTracks(album.trackIds);
@@ -276,8 +277,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     patchAlbumMeta(album.trackIds, { year: next }); flash?.("Year updated");
                   }} /></label>
               </div>
-              <div className="border-t border-border pt-4">
-                <p className="mb-1 text-sm font-semibold">Combine albums</p>
+              <div id="merge-albums" className="border-t border-border pt-4">
+                <p className="mb-1 text-sm font-semibold">Merge albums</p>
                 <p className="mb-3 text-xs text-muted">Merge another album into this one. Incoming discs are added after the current discs.</p>
                 <input type="search" value={combineQ} onChange={(e) => setCombineQ(e.target.value)} placeholder="Search albums to combine…" className="mb-3 h-10 w-full rounded-xl bg-surface px-3 text-sm outline-none ring-1 ring-border focus:ring-accent" />
                 <div className="max-h-56 space-y-1 overflow-y-auto">
@@ -302,7 +303,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                     }}>
                       <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{other.coverUrl ? <img src={proxyCoverUrl(other.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
                       <span className="min-w-0 flex-1"><span className="block truncate text-sm">{other.title}</span><span className="block truncate text-xs text-muted">{other.artist} · {other.trackIds.length} tracks</span></span>
-                      <span className="shrink-0 text-xs font-medium text-accent">Combine</span>
+                      <span className="shrink-0 text-xs font-medium text-accent">Merge</span>
                     </button>
                   ))}
                 </div>
