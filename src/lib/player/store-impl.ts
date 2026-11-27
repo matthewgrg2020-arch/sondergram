@@ -68,10 +68,12 @@ function storedToTrack(row) {
   } else if (row.url) {
     url = row.url;
   }
-  let coverUrl = row.coverRemote || null;
-  if (!coverUrl && row.cover) {
+  let coverUrl = null;
+  const remote = typeof row.coverRemote === "string" && !row.coverRemote.startsWith("blob:") ? row.coverRemote : null;
+  if (row.cover && (row.cover.size > 0 || (row.cover.byteLength && row.cover.byteLength > 0))) {
     try { coverUrl = URL.createObjectURL(row.cover); } catch {}
   }
+  if (!coverUrl) coverUrl = remote || null;
   return {
     id: row.id, name: row.name, artist: row.artist, album: row.album, genre: row.genre || "",
     tags: row.tags || [], year: row.year || "", url, coverUrl, format: row.format || "",
@@ -278,28 +280,58 @@ export const usePlayer = create((set, get) => ({
   importLibrary: async (file) => get().importBackup(file),
   setCover: async (ids, file) => {
     const hold = new Set(ids || []);
+    if (!file || !hold.size) return false;
     let url = "";
     try { url = URL.createObjectURL(file); } catch {}
     set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl: url || t.coverUrl } : t)) }));
+    let saved = 0;
     for (const id of hold) {
-      try { await updateStoredMeta(id, { cover: file, coverRemote: undefined }); } catch {}
+      try {
+        await updateStoredMeta(id, { cover: file, coverRemote: "" });
+        saved += 1;
+      } catch (err) {
+        console.error("setCover failed", id, err);
+      }
     }
+    return saved > 0;
   },
   setCoverUrl: async (ids, coverUrl) => {
     const hold = new Set(ids || []);
-    set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl } : t)) }));
+    const raw = String(coverUrl || "").trim();
+    if (!raw || !hold.size) return false;
+    const proxied = /^(blob:|data:)/i.test(raw) || raw.startsWith("/api/cover")
+      ? raw
+      : `/api/cover?u=${encodeURIComponent(raw)}`;
+    set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl: proxied } : t)) }));
     let coverBlob = null;
     try {
-      const res = await fetch(coverUrl);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch(proxied, { signal: ctrl.signal });
+      clearTimeout(timer);
       if (res.ok) coverBlob = await res.blob();
-    } catch {}
+    } catch (err) {
+      console.error("cover fetch failed", err);
+    }
+    if (!coverBlob || coverBlob.size < 100) {
+      // Keep the remote URL so it can still display via the proxy.
+      for (const id of hold) {
+        try { await updateStoredMeta(id, { coverRemote: raw }); } catch {}
+      }
+      return true;
+    }
+    let saved = 0;
     for (const id of hold) {
       try {
-        if (coverBlob) await updateStoredMeta(id, { cover: coverBlob, coverRemote: coverUrl });
-        else await updateStoredMeta(id, { coverRemote: coverUrl });
-      } catch {}
+        await updateStoredMeta(id, { cover: coverBlob, coverRemote: raw });
+        saved += 1;
+      } catch (err) {
+        console.error("setCoverUrl failed", id, err);
+      }
     }
+    return saved > 0;
   },
+
   searchAlbumOnline: async (artist, album, track) => {
     try {
       return await searchAlbums(artist, album, track);
