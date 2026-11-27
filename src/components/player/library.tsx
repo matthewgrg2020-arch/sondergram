@@ -82,6 +82,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [lookingGenre, setLookingGenre] = useState(false);
   const [albumEdit, setAlbumEdit] = useState(false);
   const [combineQ, setCombineQ] = useState("");
+  const [trackSort, setTrackSort] = useState<"number" | "alpha">("number");
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
   const [applying, setApplying] = useState(false);
   const lookGen = useRef(0);
@@ -343,13 +344,23 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
             </div>
           ) : null}
 
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-subtle">Tracks{album.discCount > 1 ? <span className="ml-2 font-normal normal-case tracking-normal text-muted">· {album.discCount} discs</span> : null}</h3>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-subtle">Tracks{album.discCount > 1 ? <span className="ml-2 font-normal normal-case tracking-normal text-muted">· {album.discCount} discs</span> : null}</h3>
+            <div className="flex items-center gap-1 rounded-full bg-raised p-1">
+              <button type="button" onClick={() => setTrackSort("number")} className={cn("h-8 rounded-full px-3 text-xs font-medium", trackSort === "number" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>Track #</button>
+              <button type="button" onClick={() => setTrackSort("alpha")} className={cn("h-8 rounded-full px-3 text-xs font-medium", trackSort === "alpha" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>A–Z</button>
+            </div>
+          </div>
           <div className="space-y-5">
-            {groupTracksByDisc(songsOf(album.trackIds)).map(([disc, discTracks]) => (
+            {groupTracksByDisc(songsOf(album.trackIds)).map(([disc, discTracks]) => {
+              const ordered = trackSort === "alpha"
+                ? [...discTracks].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+                : discTracks;
+              return (
               <div key={`disc-${disc}`}>
                 {album.discCount > 1 ? <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">Disc {disc}</p> : null}
                 <div className="divide-y divide-border">
-                  {discTracks.map((t, i) => (
+                  {ordered.map((t, i) => (
                     <div key={t.id} className="flex items-center gap-1 py-1.5">
                       <button type="button" onClick={() => playRest(t.id)} className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left hover:opacity-90">
                         <div className="size-10 shrink-0 overflow-hidden rounded bg-raised">{t.coverUrl ? <img src={proxyCoverUrl(t.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
@@ -363,7 +374,8 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
                   ))}
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
           {similarAlbums(album, albums).length ? (<div className="mt-8"><h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-subtle">Similar albums</h3><AlbumGrid list={similarAlbums(album, albums)} /></div>) : null}
           {albumHits ? (<OnlineMatchesSheet hits={albumHits} applying={applying} onClose={() => setAlbumHits(null)} onPick={async (hit) => { setApplying(true); try { await applyAlbumHit(album.trackIds, { ...hit, genre: refineGenre(hit.genre || "", album.artist, album.title, hit.description || "") }); setAlbumHits(null); } finally { setApplying(false); } }} />) : null}
