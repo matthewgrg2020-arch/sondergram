@@ -1,3 +1,4 @@
+import { refineGenre } from "./genre-refine";
 export type AlbumHit = {
   title: string;
   artist: string;
@@ -14,96 +15,93 @@ type ItunesResult = {
   trackName?: string;
   artistName?: string;
   releaseDate?: string;
-  artworkUrl100?: string;
   primaryGenreName?: string;
-  wrapperType?: string;
-  collectionType?: string;
+  artworkUrl100?: string;
+  artworkUrl600?: string;
   collectionExplicitness?: string;
   trackExplicitness?: string;
   trackCount?: number;
-  longDescription?: string;
-  copyright?: string;
+  description?: string;
 };
 
-function hiResArt(url: string) {
-  return url.replace(/\/\d+x\d+bb/g, "/1200x1200bb");
+function yearFrom(iso?: string) {
+  if (!iso) return "";
+  const y = iso.slice(0, 4);
+  return /^\d{4}$/.test(y) ? y : "";
 }
 
-function yearOf(date?: string) {
-  return date ? date.slice(0, 4) : "";
+function artFrom(row: ItunesResult) {
+  const base = row.artworkUrl600 || row.artworkUrl100 || "";
+  return base.replace(/100x100bb/, "600x600bb").replace(/200x200bb/, "600x600bb");
 }
 
 function fromItunes(row: ItunesResult): AlbumHit | null {
-  const title = (row.collectionName || "").trim();
+  const title = (row.collectionName || row.trackName || "").trim();
   const artist = (row.artistName || "").trim();
   if (!title && !artist) return null;
-  const explicit =
-    row.collectionExplicitness === "explicit" || row.trackExplicitness === "explicit";
   return {
     title: title || "Unknown album",
     artist: artist || "Unknown artist",
-    year: yearOf(row.releaseDate),
+    year: yearFrom(row.releaseDate),
     genre: (row.primaryGenreName || "").trim(),
-    artwork: row.artworkUrl100 ? hiResArt(row.artworkUrl100) : "",
-    description: (row.longDescription || "").trim(),
-    explicit,
-    trackCount: Number(row.trackCount) || 0,
+    artwork: artFrom(row),
+    description: (row.description || "").trim() || "iTunes",
+    explicit: /explicit/i.test(row.collectionExplicitness || "") || /explicit/i.test(row.trackExplicitness || ""),
+    trackCount: typeof row.trackCount === "number" ? row.trackCount : 0,
   };
 }
 
-async function itunesSearch(term: string, entity: "album" | "song") {
-  const url = new URL("https://itunes.apple.com/search");
-  url.searchParams.set("term", term);
-  url.searchParams.set("media", "music");
-  url.searchParams.set("entity", entity);
-  url.searchParams.set("limit", "8");
-  const res = await fetch(url.toString());
-  if (!res.ok) return [];
-  const data = (await res.json()) as { results?: ItunesResult[] };
-  return data.results ?? [];
-}
-
 function score(hit: AlbumHit, artist: string, album: string) {
-  const a = artist.trim().toLowerCase();
-  const b = album.trim().toLowerCase();
+  const a = artist.toLowerCase();
+  const b = album.toLowerCase();
   const ha = hit.artist.toLowerCase();
   const ht = hit.title.toLowerCase();
-  let n = 0;
-  if (a && ha === a) n += 4;
-  else if (a && ha.includes(a)) n += 2;
-  else if (a && a.includes(ha) && ha.length > 3) n += 1;
-  else if (a) n -= 2;
-  if (b && ht === b) n += 6;
-  else if (b && ht.includes(b)) n += 4;
-  else if (b && b.includes(ht) && ht.length > 3) n += 2;
-  else if (b) n -= 3;
-  if (hit.artwork) n += 1;
-  if (hit.description) n += 1;
-  if (hit.trackCount > 1) n += 1;
-  return n;
+  let s = 0;
+  if (a && ha === a) s += 5;
+  else if (a && ha.includes(a)) s += 2;
+  if (b && ht === b) s += 5;
+  else if (b && (ht.includes(b) || b.includes(ht))) s += 2;
+  if (hit.artwork) s += 1;
+  if (hit.genre) s += 1;
+  return s;
 }
 
 export async function searchAlbums(artist: string, album: string, track?: string): Promise<AlbumHit[]> {
-  const cleanArtist = /^unknown/i.test(artist) ? "" : artist.trim();
-  const cleanAlbum = /^unknown/i.test(album) ? "" : album.trim();
-  const term = [cleanArtist, cleanAlbum || track || ""].filter(Boolean).join(" ").trim();
-  if (!term) return [];
+  const cleanArtist = (artist || "").trim();
+  const cleanAlbum = (album || "").trim();
+  const cleanTrack = (track || "").trim();
+  if (!cleanArtist && !cleanAlbum && !cleanTrack) return [];
 
+  let catalog: { title: string; artist: string; year: string; genre: string; artwork: string; source?: string }[] = [];
   try {
     const { searchAlbumHits } = await import("./cover-search-api");
     const hits = await searchAlbumHits({
-      data: { artist: cleanArtist, album: cleanAlbum, track: track || "" },
-    });
-    if (hits?.length) return hits;
+      data: { artist: cleanArtist, album: cleanAlbum, track: cleanTrack },
+    } as any);
+    if (Array.isArray(hits)) catalog = hits as any;
   } catch {
-    /* fall through to the browser catalogs */
+    /* optional path */
   }
 
-  const [albums, songs, catalog] = await Promise.all([
-    itunesSearch(cleanAlbum ? `${cleanArtist} ${cleanAlbum}`.trim() : term, "album"),
-    itunesSearch([cleanArtist, track || cleanAlbum].filter(Boolean).join(" "), "song"),
-    import("./catalog-api").then((mod) => mod.searchMusicDatabase({ data: { query: term } })).catch(() => []),
+  const term = [cleanArtist, cleanAlbum, cleanTrack].filter(Boolean).join(" ");
+  const itunesAlbum = new URL("https://itunes.apple.com/search");
+  itunesAlbum.searchParams.set("term", term);
+  itunesAlbum.searchParams.set("media", "music");
+  itunesAlbum.searchParams.set("entity", "album");
+  itunesAlbum.searchParams.set("limit", "12");
+  const itunesSong = new URL("https://itunes.apple.com/search");
+  itunesSong.searchParams.set("term", term);
+  itunesSong.searchParams.set("media", "music");
+  itunesSong.searchParams.set("entity", "song");
+  itunesSong.searchParams.set("limit", "12");
+
+  const [albumsRes, songsRes] = await Promise.all([
+    fetch(itunesAlbum.toString()).then((r) => (r.ok ? r.json() : { results: [] })).catch(() => ({ results: [] })),
+    fetch(itunesSong.toString()).then((r) => (r.ok ? r.json() : { results: [] })).catch(() => ({ results: [] })),
   ]);
+
+  const albums = ((albumsRes as { results?: ItunesResult[] }).results || []) as ItunesResult[];
+  const songs = ((songsRes as { results?: ItunesResult[] }).results || []) as ItunesResult[];
 
   const hits: AlbumHit[] = [];
   const seen = new Set<string>();
@@ -127,6 +125,9 @@ export async function searchAlbums(artist: string, album: string, track?: string
       explicit: false,
       trackCount: 0,
     });
+  }
+  for (const hit of hits) {
+    hit.genre = refineGenre(hit.genre || "", hit.artist || cleanArtist, hit.title || cleanAlbum, hit.description || "");
   }
   hits.sort((a, b) => score(b, cleanArtist, cleanAlbum) - score(a, cleanArtist, cleanAlbum));
   return hits.slice(0, 12);
@@ -159,65 +160,21 @@ export async function lookupTracklist(artist: string, album: string): Promise<Tr
     const data = (await res.json()) as {
       results?: (ItunesResult & { trackNumber?: number; trackName?: string; collectionName?: string })[];
     };
-    const groups = new Map<string, TracklistSong[]>();
-    for (const row of data.results ?? []) {
+    const rows = data.results || [];
+    const out: TracklistSong[] = [];
+    for (const row of rows) {
       const title = (row.trackName || "").trim();
-      const col = (row.collectionName || "").trim();
-      const art = (row.artistName || a).trim();
-      const n = Number(row.trackNumber) || 0;
       if (!title) continue;
-      const hay = `${art} ${col}`.toLowerCase();
-      if (b && !hay.includes(b.toLowerCase()) && !b.toLowerCase().includes(col.toLowerCase())) continue;
-      if (a && !hay.includes(a.toLowerCase()) && !a.toLowerCase().includes(art.toLowerCase())) continue;
-      const key = `${art.toLowerCase()}::${col.toLowerCase()}`;
-      const list = groups.get(key) ?? [];
-      if (!list.some((song) => song.trackNo === n && song.title === title)) {
-        list.push({ trackNo: n, title, artist: art, album: col || b });
-      }
-      groups.set(key, list);
+      out.push({
+        trackNo: typeof row.trackNumber === "number" ? row.trackNumber : out.length + 1,
+        title,
+        artist: (row.artistName || a).trim(),
+        album: (row.collectionName || b).trim(),
+      });
     }
-    let best: TracklistSong[] = [];
-    for (const list of groups.values()) {
-      if (list.length > best.length) best = list;
-    }
-    return best.sort((x, y) => x.trackNo - y.trackNo);
+    out.sort((x, y) => x.trackNo - y.trackNo);
+    return out;
   } catch {
     return [];
-  }
-}
-
-export async function blobFromUrl(src: string): Promise<Blob | null> {
-  if (!src) return null;
-  if (/^(blob:|data:)/i.test(src)) {
-    try {
-      const res = await fetch(src);
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      return blob.size > 400 ? blob : null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const { proxyCoverUrl } = await import("./covers");
-    const res = await fetch(proxyCoverUrl(src));
-    if (res.ok) {
-      const blob = await res.blob();
-      const type = blob.type || "";
-      if (blob.size > 400 && (!type || type.startsWith("image/"))) return blob;
-    }
-  } catch {
-    /* try the server function next */
-  }
-  try {
-    const { fetchCoverImage } = await import("./cover-search-api");
-    const row = await fetchCoverImage({ data: { url: src } });
-    if (!row?.ok) return null;
-    const bin = atob(row.b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new Blob([bytes], { type: row.type || "image/jpeg" });
-  } catch {
-    return null;
   }
 }
