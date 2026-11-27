@@ -57,7 +57,7 @@ import {
 } from "@/lib/player/engine";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { isYoutubePlayback } from "@/lib/player/stream-search";
-import { applyTheme, applyAccent, loadTheme, loadAccent, ACCENT_PRESETS, type Theme, type AccentId } from "@/lib/player/theme";
+import { applyTheme, applyAccent, applyBackground, loadTheme, loadAccent, loadBg, ACCENT_PRESETS, BG_PRESETS, type Theme, type AccentId, type BgId } from "@/lib/player/theme";
 import {
   loadYoutubeApi,
   setYoutubeHandlers,
@@ -114,11 +114,13 @@ export function PlayerApp() {
   const [party, setParty] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [accent, setAccent] = useState<AccentId>(() => loadAccent());
+  const [bg, setBg] = useState<BgId>(() => loadBg());
   const goView = (v: AppView) => setView(v);
 
   useEffect(() => { void hydrate(); void loadYoutubeApi(); }, [hydrate]);
   useEffect(() => { applyTheme(theme); }, [theme]);
   useEffect(() => { applyAccent(accent); }, [accent]);
+  useEffect(() => { applyBackground(bg); }, [bg]);
 
   const autoNext = useCallback(() => {
     const next = usePlayer.getState().next();
@@ -236,6 +238,26 @@ export function PlayerApp() {
                       }`}
                     >
                       {mode}
+                    </button>
+                  ))}
+                </div>
+                <p className="mb-2 text-xs uppercase tracking-widest text-subtle">Background</p>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {BG_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      title={p.label}
+                      onClick={() => setBg(p.id)}
+                      className={`flex h-10 items-center gap-2 rounded-full px-3 text-xs font-medium ring-2 ${
+                        bg === p.id ? "ring-fg" : "ring-transparent"
+                      }`}
+                      style={{
+                        background: p.swatch,
+                        color: ["cream", "paper", "lavender"].includes(p.id) ? "#111" : "#fff",
+                      }}
+                    >
+                      {p.label}
                     </button>
                   ))}
                 </div>
