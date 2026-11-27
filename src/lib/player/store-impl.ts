@@ -2,13 +2,12 @@
 import { create } from "zustand";
 import { FLAT_EQ } from "./constants";
 import { listStoredTracks, putStoredTrack, clearStoredLibrary, deleteStoredTrack, getAudioBlob, updateStoredMeta } from "./persist";
-import { fetchCoverImage, searchAlbumHits } from "./cover-search-api";
-import { searchAlbums } from "./lookup";
-import { resolveIbUrl } from "./ib-play";
 import { importLocalFiles } from "./import-local-files";
+import { searchAlbumOnline as lookupAlbumOnline } from "./lookup";
 import { exportLibraryBackup, importLibraryBackup } from "./backup";
-import { loadSlskSession, parseSlskTrackId, slskStreamUrl } from "./soulseek";
-import { bindMediaSessionHandlers, syncMediaSession } from "./media-session";
+import { pickRadioIndex } from "./catalog";
+import { loadSlskSession, parseSlskTrackId, slskStreamUrl } from "./soulseek-live";
+import { updateMediaSession } from "./media-session";
 
 export type Track = {
   id: string; name: string; artist: string; album: string; genre: string; tags: string[];
@@ -78,12 +77,13 @@ function storedToTrack(row) {
     const parsed = parseSlskTrackId(row.soulseekId);
     if (parsed.username && parsed.filename) url = slskStreamUrl({ username: parsed.username, filename: parsed.filename }, session);
   } else if (row.ibroadcastId && row.ibFile) {
-    url = resolveIbUrl({ ibroadcastId: row.ibroadcastId, ibFile: row.ibFile, url: `ib:${row.ibroadcastId}` }) || `ib:${row.ibroadcastId}`;
-  } else if (row.previewUrl) url = row.previewUrl;
-  else if (row.youtubeId) url = `yt:${row.youtubeId}`;
+    url = `/api/ib-stream?id=${encodeURIComponent(row.ibroadcastId)}&file=${encodeURIComponent(row.ibFile)}`;
+  } else if (row.url) {
+    url = row.url;
+  }
   let coverUrl = row.coverRemote || null;
   if (!coverUrl && row.cover) {
-    try { coverUrl = URL.createObjectURL(row.cover instanceof Blob ? row.cover : new Blob([row.cover])); } catch {}
+    try { coverUrl = URL.createObjectURL(row.cover); } catch {}
   }
   return {
     id: row.id, name: row.name, artist: row.artist, album: row.album, genre: row.genre || "",
@@ -101,11 +101,10 @@ function storedToTrack(row) {
 
 function pushMediaSession(state) {
   try {
-    const idx = state.index;
-    const track = idx >= 0 ? state.tracks[idx] : null;
-    syncMediaSession({
+    const track = state.tracks[state.index];
+    updateMediaSession({
       track: track
-        ? { name: track.name, artist: track.artist, album: track.album, coverUrl: track.coverUrl }
+        ? { title: track.name, artist: track.artist, album: track.album, coverUrl: track.coverUrl }
         : null,
       playing: Boolean(state.playing),
       duration: Number(state.duration) || (track && track.durationSec) || 0,
@@ -135,139 +134,93 @@ export const usePlayer = create((set, get) => ({
   flash: (notice) => { set({ notice }); setTimeout(() => set({ notice: null }), 3200); },
   hydrate: async () => {
     try {
-      const saved = loadEqSettings();
-      if (saved) {
-        const patch = {};
-        if (Array.isArray(saved.eq) && saved.eq.length) patch.eq = saved.eq.slice();
-        if (typeof saved.preamp === "number") patch.preamp = saved.preamp;
-        if (typeof saved.presetId === "string") patch.presetId = saved.presetId;
-        if (Array.isArray(saved.customPresets)) patch.customPresets = saved.customPresets;
-        if (typeof saved.bassLock === "boolean") patch.bassLock = saved.bassLock;
-        if (typeof saved.spatial === "string") patch.spatial = saved.spatial;
-        if (typeof saved.spatialAmount === "number") patch.spatialAmount = saved.spatialAmount;
-        if (typeof saved.remaster === "string") patch.remaster = saved.remaster;
-        if (typeof saved.remasterAmt === "number") patch.remasterAmt = saved.remasterAmt;
-        if (Object.keys(patch).length) set(patch);
-      }
-    } catch {}
-    try {
       const rows = await listStoredTracks();
-      set({ tracks: (rows || []).map(storedToTrack), ready: true });
+      const tracks = (rows || []).map(storedToTrack);
+      const eqSaved = loadEqSettings();
+      set({
+        tracks,
+        ready: true,
+        ...(eqSaved?.eq ? { eq: eqSaved.eq } : {}),
+        ...(eqSaved?.preamp != null ? { preamp: eqSaved.preamp } : {}),
+        ...(eqSaved?.presetId ? { presetId: eqSaved.presetId } : {}),
+        ...(eqSaved?.customPresets ? { customPresets: eqSaved.customPresets } : {}),
+        ...(eqSaved?.bassLock != null ? { bassLock: eqSaved.bassLock } : {}),
+        ...(eqSaved?.spatial ? { spatial: eqSaved.spatial } : {}),
+        ...(eqSaved?.spatialAmount != null ? { spatialAmount: eqSaved.spatialAmount } : {}),
+        ...(eqSaved?.remaster ? { remaster: eqSaved.remaster } : {}),
+        ...(eqSaved?.remasterAmt != null ? { remasterAmt: eqSaved.remasterAmt } : {}),
+      });
     } catch {
       set({ ready: true });
     }
   },
   playIndex: async (index, _user) => {
-    const track = get().tracks[index];
-    if (!track) return;
-    set({ index, playing: true, currentTime: 0 });
-    pushMediaSession({ ...get(), index, playing: true, currentTime: 0 });
-    try {
-      const { beginPlayback } = await import("./engine");
-      let url = track.url;
-      if (track.ibroadcastId) {
-        const ib = resolveIbUrl(track);
-        if (ib) url = ib;
-      }
-      await beginPlayback(url || "", 0);
-      pushMediaSession(get());
-    } catch (e) { console.warn(e); }
+    const s = get();
+    if (index < 0 || index >= s.tracks.length) return;
+    set({ index, playing: true });
+    pushMediaSession({ ...get(), index, playing: true });
   },
   playIds: (ids) => {
-    const tracks = get().tracks;
-    const first = ids.find((id) => tracks.some((t) => t.id === id));
-    if (!first) return;
-    const i = tracks.findIndex((t) => t.id === first);
-    if (i >= 0) get().playIndex(i);
+    const map = new Map(get().tracks.map((t) => [t.id, t]));
+    const ordered = ids.map((id) => map.get(id)).filter(Boolean);
+    if (!ordered.length) return;
+    const rest = get().tracks.filter((t) => !ids.includes(t.id));
+    set({ tracks: [...ordered, ...rest], index: 0, playing: true });
+    pushMediaSession({ ...get(), index: 0, playing: true });
   },
   playRest: (id) => {
-    const i = get().tracks.findIndex((t) => t.id === id);
-    if (i >= 0) get().playIndex(i);
+    const idx = get().tracks.findIndex((t) => t.id === id);
+    if (idx >= 0) get().playIndex(idx, true);
   },
   queueNext: (id) => set((s) => ({ upNext: [id, ...s.upNext.filter((x) => x !== id)] })),
   queueNextMany: (ids) => set((s) => ({ upNext: [...ids, ...s.upNext.filter((x) => !ids.includes(x))] })),
   queueLast: (id) => set((s) => ({ upNext: [...s.upNext.filter((x) => x !== id), id] })),
   setTimes: (currentTime, duration) => {
     set({ currentTime, duration });
-    const s = get();
-    const sec = Math.floor(Number(currentTime) || 0);
-    if (s._msPosSec !== sec) {
-      s._msPosSec = sec;
-      pushMediaSession({ ...s, currentTime, duration });
-    }
   },
   setPlaying: (playing) => {
-    set({ playing: Boolean(playing) });
-    pushMediaSession({ ...get(), playing: Boolean(playing) });
-    if (!playing) {
-      void import("./engine").then((m) => m.pauseOutput()).catch(() => {});
-    } else {
-      void import("./engine").then((m) => m.resumeEngine()).catch(() => {});
-    }
+    set({ playing });
+    pushMediaSession({ ...get(), playing });
   },
   nextIndex: (_user) => {
-    let s = get();
-    if (!s.tracks.length) return null;
-    while ((s.upNext || []).length) {
-      const id = s.upNext[0];
+    const s = get();
+    if (s.upNext.length) {
+      const nextId = s.upNext[0];
+      const idx = s.tracks.findIndex((t) => t.id === nextId);
       set({ upNext: s.upNext.slice(1) });
-      s = get();
-      const i = s.tracks.findIndex((t) => t.id === id);
-      if (i >= 0) return i;
+      return idx >= 0 ? idx : null;
     }
-    if (s.repeat === "one" && s.index >= 0) return s.index;
-    if (s.shuffle && s.tracks.length > 1) {
+    if (s.radio) return pickRadioIndex(s.tracks, s.index, s.radioRecent);
+    if (s.repeat === "one") return s.index;
+    if (s.shuffle) {
+      if (s.tracks.length < 2) return s.index;
       let n = Math.floor(Math.random() * s.tracks.length);
       if (n === s.index) n = (n + 1) % s.tracks.length;
       return n;
     }
-    let n = s.index < 0 ? 0 : s.index + 1;
-    if (n >= s.tracks.length) {
-      if (s.repeat === "all") return 0;
-      return null;
-    }
-    return n;
+    if (s.index + 1 < s.tracks.length) return s.index + 1;
+    if (s.repeat === "all") return 0;
+    return null;
   },
   prevIndex: () => {
     const s = get();
-    if (!s.tracks.length) return null;
-    if ((s.currentTime || 0) > 3 && s.index >= 0) return s.index;
-    if (s.shuffle && s.tracks.length > 1) {
-      let n = Math.floor(Math.random() * s.tracks.length);
-      if (n === s.index) n = (n + 1) % s.tracks.length;
-      return n;
-    }
+    if (s.currentTime > 3) return s.index;
     if (s.index > 0) return s.index - 1;
-    if (s.repeat === "all") return s.tracks.length - 1;
-    return s.index >= 0 ? s.index : 0;
+    if (s.repeat === "all" && s.tracks.length) return s.tracks.length - 1;
+    return s.index;
   },
   toggle: async () => {
-    const { playing } = get();
-    if (playing) {
-      set({ playing: false });
-      pushMediaSession({ ...get(), playing: false });
-      try { (await import("./engine")).pauseOutput(); } catch {}
-    } else {
-      set({ playing: true });
-      pushMediaSession({ ...get(), playing: true });
-      try { const { resumeEngine } = await import("./engine"); await resumeEngine(); } catch {}
-    }
+    get().setPlaying(!get().playing);
   },
   seek: async (t) => {
     set({ currentTime: t });
-    try { (await import("./engine")).seekOutput(t); } catch {}
-    pushMediaSession({ ...get(), currentTime: t });
   },
   next: () => {
     const n = get().nextIndex(true);
     if (n !== null) get().playIndex(n, true);
+    else get().setPlaying(false);
   },
   prev: () => {
-    const s = get();
-    if ((s.currentTime || 0) > 3 && s.index >= 0) {
-      get().seek(0);
-      return;
-    }
     const p = get().prevIndex();
     if (p !== null) get().playIndex(p, true);
   },
@@ -275,6 +228,14 @@ export const usePlayer = create((set, get) => ({
   updateMeta: (id, patch) => {
     set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, ...patch, metaEdited: true } : t)) }));
     void updateStoredMeta(id, { ...patch, metaEdited: true }).catch(() => {});
+  },
+  toggleLike: (id) => {
+    const track = get().tracks.find((t) => t.id === id);
+    if (!track) return;
+    const liked = !track.liked;
+    set((s) => ({ tracks: s.tracks.map((t) => (t.id === id ? { ...t, liked } : t)) }));
+    void updateStoredMeta(id, { liked }).catch(() => {});
+    get().flash(liked ? "Added to favorites" : "Removed from favorites");
   },
   updateAlbumMeta: (ids, patch) => {
     const hold = new Set(ids || []);
@@ -323,179 +284,73 @@ export const usePlayer = create((set, get) => ({
     for (const id of hold) {
       try { await updateStoredMeta(id, { cover: file, coverRemote: undefined }); } catch {}
     }
-    return true;
   },
   setCoverUrl: async (ids, coverUrl) => {
-    const hold = new Set((ids || []).filter(Boolean));
-    if (!hold.size || !coverUrl) return false;
-    let displayUrl = coverUrl;
+    const hold = new Set(ids || []);
+    set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl } : t)) }));
     let coverBlob = null;
     try {
-      const pulled = await Promise.race([
-        fetchCoverImage({ data: { url: coverUrl } }),
-        new Promise((resolve) => setTimeout(() => resolve(null), 12000)),
-      ]);
-      if (pulled?.ok && pulled.b64) {
-        const bin = atob(pulled.b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        coverBlob = new Blob([bytes], { type: pulled.type || "image/jpeg" });
-        try { displayUrl = URL.createObjectURL(coverBlob); } catch {}
-      }
+      const res = await fetch(coverUrl);
+      if (res.ok) coverBlob = await res.blob();
     } catch {}
-    set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, coverUrl: displayUrl } : t)) }));
     for (const id of hold) {
       try {
         if (coverBlob) await updateStoredMeta(id, { cover: coverBlob, coverRemote: coverUrl });
         else await updateStoredMeta(id, { coverRemote: coverUrl });
       } catch {}
     }
-    return true;
   },
   searchAlbumOnline: async (artist, album, track) => {
     try {
-      const hits = await searchAlbumHits({ data: { artist: artist || "", album: album || "", track: track || "" } });
-      if (Array.isArray(hits) && hits.length) return hits;
-    } catch {}
-    try { return await searchAlbums(artist || "", album || "", track || ""); }
-    catch { return []; }
+      return await lookupAlbumOnline(artist, album, track);
+    } catch {
+      return [];
+    }
   },
   applyAlbumHit: async (ids, hit) => {
-    if (!hit || !ids?.length) return false;
-    const hold = new Set(ids);
+    if (!hit) return;
     const patch = {
       album: hit.title || undefined,
       artist: hit.artist || undefined,
       year: hit.year || undefined,
       genre: hit.genre || undefined,
-      explicit: Boolean(hit.explicit),
-      metaEdited: true,
     };
-    set((s) => ({ tracks: s.tracks.map((t) => (hold.has(t.id) ? { ...t, ...patch } : t)) }));
-    for (const id of hold) {
-      try {
-        await updateStoredMeta(id, {
-          album: patch.album, artist: patch.artist, year: patch.year,
-          genre: patch.genre, explicit: patch.explicit, metaEdited: true,
-        });
-      } catch {}
-    }
+    get().updateAlbumMeta(ids, patch);
     if (hit.artwork) { try { await get().setCoverUrl(ids, hit.artwork); } catch {} }
-    return true;
   },
-  setVolume: (volume) => set({ volume }),
-  setMuted: (muted) => set({ muted }),
-  setShuffle: (shuffle) => set({ shuffle }),
-  setRepeat: (repeat) => set({ repeat }),
   setEq: (eq) => { set({ eq }); persistEqSettings({ eq }); },
   setPreamp: (preamp) => { set({ preamp }); persistEqSettings({ preamp }); },
   setPresetId: (presetId) => { set({ presetId }); persistEqSettings({ presetId }); },
+  setCustomPresets: (customPresets) => { set({ customPresets }); persistEqSettings({ customPresets }); },
+  setBassLock: (bassLock) => { set({ bassLock }); persistEqSettings({ bassLock }); },
   setSpatial: (spatial) => { set({ spatial }); persistEqSettings({ spatial }); },
   setSpatialAmount: (spatialAmount) => { set({ spatialAmount }); persistEqSettings({ spatialAmount }); },
   setRemaster: (remaster) => { set({ remaster }); persistEqSettings({ remaster }); },
   setRemasterAmt: (remasterAmt) => { set({ remasterAmt }); persistEqSettings({ remasterAmt }); },
-  setBassLock: (bassLock) => { set({ bassLock }); persistEqSettings({ bassLock: Boolean(bassLock) }); },
-  setNormalize: (normalize) => set({ normalize }),
-  setGapless: (gapless) => set({ gapless }),
-  setCrossfade: (crossfade) => set({ crossfade }),
+  setVolume: (volume) => set({ volume }),
+  setMuted: (muted) => set({ muted }),
+  setShuffle: (shuffle) => set({ shuffle }),
+  setRepeat: (repeat) => set({ repeat }),
   setRate: (rate) => set({ rate }),
   setPitch: (pitch) => set({ pitch }),
   setIsolate: (isolate) => set({ isolate }),
-  setEqBand: (i, value) => set((s) => {
-    const eq = Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ];
-    if (i >= 0 && i < eq.length) eq[i] = value;
-    const next = { eq, presetId: "custom" };
-    persistEqSettings(next);
-    return next;
-  }),
-  applyPreset: (presetId, gains, preamp) => {
-    const next = {
-      presetId: presetId || "custom",
-      eq: Array.isArray(gains) ? gains.slice() : [...FLAT_EQ],
-      preamp: typeof preamp === "number" ? preamp : 0,
-    };
-    set(next);
-    persistEqSettings(next);
-  },
-  saveCustomPreset: (label) => {
-    const s = get();
-    const name = String(label || "").trim() || "Custom";
-    const id = `custom-${Date.now()}`;
-    const row = {
-      id,
-      label: name,
-      gains: Array.isArray(s.eq) ? s.eq.slice() : [...FLAT_EQ],
-      preamp: typeof s.preamp === "number" ? s.preamp : 0,
-    };
-    const customPresets = [...(s.customPresets || []), row];
-    set({ customPresets, presetId: id });
-    persistEqSettings(snapshotSound({ ...get(), customPresets, presetId: id }));
-    get().flash(`Saved preset "${name}"`);
-    return id;
-  },
-  deleteCustomPreset: (id) => {
-    const s = get();
-    const customPresets = (s.customPresets || []).filter((p) => p.id !== id);
-    const presetId = s.presetId === id ? "flat" : s.presetId;
-    set({ customPresets, presetId });
-    persistEqSettings({ customPresets, presetId });
-  },
-  toggleRadio: () => set((s) => ({ radio: !s.radio })),
   setBalance: (balance) => set({ balance }),
-  setViz: (viz) => set({ viz }),
-  setFocus: (focus) => set({ focus }),
-  setQuiet: (quiet) => set({ quiet }),
   setMono: (mono) => set({ mono }),
-  setAutoEq: (autoEq) => set({ autoEq }),
+  setCrossfade: (crossfade) => set({ crossfade }),
+  setGapless: (gapless) => set({ gapless }),
+  setNormalize: (normalize) => set({ normalize }),
   setSkipSilence: (skipSilence) => set({ skipSilence }),
+  setQuiet: (quiet) => set({ quiet }),
   setHaptic: (haptic) => set({ haptic }),
   setShakeSkip: (shakeSkip) => set({ shakeSkip }),
-  setSleep: (sleep) => set({ sleep, sleepUntil: sleep ? Date.now() + sleep * 60000 : null }),
+  setAutoEq: (autoEq) => set({ autoEq }),
   setStopAfter: (stopAfter) => set({ stopAfter }),
-  setLoopA: (loopA) => set({ loopA }),
-  setLoopB: (loopB) => set({ loopB }),
-  setBookmarks: (bookmarks) => set({ bookmarks }),
-  setBookmarkPrompt: (bookmarkPrompt) => set({ bookmarkPrompt }),
-  setSkipLowRated: (skipLowRated) => set({ skipLowRated }),
-  setSkipSeconds: (skipSeconds) => set({ skipSeconds }),
-  setPlayRecordPercent: (playRecordPercent) => set({ playRecordPercent }),
-  setRestrictData: (restrictData) => set({ restrictData }),
-  setAutoFullScreen: (autoFullScreen) => set({ autoFullScreen }),
+  setSleep: (sleep) => set({ sleep, sleepUntil: sleep ? Date.now() + sleep * 60 * 1000 : null }),
   setRadio: (radio) => set({ radio }),
-  importBandcamp: asyncNoop,
-  importStreamHits: asyncNoop,
-  importFoundAudio: asyncNoop,
-  importSlskFiles: asyncNoop,
-  importIbPlaylist: asyncNoop,
+  setViz: (viz) => set({ viz }),
+  setFocus: (focus) => set({ focus }),
+  playPlaylist: (id) => {
+    const pl = get().playlists.find((p) => p.id === id);
+    if (pl?.trackIds?.length) get().playIds(pl.trackIds);
+  },
 }));
-
-// Lock Screen / Apple Watch controls
-if (typeof window !== "undefined") {
-  bindMediaSessionHandlers({
-    play: () => usePlayer.getState().setPlaying(true),
-    pause: () => usePlayer.getState().setPlaying(false),
-    stop: () => usePlayer.getState().setPlaying(false),
-    nexttrack: () => {
-      const s = usePlayer.getState();
-      if (typeof s.next === "function") s.next();
-    },
-    previoustrack: () => {
-      const s = usePlayer.getState();
-      if (typeof s.prev === "function") s.prev();
-    },
-    seekto: (time) => {
-      const s = usePlayer.getState();
-      if (typeof s.seek === "function") s.seek(time);
-    },
-    seekbackward: (offset) => {
-      const s = usePlayer.getState();
-      const t = Math.max(0, (s.currentTime || 0) - (offset || 10));
-      if (typeof s.seek === "function") s.seek(t);
-    },
-    seekforward: (offset) => {
-      const s = usePlayer.getState();
-      const t = (s.currentTime || 0) + (offset || 10);
-      if (typeof s.seek === "function") s.seek(t);
-    },
-  });
-}
