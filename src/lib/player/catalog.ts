@@ -73,13 +73,27 @@ export function resolveDiskNo(track: Pick<{ diskNo?: number; album?: string }, "
 }
 
 /** Group tracks by disc for album page sections. */
-export function groupTracksByDisc<T extends { diskNo?: number; album?: string; id: string }>(tracks: T[]) {
+export function groupTracksByDisc<T extends { diskNo?: number; album?: string; id: string; trackNo?: number; name?: string }>(tracks: T[]) {
   const map = new Map<number, T[]>();
   for (const t of tracks) {
     const d = resolveDiskNo(t);
     const list = map.get(d);
     if (list) list.push(t);
     else map.set(d, [t]);
+  }
+  const num = (t: T) => {
+    if (t.trackNo && t.trackNo > 0) return t.trackNo;
+    const m = String(t.name || "").trim().match(/^(\d{1,3})\s*[-._)]\s+/);
+    return m ? Number(m[1]) : 0;
+  };
+  for (const list of map.values()) {
+    list.sort((a, b) => {
+      const an = num(a); const bn = num(b);
+      if (an && bn && an !== bn) return an - bn;
+      if (an && !bn) return -1;
+      if (bn && !an) return 1;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
   }
   return [...map.entries()].sort((a, b) => a[0] - b[0]);
 }
@@ -150,15 +164,26 @@ function pickAlbumArtist(songs: Track[]) {
   return top.label;
 }
 
+function inferredTrackNo(track: { trackNo?: number; name?: string }): number {
+  if (track.trackNo && track.trackNo > 0) return track.trackNo;
+  const name = String(track.name || "").trim();
+  const m = name.match(/^(\d{1,3})\s*[-._)]\s+/);
+  if (m) {
+    const n = Number(m[1]);
+    if (n > 0 && n < 500) return n;
+  }
+  return 0;
+}
+
 export function compareTracks(a: Track, b: Track) {
   const disk = resolveDiskNo(a) - resolveDiskNo(b);
   if (disk) return disk;
-  const aNo = a.trackNo || 0;
-  const bNo = b.trackNo || 0;
+  const aNo = inferredTrackNo(a);
+  const bNo = inferredTrackNo(b);
   if (aNo && bNo && aNo !== bNo) return aNo - bNo;
   if (aNo && !bNo) return -1;
   if (bNo && !aNo) return 1;
-  return (a.addedAt ?? 0) - (b.addedAt ?? 0) || a.name.localeCompare(b.name);
+  return a.name.localeCompare(b.name) || (a.addedAt ?? 0) - (b.addedAt ?? 0);
 }
 
 export function groupAlbums(tracks: Track[]): AlbumGroup[] {
