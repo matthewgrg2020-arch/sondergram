@@ -57,7 +57,7 @@ import {
 } from "@/lib/player/engine";
 import { usePlayer, type Track } from "@/lib/player/store";
 import { isYoutubePlayback } from "@/lib/player/stream-search";
-import { applyTheme, applyAccent, applyBackground, loadTheme, loadAccent, loadBg, ACCENT_PRESETS, BG_PRESETS, type Theme, type AccentId, type BgId } from "@/lib/player/theme";
+import { applyTheme, applyAccent, applyBackground, bootAppearance, loadTheme, loadAccent, loadBg, ACCENT_PRESETS, BG_PRESETS, type Theme, type AccentId, type BgId } from "@/lib/player/theme";
 import {
   loadYoutubeApi,
   setYoutubeHandlers,
@@ -121,6 +121,15 @@ export function PlayerApp() {
   useEffect(() => { applyTheme(theme); }, [theme]);
   useEffect(() => { applyAccent(accent); }, [accent]);
   useEffect(() => { applyBackground(bg); }, [bg]);
+  useEffect(() => {
+    bootAppearance();
+    const onShow = () => bootAppearance();
+    window.addEventListener("pageshow", onShow);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") bootAppearance();
+    });
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
 
   const autoNext = useCallback(() => {
     const next = usePlayer.getState().next();
@@ -232,7 +241,7 @@ export function PlayerApp() {
                     <button
                       key={mode}
                       type="button"
-                      onClick={() => setTheme(mode)}
+                      onClick={() => { setTheme(mode); applyTheme(mode); }}
                       className={`h-10 flex-1 rounded-full text-sm font-medium capitalize ${
                         theme === mode ? "bg-accent text-accent-fg" : "bg-surface text-muted hover:text-fg"
                       }`}
@@ -248,7 +257,7 @@ export function PlayerApp() {
                       key={p.id}
                       type="button"
                       title={p.label}
-                      onClick={() => setBg(p.id)}
+                      onClick={() => { applyBackground(p.id); setBg(p.id); }}
                       className={`flex h-10 items-center gap-2 rounded-full px-3 text-xs font-medium ring-2 ${
                         bg === p.id ? "ring-fg" : "ring-transparent"
                       }`}
@@ -268,7 +277,7 @@ export function PlayerApp() {
                       key={p.id}
                       type="button"
                       title={p.label}
-                      onClick={() => setAccent(p.id)}
+                      onClick={() => { applyAccent(p.id); setAccent(p.id); }}
                       className={`flex h-10 items-center gap-2 rounded-full px-3 text-xs font-medium ring-2 ${
                         accent === p.id ? "ring-fg" : "ring-transparent"
                       }`}
