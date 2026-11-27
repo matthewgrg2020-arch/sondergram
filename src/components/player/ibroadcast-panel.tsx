@@ -167,6 +167,8 @@ export function IbroadcastPanel() {
         liked: false,
         starred: false,
         lossless: false,
+        audio: new Blob([]),
+        audioType: "audio/mpeg",
         ibroadcastId: item.id,
         ibFile: item.file,
         coverRemote: item.artwork,
