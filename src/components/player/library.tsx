@@ -175,16 +175,45 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const album = openAlbum ? albums.find((a) => a.key === openAlbum) : null;
   const artist = openArtist ? artists.find((a) => a.name === openArtist) : null;
 
-  const AlbumGrid = ({ list }: { list: typeof albums }) => (
-    <div className={cn("grid gap-3", size === "s" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-6" : size === "m" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3")}>
-      {list.map((item) => (
-        <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
-          <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">{item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
-          {titles === "on" ? (<><p className="mt-2 truncate text-sm">{item.title}</p><p className="truncate text-xs text-muted">{item.artist}{item.discCount > 1 ? ` · ${item.discCount} discs` : ""}</p></>) : null}
-        </button>
-      ))}
-    </div>
-  );
+  const AlbumGrid = ({ list }: { list: typeof albums }) => {
+    if (titles === "list") {
+      return (
+        <div className="divide-y divide-border">
+          {list.map((item) => {
+            const dur = albumDuration(item.trackIds);
+            const meta = [
+              item.artist,
+              item.year || null,
+              item.genre || null,
+              `${item.trackIds.length} track${item.trackIds.length === 1 ? "" : "s"}`,
+              item.discCount > 1 ? `${item.discCount} discs` : null,
+              dur ? formatDuration(dur) : null,
+              item.lossless ? "Lossless" : null,
+            ].filter(Boolean).join(" · ");
+            return (
+              <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="flex w-full items-center gap-3 py-2.5 text-left">
+                <div className="size-12 shrink-0 overflow-hidden rounded-md bg-raised">{item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="truncate text-xs text-muted">{meta}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+    return (
+      <div className={cn("grid gap-3", size === "s" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-6" : size === "m" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3")}>
+        {list.map((item) => (
+          <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
+            <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">{item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}</div>
+            {titles === "on" ? (<><p className="mt-2 truncate text-sm">{item.title}</p><p className="truncate text-xs text-muted">{item.artist}{item.discCount > 1 ? ` · ${item.discCount} discs` : ""}</p></>) : null}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <section className="panel flex min-h-0 flex-1 flex-col p-4 sm:p-5">
@@ -211,12 +240,15 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
           <div className="flex items-center gap-1 rounded-full bg-raised p-1">
             <button type="button" onClick={() => view.setTitles("on")} className={cn("h-8 rounded-full px-3 text-xs font-medium transition-colors", titles === "on" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>Titles</button>
             <button type="button" onClick={() => view.setTitles("off")} className={cn("h-8 rounded-full px-3 text-xs font-medium transition-colors", titles === "off" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>Cover only</button>
+            <button type="button" onClick={() => view.setTitles("list")} className={cn("h-8 rounded-full px-3 text-xs font-medium transition-colors", titles === "list" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>List</button>
           </div>
-          <div className="flex items-center gap-1 rounded-full bg-raised p-1">
-            {(["s", "m", "l"] as const).map((s) => (
-              <button key={s} type="button" onClick={() => view.setSize(s)} className={cn("h-8 rounded-full px-3 text-xs font-medium uppercase transition-colors", size === s ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>{s}</button>
-            ))}
-          </div>
+          {titles !== "list" ? (
+            <div className="flex items-center gap-1 rounded-full bg-raised p-1">
+              {(["s", "m", "l"] as const).map((s) => (
+                <button key={s} type="button" onClick={() => view.setSize(s)} className={cn("h-8 rounded-full px-3 text-xs font-medium uppercase transition-colors", size === s ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>{s}</button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
