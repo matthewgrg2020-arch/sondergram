@@ -14,6 +14,8 @@ export type AlbumGroup = {
   note: string;
   lossless: boolean;
   rating: number;
+  /** Highest disc number present (1 = single disc). */
+  discCount: number;
 };
 
 export type ArtistGroup = {
@@ -44,6 +46,44 @@ function normAlbum(name: string) {
   return (name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/** Strip "Disc 1", "CD2", "(Disk 3 of 3)" style suffixes so multi-disc sets share one album. */
+export function cleanAlbumTitle(name: string) {
+  return (name || "")
+    .replace(/\s*[\(\[]\s*(?:cd|disc|disk)\s*\d+(?:\s*of\s*\d+)?\s*[\)\]]\s*$/i, "")
+    .replace(/\s*[-–—]\s*(?:cd|disc|disk)\s*\d+\s*$/i, "")
+    .replace(/\s+(?:cd|disc|disk)\s*\d+\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Prefer tagged diskNo; otherwise parse from album title suffix. */
+export function resolveDiskNo(track: Pick<{ diskNo?: number; album?: string }, "diskNo" | "album">): number {
+  const tagged = Number(track.diskNo || 0);
+  if (Number.isFinite(tagged) && tagged > 0) return Math.floor(tagged);
+  const album = track.album || "";
+  const m =
+    album.match(/[\(\[]\s*(?:cd|disc|disk)\s*(\d+)/i) ||
+    album.match(/[-–—]\s*(?:cd|disc|disk)\s*(\d+)/i) ||
+    album.match(/\b(?:cd|disc|disk)\s*(\d+)\s*$/i);
+  if (m) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 1;
+}
+
+/** Group tracks by disc for album page sections. */
+export function groupTracksByDisc<T extends { diskNo?: number; album?: string; id: string }>(tracks: T[]) {
+  const map = new Map<number, T[]>();
+  for (const t of tracks) {
+    const d = resolveDiskNo(t);
+    const list = map.get(d);
+    if (list) list.push(t);
+    else map.set(d, [t]);
+  }
+  return [...map.entries()].sort((a, b) => a[0] - b[0]);
+}
+
 export function isVariousName(value: string) {
   const name = (value || "").trim().toLowerCase();
   return (
@@ -64,7 +104,7 @@ export function isVariousName(value: string) {
 
 /** Group VA / compilation albums by album title alone so tracks stick together. */
 export function albumKey(track: Pick<Track, "album" | "albumArtist" | "artist" | "id">) {
-  const album = normAlbum(track.album);
+  const album = normAlbum(cleanAlbumTitle(track.album));
   if (!album || album === "unknown album") return `track::${track.id}`;
   const albumArtist = (track.albumArtist || "").trim().toLowerCase();
   const artist = (track.artist || "").trim().toLowerCase();
@@ -72,7 +112,6 @@ export function albumKey(track: Pick<Track, "album" | "albumArtist" | "artist" |
     return `album::va::${album}`;
   }
   if (albumArtist && !isVariousName(albumArtist)) return `album::${albumArtist}::${album}`;
-  // Prefer album-title grouping when albumArtist is empty — compilations often omit it
   if (!albumArtist) return `album::${album}`;
   return `album::${albumArtist || artist}::${album}`;
 }
@@ -86,8 +125,8 @@ function majority(values: string[]) {
   for (const value of values) {
     const key = value.trim().toLowerCase();
     if (!key) continue;
-    const row = counts.get(key);
-    if (row) row.n += 1;
+    const cur = counts.get(key);
+    if (cur) cur.n += 1;
     else counts.set(key, { label: value.trim(), n: 1 });
   }
   let best: { label: string; n: number } | null = null;
@@ -112,7 +151,7 @@ function pickAlbumArtist(songs: Track[]) {
 }
 
 export function compareTracks(a: Track, b: Track) {
-  const disk = (a.diskNo || 1) - (b.diskNo || 1);
+  const disk = resolveDiskNo(a) - resolveDiskNo(b);
   if (disk) return disk;
   const aNo = a.trackNo || 0;
   const bNo = b.trackNo || 0;
@@ -133,27 +172,29 @@ export function groupAlbums(tracks: Track[]): AlbumGroup[] {
   const albums: AlbumGroup[] = [];
   for (const [key, songs] of map) {
     songs.sort(compareTracks);
-    const first = songs[0];
+    const first = songs[0]!;
     const genre =
       songs.find((s) => s.genre)?.genre ||
       songs.find((s) => s.artistGenre)?.artistGenre ||
       "";
+    const title = cleanAlbumTitle(first.album) || first.album.trim() || "Unknown album";
+    const artist = pickAlbumArtist(songs);
+    const tags = [...new Set(songs.flatMap((s) => [...(s.tags || []), ...(s.artistTags || [])]))];
     albums.push({
       key,
-      title: first.album.trim() || "Unknown album",
-      artist: pickAlbumArtist(songs),
+      title,
+      artist,
       year: songs.find((s) => s.year)?.year ?? "",
       coverUrl: songs.find((s) => s.coverUrl)?.coverUrl ?? null,
       trackIds: songs.map((s) => s.id),
-      tags: [...new Set(songs.flatMap((s) => [...(s.tags || []), ...(s.artistTags || [])]))],
+      tags,
       genre,
-      explicit: isExplicitAlbum(
-        { title: first.album.trim() || "Unknown album", artist: pickAlbumArtist(songs), genre, tags: [...new Set(songs.flatMap((s) => [...(s.tags || []), ...(s.artistTags || [])]))] },
-        songs,
-      ) || songs.some((s) => isExplicitTrack(s)),
+      explicit:
+        isExplicitAlbum({ title, artist, genre, tags }, songs) || songs.some((s) => isExplicitTrack(s)),
       note: songs.find((s) => s.albumNote)?.albumNote ?? "",
       lossless: songs.some((s) => s.lossless),
       rating: songs.find((s) => s.albumRating)?.albumRating ?? 0,
+      discCount: Math.max(1, ...songs.map((s) => resolveDiskNo(s))),
     });
   }
   return albums.sort((a, b) => a.title.localeCompare(b.title));
@@ -199,21 +240,24 @@ export function groupArtists(tracks: Track[]): ArtistGroup[] {
 export type TagGroup = {
   name: string;
   albums: AlbumGroup[];
+  trackCount: number;
 };
 
 export function groupTags(albums: AlbumGroup[]): TagGroup[] {
   const map = new Map<string, TagGroup>();
   for (const album of albums) {
-    for (const tag of album.tags) {
-      const key = tag.trim().toLowerCase();
-      if (!key) continue;
-      // Skip source tags
-      if (["ibroadcast", "bandcamp", "youtube", "youtube music", "soulseek", "amazon"].includes(key)) continue;
+    for (const tag of album.tags || []) {
+      const name = String(tag || "").trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
       const existing = map.get(key);
       if (existing) {
-        if (!existing.albums.some((a) => a.key === album.key)) existing.albums.push(album);
+        if (!existing.albums.some((a) => a.key === album.key)) {
+          existing.albums.push(album);
+          existing.trackCount += album.trackIds.length;
+        }
       } else {
-        map.set(key, { name: tag.trim(), albums: [album] });
+        map.set(key, { name, albums: [album], trackCount: album.trackIds.length });
       }
     }
   }
@@ -247,8 +291,8 @@ export function radioScore(seed: Track, candidate: Track): number {
   const artistA = (seed.artist || "").trim().toLowerCase();
   const artistB = (candidate.artist || "").trim().toLowerCase();
   if (artistA && artistB && artistA === artistB) n += 4;
-  const albumA = (seed.album || "").trim().toLowerCase();
-  const albumB = (candidate.album || "").trim().toLowerCase();
+  const albumA = cleanAlbumTitle(seed.album || "").toLowerCase();
+  const albumB = cleanAlbumTitle(candidate.album || "").toLowerCase();
   if (albumA && albumB && albumA === albumB) n += 2;
   const genreA = (seed.genre || seed.artistGenre || "").trim().toLowerCase();
   const genreB = (candidate.genre || candidate.artistGenre || "").trim().toLowerCase();
@@ -279,82 +323,51 @@ export function pickRadioIndex(tracks: Track[], current: number, recentIds: stri
   if (pool.length === 0) {
     const others = tracks.map((_, i) => i).filter((i) => i !== current);
     if (!others.length) return null;
-    return others[Math.floor(Math.random() * others.length)] ?? null;
+    return others[Math.floor(Math.random() * others.length)]!;
   }
-
-  const best = Math.max(...pool.map((row) => row.n));
-  const top = pool.filter((row) => row.n === best);
+  pool.sort((a, b) => b.n - a.n);
+  const top = pool.filter((row) => row.n === pool[0]!.n);
   return top[Math.floor(Math.random() * top.length)]!.i;
 }
 
 export function similarAlbums(album: AlbumGroup, all: AlbumGroup[], limit = 8): AlbumGroup[] {
-  const tags = new Set(album.tags.map((t) => t.trim().toLowerCase()).filter(Boolean));
-  if (tags.size === 0) return [];
-  return all
-    .filter((other) => other.key !== album.key)
-    .map((other) => ({
-      album: other,
-      score: other.tags.filter((t) => tags.has(t.trim().toLowerCase())).length,
-    }))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.album.title.localeCompare(b.album.title))
-    .slice(0, limit)
-    .map((row) => row.album);
+  const genreParts = new Set(splitGenres(album.genre).map((s) => s.toLowerCase()));
+  const tags = new Set((album.tags || []).map((t) => String(t).toLowerCase()).filter(Boolean));
+  const artistKey = (album.artist || "").trim().toLowerCase();
+  const titleKey = (album.title || "").trim().toLowerCase();
+  const scored = all
+    .filter((a) => a.key !== album.key)
+    .map((a) => {
+      let score = 0;
+      const aGenre = new Set(splitGenres(a.genre).map((s) => s.toLowerCase()));
+      const aTags = new Set((a.tags || []).map((t) => String(t).toLowerCase()).filter(Boolean));
+      for (const g of genreParts) if (aGenre.has(g)) score += 3;
+      for (const t of tags) if (aTags.has(t)) score += 2;
+      if (artistKey && (a.artist || "").trim().toLowerCase() === artistKey) score += 4;
+      const tokens = titleKey.split(/\s+/).filter((w) => w.length > 3);
+      const aTitle = (a.title || "").toLowerCase();
+      for (const w of tokens) if (aTitle.includes(w)) score += 1;
+      return { a, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((x, y) => y.score - x.score || x.a.title.localeCompare(y.a.title));
+  return scored.slice(0, limit).map((x) => x.a);
 }
 
 export function similarArtistsForAlbum(album: AlbumGroup, artists: ArtistGroup[], limit = 8): ArtistGroup[] {
-  const tags = new Set(album.tags.map((t) => t.trim().toLowerCase()).filter(Boolean));
-  if (tags.size === 0) return [];
-  const current = artistKey(album.artist);
-  return artists
-    .filter((artist) => artist.key !== current)
-    .map((artist) => ({
-      artist,
-      score: artist.albums.reduce(
-        (sum, item) => sum + item.tags.filter((t) => tags.has(t.trim().toLowerCase())).length,
-        0,
-      ),
-    }))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.artist.name.localeCompare(b.artist.name))
-    .slice(0, limit)
-    .map((row) => row.artist);
-}
-
-export function similarArtistsForArtist(artist: ArtistGroup, artists: ArtistGroup[], limit = 8): ArtistGroup[] {
-  const tags = new Set(
-    artist.albums.flatMap((album) => album.tags.map((t) => t.trim().toLowerCase()).filter(Boolean)),
-  );
-  if (tags.size === 0) return [];
-  return artists
-    .filter((other) => other.key !== artist.key)
-    .map((other) => ({
-      artist: other,
-      score: other.albums.reduce(
-        (sum, item) => sum + item.tags.filter((t) => tags.has(t.trim().toLowerCase())).length,
-        0,
-      ),
-    }))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.artist.name.localeCompare(b.artist.name))
-    .slice(0, limit)
-    .map((row) => row.artist);
-}
-
-export function findDuplicates(tracks: Track[]) {
-  const map = new Map<string, Track[]>();
-  for (const track of tracks) {
-    const key = `${(track.artist || "").trim().toLowerCase()}|${(track.name || "").trim().toLowerCase()}`;
-    if (key === "|") continue;
-    const list = map.get(key) ?? [];
-    list.push(track);
-    map.set(key, list);
-  }
-  return [...map.values()].filter((list) => list.length > 1);
-}
-
-export function isCompilation(tracks: Track[]) {
-  if (tracks.some((t) => isVariousName(t.albumArtist || ""))) return true;
-  const artists = new Set(tracks.map((t) => (t.artist || "").trim().toLowerCase()).filter(Boolean));
-  return artists.size > 1;
+  const self = (album.artist || "").trim().toLowerCase();
+  const genre = (album.genre || "").toLowerCase();
+  const scored = artists
+    .filter((a) => a.name.trim().toLowerCase() !== self)
+    .map((a) => {
+      let score = 0;
+      if (genre && (a.genre || "").toLowerCase().includes(genre.split(/[/|,]/)[0] || "")) score += 2;
+      for (const tag of album.tags || []) {
+        if ((a.tags || []).some((t) => t.toLowerCase() === String(tag).toLowerCase())) score += 1;
+      }
+      return { a, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((x, y) => y.score - x.score || x.a.name.localeCompare(y.a.name));
+  return scored.slice(0, limit).map((x) => x.a);
 }
