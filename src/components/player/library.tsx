@@ -90,9 +90,13 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
   const [applying, setApplying] = useState(false);
   const lookGen = useRef(0);
-  const [albumSort, setAlbumSort] = useState<"title" | "artist" | "year" | "added">("title");
   const size = view.size;
   const titles = view.titles;
+  const albumSort: "title" | "artist" | "year" | "added" =
+    view.sort === "artist" ? "artist" :
+    view.sort === "year" ? "year" :
+    view.sort === "songs" ? "added" :
+    "title";
 
   useEffect(() => {
     if (startTab) setTab(startTab);
@@ -207,14 +211,18 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const artist = openArtist ? artists.find((a) => a.name === openArtist) : null;
 
   const AlbumGrid = ({ list }: { list: typeof albums }) => (
-    <div className={cn("grid gap-3", size === "sm" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-5" : size === "lg" ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4")}>
-      {list.map((a) => (
-        <button key={a.key} type="button" onClick={() => setOpenAlbum(a.key)} className="group text-left">
-          <div className="aspect-square overflow-hidden rounded-xl bg-raised ring-1 ring-border">
-            {a.coverUrl ? <img src={proxyCoverUrl(a.coverUrl)} alt="" className="size-full object-cover transition group-hover:scale-[1.02]" /> : <div className="flex size-full items-center justify-center text-xs text-subtle">No art</div>}
+    <div className={cn("grid gap-3", size === "s" ? "grid-cols-3 sm:grid-cols-4 md:grid-cols-6" : size === "m" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3")}>
+      {list.map((item) => (
+        <button key={item.key} type="button" onClick={() => setOpenAlbum(item.key)} className="text-left">
+          <div className="aspect-square w-full overflow-hidden rounded-lg bg-raised">
+            {item.coverUrl ? <img src={proxyCoverUrl(item.coverUrl)} alt="" className="size-full object-cover" /> : null}
           </div>
-          <p className="mt-2 truncate text-sm font-medium">{a.title}</p>
-          <p className="truncate text-xs text-muted">{titles === "artist" ? a.artist : a.genre || a.artist}</p>
+          {titles === "on" ? (
+            <>
+              <p className="mt-2 truncate text-sm">{item.title}</p>
+              <p className="truncate text-xs text-muted">{item.artist}</p>
+            </>
+          ) : null}
         </button>
       ))}
     </div>
@@ -234,6 +242,72 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               {id}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {!openAlbum && !openArtist && !openYear && !openGenre && tab === "albums" ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-full bg-raised p-1">
+            {(
+              [
+                ["title", "Title"],
+                ["artist", "Artist"],
+                ["year", "Year"],
+                ["songs", "Added"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => view.setSort(id)}
+                className={cn(
+                  "h-8 rounded-full px-3 text-xs font-medium transition-colors",
+                  (id === "title" ? albumSort === "title" : view.sort === id)
+                    ? "bg-accent text-accent-fg"
+                    : "text-muted hover:text-fg",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-raised p-1">
+            <button
+              type="button"
+              onClick={() => view.setTitles("on")}
+              className={cn(
+                "h-8 rounded-full px-3 text-xs font-medium transition-colors",
+                titles === "on" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg",
+              )}
+            >
+              Titles
+            </button>
+            <button
+              type="button"
+              onClick={() => view.setTitles("off")}
+              className={cn(
+                "h-8 rounded-full px-3 text-xs font-medium transition-colors",
+                titles === "off" ? "bg-accent text-accent-fg" : "text-muted hover:text-fg",
+              )}
+            >
+              Cover only
+            </button>
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-raised p-1">
+            {(["s", "m", "l"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => view.setSize(s)}
+                className={cn(
+                  "h-8 rounded-full px-3 text-xs font-medium uppercase transition-colors",
+                  size === s ? "bg-accent text-accent-fg" : "text-muted hover:text-fg",
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
