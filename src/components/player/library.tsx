@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, Flame, GitMerge, Globe, Heart, Pencil, Plus, Shuffle, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Flame, GitMerge, Globe, Heart, Pencil, Plus, Search, Shuffle, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { albumKey, cleanAlbumTitle, groupAlbums, groupArtists, groupGenres, groupTracksByDisc, resolveDiskNo } from "@/lib/player/catalog";
 import { AUDIO_ACCEPT, formatDuration, formatTrackTime } from "@/lib/player/format";
@@ -82,6 +82,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const [lookingGenre, setLookingGenre] = useState(false);
   const [albumEdit, setAlbumEdit] = useState(false);
   const [combineQ, setCombineQ] = useState("");
+  const [albumQ, setAlbumQ] = useState("");
   const [trackSort, setTrackSort] = useState<"number" | "alpha">("number");
   const [albumHits, setAlbumHits] = useState<AlbumHit[] | null>(null);
   const [applying, setApplying] = useState(false);
@@ -130,7 +131,12 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
   const albumDuration = (ids: string[]) => songsOf(ids).reduce((sum, t) => sum + (t.durationSec || 0), 0);
   const newest = (ids: string[]) => Math.max(0, ...songsOf(ids).map((t) => t.addedAt || 0));
   const sortedAlbums = useMemo(() => {
-    const list = [...albums];
+    const q = albumQ.trim().toLowerCase();
+    const list = albums.filter((a) => {
+      if (!q) return true;
+      const hay = [a.title, a.artist, a.year, a.genre, ...(a.tags || [])].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
     list.sort((a, b) => {
       if (albumSort === "artist") return a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title);
       if (albumSort === "year") return (b.year || "").localeCompare(a.year || "") || a.title.localeCompare(b.title);
@@ -138,7 +144,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       return a.title.localeCompare(b.title);
     });
     return list;
-  }, [albums, albumSort, tracks]);
+  }, [albums, albumSort, tracks, albumQ]);
 
   const shufflePlay = (ids: string[]) => { const list = shuffleList(ids); if (list.length) playIds(list); };
   const patchAlbumMeta = (ids: string[], patch: Partial<Track>) => { updateAlbumMeta(ids, patch); };
@@ -232,7 +238,24 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
       ) : null}
 
       {!openAlbum && !openArtist && !openYear && !openGenre && tab === "albums" ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="mb-4 space-y-2">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
+            <input
+              type="search"
+              value={albumQ}
+              onChange={(e) => setAlbumQ(e.target.value)}
+              placeholder="Search albums, artists, year, genre…"
+              className="h-10 w-full rounded-full bg-raised pl-10 pr-10 text-sm outline-none ring-1 ring-border focus:ring-accent"
+            />
+            {albumQ ? (
+              <button type="button" aria-label="Clear search" onClick={() => setAlbumQ("")} className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-muted hover:text-fg">
+                <X className="size-4" />
+              </button>
+            ) : null}
+          </label>
+          {albumQ.trim() ? <p className="px-1 text-xs text-subtle">{sortedAlbums.length} match{sortedAlbums.length === 1 ? "" : "es"}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 rounded-full bg-raised p-1">
             {([["title", "Title"], ["artist", "Artist"], ["year", "Year"], ["songs", "Added"]] as const).map(([id, label]) => (
               <button key={id} type="button" onClick={() => view.setSort(id)} className={cn("h-8 rounded-full px-3 text-xs font-medium transition-colors", (id === "title" ? albumSort === "title" : view.sort === id) ? "bg-accent text-accent-fg" : "text-muted hover:text-fg")}>{label}</button>
@@ -250,6 +273,7 @@ export function Library({ startTab, startAlbum }: { startTab?: Tab; startAlbum?:
               ))}
             </div>
           ) : null}
+        </div>
         </div>
       ) : null}
 
