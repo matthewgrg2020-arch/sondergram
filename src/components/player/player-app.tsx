@@ -5,6 +5,8 @@ import {
   applyEq,
   applyPreamp,
   beginPlayback,
+  getEngine,
+  outputAudio,
   pauseOutput,
   resumeEngine,
   seekOutput,
@@ -117,6 +119,38 @@ export function PlayerApp() {
 
   useEffect(() => {
     setYoutubeHandlers({ onEnded: () => autoNext() });
+  }, [autoNext]);
+
+  useEffect(() => {
+    const eng = getEngine();
+    const els = [eng.audio, eng.bgAudio].filter(Boolean) as HTMLAudioElement[];
+    let advancing = false;
+    const advance = () => {
+      if (advancing) return;
+      if (!usePlayer.getState().playing) return;
+      advancing = true;
+      autoNext();
+      window.setTimeout(() => { advancing = false; }, 900);
+    };
+    const onEnded = () => advance();
+    const onTime = (e: Event) => {
+      const el = e.currentTarget as HTMLAudioElement | null;
+      if (!el || !usePlayer.getState().playing) return;
+      if (el !== outputAudio()) return;
+      const d = el.duration;
+      if (!Number.isFinite(d) || d < 1) return;
+      if (el.currentTime >= d - 0.4) advance();
+    };
+    for (const el of els) {
+      el.addEventListener("ended", onEnded);
+      el.addEventListener("timeupdate", onTime);
+    }
+    return () => {
+      for (const el of els) {
+        el.removeEventListener("ended", onEnded);
+        el.removeEventListener("timeupdate", onTime);
+      }
+    };
   }, [autoNext]);
 
   useEffect(() => {
